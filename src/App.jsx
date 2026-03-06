@@ -9,7 +9,7 @@ import {
   Truck, Package, FileText, LayoutDashboard, DollarSign, Plus,
   Search, X, Check, Minus, MapPin, Clock, CheckCircle, Send,
   Layers, Building2, RefreshCw, Trash2, Users, Hotel,
-  UtensilsCrossed, Calendar, TrendingUp, Route, Globe,
+  UtensilsCrossed, Calendar, TrendingUp, Map, Globe,
   ArrowRight, AlertCircle, ChevronDown, ChevronUp, BarChart2,
   Printer, ChevronRight, Navigation,
 } from "lucide-react";
@@ -377,7 +377,7 @@ function CitySearch({value,onChange,onSelect,veh,exclude=[]}){
 const NAV=[
   {id:"dashboard",label:"Dashboard",icon:LayoutDashboard},
   {id:"cotizador",label:"Cotizador Pro",icon:DollarSign,badge:"★"},
-  {id:"rutas",label:"Planificador Rutas",icon:Route,badge:"NEW"},
+  {id:"rutas",label:"Planificador Rutas",icon:Map,badge:"NEW"},
   {id:"facturas",label:"Facturación",icon:FileText},
   {id:"clientes",label:"Clientes",icon:Building2},
   {id:"entregas",label:"Entregas",icon:Package},
@@ -451,7 +451,7 @@ function Dashboard({setView,cots,facts,rutas,entregas}){
         <KpiCard icon={DollarSign} color={A} label="Cotizaciones" value={cots.length} onClick={()=>setView("cotizador")}/>
         <KpiCard icon={TrendingUp} color={GREEN} label="Facturado" value={fmtK(totalFac)} onClick={()=>setView("facturas")}/>
         <KpiCard icon={Clock} color={AMBER} label="Por cobrar" value={fmtK(pendiente)} onClick={()=>setView("facturas")}/>
-        <KpiCard icon={Route} color={VIOLET} label="Rutas activas" value={rutas.filter(r=>r.status==="En curso").length} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
+        <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutas.filter(r=>r.status==="En curso").length} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:14,marginBottom:14}}>
@@ -483,7 +483,7 @@ function Dashboard({setView,cots,facts,rutas,entregas}){
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {[
             {label:"Cotizador Pro",sub:"Local · Foráneo · Masivo",icon:DollarSign,color:A,v:"cotizador"},
-            {label:"Planificador Rutas",sub:"Multi-parada + Google Maps",icon:Route,color:VIOLET,v:"rutas"},
+            {label:"Planificador Rutas",sub:"Multi-parada + Google Maps",icon:Map,color:VIOLET,v:"rutas"},
             {label:"Facturación",sub:"PDFs · Mensual · Clientes",icon:FileText,color:BLUE,v:"facturas"},
             {label:"Tracking",sub:"Entregas en tiempo real",icon:Package,color:GREEN,v:"entregas"},
           ].map(({label,sub,icon:Icon,color,v})=>(
@@ -1183,7 +1183,7 @@ function PlanificadorRutas(){
 
           <div style={{display:"flex",gap:9}}>
             <button onClick={handleSave} disabled={saving} className="btn" style={{flex:2,padding:"13px 0",borderRadius:12,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",fontFamily:DISPLAY,fontWeight:700,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 5px 20px "+A+"35",opacity:saving?.7:1}}>
-              {saving?<><div style={{width:15,height:15,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}} className="spin"/>Guardando…</>:<><Route size={17}/>Guardar Ruta</>}
+              {saving?<><div style={{width:15,height:15,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}} className="spin"/>Guardando…</>:<><Map size={17}/>Guardar Ruta</>}
             </button>
             <button onClick={()=>{const q={folio:"RUT-"+uid(),cliente,modo:"ruta",modoLabel:"RUTA MULTI-PARADA",destino:stops.filter(s=>!s.isOrigin).map(s=>s.city).join(" → "),vehiculoLabel:vehD?.label,stops,lines:[{label:"Tarifa transporte",value:fmt(tarifaT)},urg&&{label:"⚡ Urgente",value:"+"+fmt(xU),color:ROSE},xViat>0&&{label:"Viáticos",value:"+"+fmt(xViat),color:AMBER},{label:"Subtotal",value:fmt(sub)},{label:"IVA 16%",value:fmt(iva),color:MUTED},{label:"TOTAL",value:fmt(total),bold:true,color:A}].filter(Boolean),flota:{vans,dias:diasOp,capDia},totalPDV,plazo,total};printPDF(q);}} className="btn"
               style={{flex:1,padding:"13px 0",borderRadius:12,border:"1.5px solid "+BORDER2,background:"#fff",fontFamily:SANS,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7,color:TEXT}}>
@@ -1246,7 +1246,7 @@ function PlanificadorRutas(){
         </div>
       </div>
 
-      {viewR&&<Modal title={viewR.nombre} onClose={()=>setViewR(null)} wide icon={Route} iconColor={VIOLET}>
+      {viewR&&<Modal title={viewR.nombre} onClose={()=>setViewR(null)} wide icon={Map} iconColor={VIOLET}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11,marginBottom:16}}>
           <InfoBox icon={Truck} color={A} title="Vans" value={viewR.vans||1} sub={VEHK.find(v=>v.k===viewR.veh)?.label}/>
           <InfoBox icon={Calendar} color={BLUE} title="Días" value={(viewR.diasOp||"—")+" días"} sub={"Plazo: "+(viewR.plazo||"—")+" días"}/>
