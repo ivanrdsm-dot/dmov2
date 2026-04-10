@@ -945,6 +945,10 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[]}){
   );
 }
 /* ─── COTIZADOR PRO ──────────────────────────────────────────────────────── */
+/* Section / SectionHeader — MUST be outside render to avoid remount on keystroke */
+function S({children}){return <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>{children}</div>;}
+function SH({children}){return <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:13}}>{children}</div>;}
+
 function Cotizador({onSaved}){
   // ── shared
   const [modo,setModo]=useState("local");
@@ -1056,7 +1060,7 @@ function Cotizador({onSaved}){
         fMani&&{label:"💪 Ayudantes ("+fNumAyud+")",value:"+"+fmt(fXM),color:VIOLET},
         fRes&&{label:"🛡️ Resguardo 1 día",value:"+"+fmt(fXR),color:GREEN},
         fXC>0&&{label:"🍽️ Comidas · "+fCrew+"p × "+fDias+"d",value:"+"+fmt(fXC),color:AMBER},
-        fXH>0&&{label:"🏨 Building2 · "+fCrew+"p × "+fNoches+"n",value:"+"+fmt(fXH),color:BLUE},
+        fXH>0&&{label:"🏨 Hotel · "+fCrew+"p \u00d7 "+fNoches+"n",value:"+"+fmt(fXH),color:BLUE},
         {label:"Subtotal",value:fmt(fSub)},{label:"IVA 16%",value:fmt(fIva),color:MUTED},
         {label:"TOTAL CON IVA",value:fmt(fTot),bold:true,color:A},
       ].filter(Boolean)};
@@ -1076,7 +1080,7 @@ function Cotizador({onSaved}){
         ...mCiudades.map(c=>({label:"📍 "+c.c+" · "+c.pdv+" PDVs · "+c.vans+" van(s)",value:fmt((c.tarifa||0)*c.vans)})),
         mUrg&&{label:"⚡ Urgente +35%",value:"+"+fmt(mXU),color:ROSE},
         mXC>0&&{label:"🍽️ Comidas personal",value:"+"+fmt(mXC),color:AMBER},
-        mXH>0&&{label:"🏨 Building2 personal",value:"+"+fmt(mXH),color:BLUE},
+        mXH>0&&{label:"🏨 Hotel personal",value:"+"+fmt(mXH),color:BLUE},
         {label:"Subtotal",value:fmt(mSub)},{label:"IVA 16%",value:fmt(mIva),color:MUTED},
         {label:"TOTAL CON IVA",value:fmt(mTot),bold:true,color:A},
       ].filter(Boolean)};
@@ -1091,9 +1095,6 @@ function Cotizador({onSaved}){
       onSaved&&onSaved();
     }catch(e){showT(e.message,"err");}
   };
-
-  const S=(p)=><div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>{p.children}</div>;
-  const SH=(p)=><div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:13}}>{p.children}</div>;
 
   return(
     <div style={{flex:1,overflowY:"auto",background:"#f1f4fb"}}>
@@ -1227,7 +1228,7 @@ function Cotizador({onSaved}){
                   <input type="number" value={fComida} onChange={e=>setFComida(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
                 <div>
-                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Building2/persona/noche</div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/persona/noche</div>
                   <input type="number" value={fBuilding2} onChange={e=>setFBuilding2(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
               </div>
@@ -1336,7 +1337,7 @@ function Cotizador({onSaved}){
                   <input type="number" value={mComida} onChange={e=>setMComida(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
                 <div>
-                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Building2/persona/noche</div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/persona/noche</div>
                   <input type="number" value={mBuilding2} onChange={e=>setMBuilding2(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
               </div>
@@ -1363,7 +1364,7 @@ function Cotizador({onSaved}){
                 {fCiudades.map(c=><RowItem key={c.id} l={"📍 "+c.c+(c.pdv?" · "+c.pdv+" PDVs":"")} v={fmt(c[fVeh]||0)}/>)}
                 {fCiudades.length>1&&<RowItem l={"Total "+fCiudades.length+" ciudades"} v={fmt(fBaseTotal)}/>}
                 {fXC>0&&<RowItem l={"🍽️ Comidas"} v={"+"+fmt(fXC)} c={AMBER}/>}
-                {fXH>0&&<RowItem l={"🏨 Building2"} v={"+"+fmt(fXH)} c={BLUE}/>}
+                {fXH>0&&<RowItem l={"🏨 Hotel"} v={"+"+fmt(fXH)} c={BLUE}/>}
                 {fXU>0&&<RowItem l={"⚡ Urgente"} v={"+"+fmt(fXU)} c={ROSE}/>}
                 {fXM>0&&<RowItem l={"💪 Maniobras"} v={"+"+fmt(fXM)} c={VIOLET}/>}
                 {fXR>0&&<RowItem l={"🛡️ Resguardo"} v={"+"+fmt(fXR)} c={GREEN}/>}
@@ -1383,7 +1384,7 @@ function Cotizador({onSaved}){
                 {mCiudades.map(c=><RowItem key={c.id} l={"📍 "+c.c+" · "+c.pdv+" PDVs · "+c.vans+" van(s)"} v={fmt((c.tarifa||0)*c.vans)}/>)}
                 {mXU>0&&<RowItem l="⚡ Urgente" v={"+"+fmt(mXU)} c={ROSE}/>}
                 {mXC>0&&<RowItem l="🍽️ Comidas" v={"+"+fmt(mXC)} c={AMBER}/>}
-                {mXH>0&&<RowItem l="🏨 Building2" v={"+"+fmt(mXH)} c={BLUE}/>}
+                {mXH>0&&<RowItem l="🏨 Hotel" v={"+"+fmt(mXH)} c={BLUE}/>}
                 <RowItem l="Subtotal" v={fmt(mSub)}/>
                 <RowItem l="IVA 16%" v={fmt(mIva)} c={MUTED}/>
                 <RowItem l="TOTAL" v={fmt(mTot)} c={A} bold/>
@@ -1403,8 +1404,8 @@ function Cotizador({onSaved}){
           <button onClick={guardar} disabled={!canSave||!cliente.trim()} className="btn" style={{background:canSave&&cliente.trim()?"linear-gradient(135deg,"+A+",#fb923c)":"#e0e0e0",color:canSave&&cliente.trim()?"#fff":"#aaa",borderRadius:13,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:canSave&&cliente.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSave&&cliente.trim()?"0 6px 20px "+A+"40":"none"}}>
             <Send size={15}/>Guardar cotización
           </button>
-          <button onClick={()=>printCotizacion(buildQ())} className="btn" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,padding:"11px 0",border:"1.5px solid "+BD2,borderRadius:13,fontSize:13,fontWeight:600,color:TEXT,background:"#fff"}}>
-            <Printer size={14}/>Descargar PDF
+          <button onClick={()=>downloadCotizacionPDF(buildQ())} className="btn" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,padding:"11px 0",border:"1.5px solid "+BLUE+"30",borderRadius:13,fontSize:13,fontWeight:700,color:BLUE,background:"#fff"}}>
+            <Download size={14}/>Descargar PDF
           </button>
         </div>
       </div>
@@ -1587,7 +1588,7 @@ function PlanificadorRutas(){
                 <input type="number" value={comida} onChange={e=>setComida(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
               </div>
               <div>
-                <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Building2/persona/noche</div>
+                <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/persona/noche</div>
                 <input type="number" value={hotel} onChange={e=>setBuilding2(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
               </div>
             </div>
