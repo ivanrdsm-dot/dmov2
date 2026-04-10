@@ -11,17 +11,20 @@ import {
   Calendar, TrendingUp, Map, Globe,
   ArrowRight, AlertCircle, ChevronDown, ChevronUp, BarChart2,
   Printer, ChevronRight, Navigation, Upload,
-  Download, Eye, Target, Zap, FolderOpen,
+  Download, Eye, Target, Zap, FolderOpen, ClipboardList,
 } from "lucide-react";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 /* ─── FIREBASE ───────────────────────────────────────────────────────────── */
 const firebaseConfig = {
-  apiKey: "AIzaSyB7tuRYUEY471IPJdnOB69DI2yKLCU72T0",
-  authDomain: "salesflow-crm-13c4a.firebaseapp.com",
-  projectId: "salesflow-crm-13c4a",
-  storageBucket: "salesflow-crm-13c4a.firebasestorage.app",
-  messagingSenderId: "525995422237",
-  appId: "1:525995422237:web:e69d7e7dd76ac9640c8cf4",
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            || "AIzaSyB7tuRYUEY471IPJdnOB69DI2yKLCU72T0",
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        || "salesflow-crm-13c4a.firebaseapp.com",
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         || "salesflow-crm-13c4a",
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     || "salesflow-crm-13c4a.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID|| "525995422237",
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID             || "1:525995422237:web:e69d7e7dd76ac9640c8cf4",
 };
 const fbApp = initializeApp(firebaseConfig);
 const db   = getFirestore(fbApp);
@@ -283,6 +286,351 @@ tbody td{padding:10px 14px;border-bottom:1px solid #e8eef6;font-size:13px}
   if(win){win.document.write(html);win.document.close();setTimeout(()=>win.print(),500);}
 }
 
+/* ─── EXPORTS REALES: PDF (jsPDF) + XLSX ────────────────────────────────── */
+const mxMoney = n => "$" + Number(n||0).toLocaleString("es-MX",{minimumFractionDigits:2,maximumFractionDigits:2});
+const fechaLarga = () => new Date().toLocaleDateString("es-MX",{year:"numeric",month:"long",day:"numeric"});
+const slug = s => String(s||"doc").replace(/[^a-z0-9]+/gi,"_").replace(/^_+|_+$/g,"").slice(0,40)||"doc";
+
+function pdfHeader(pdf, titulo, folio, badge){
+  pdf.setFillColor(249,115,22);
+  pdf.rect(0,0,210,4,"F");
+  pdf.setFont("helvetica","bold");
+  pdf.setFontSize(22);
+  pdf.setTextColor(249,115,22);
+  pdf.text("DM",14,22);
+  pdf.setTextColor(12,24,41);
+  pdf.text("vimiento",27,22);
+  pdf.setFont("helvetica","normal");
+  pdf.setFontSize(9);
+  pdf.setTextColor(96,112,128);
+  pdf.text("Logística Especializada · México 2026",14,28);
+  pdf.setFont("helvetica","bold");
+  pdf.setFontSize(14);
+  pdf.setTextColor(12,24,41);
+  pdf.text(titulo,196,22,{align:"right"});
+  pdf.setFont("helvetica","normal");
+  pdf.setFontSize(9);
+  pdf.setTextColor(96,112,128);
+  if(folio) pdf.text("Folio: "+folio,196,28,{align:"right"});
+  pdf.text(fechaLarga(),196,33,{align:"right"});
+  if(badge){
+    pdf.setFillColor(255,244,236);
+    pdf.setTextColor(249,115,22);
+    pdf.setFont("helvetica","bold");
+    pdf.setFontSize(8);
+    const w = pdf.getTextWidth(badge)+8;
+    pdf.roundedRect(196-w,36,w,6,3,3,"F");
+    pdf.text(badge,196-w/2,40.2,{align:"center"});
+  }
+  pdf.setDrawColor(249,115,22);
+  pdf.setLineWidth(0.8);
+  pdf.line(14,46,196,46);
+}
+function pdfFooter(pdf){
+  const h = pdf.internal.pageSize.getHeight();
+  pdf.setDrawColor(232,238,246);
+  pdf.setLineWidth(0.3);
+  pdf.line(14,h-14,196,h-14);
+  pdf.setFont("helvetica","normal");
+  pdf.setFontSize(8);
+  pdf.setTextColor(157,176,196);
+  pdf.text("DMvimiento Logistics OS",14,h-8);
+  pdf.text("Generado "+new Date().toLocaleString("es-MX"),196,h-8,{align:"right"});
+}
+function pdfLabelValue(pdf,x,y,label,value){
+  pdf.setFont("helvetica","bold");
+  pdf.setFontSize(7);
+  pdf.setTextColor(96,112,128);
+  pdf.text(String(label).toUpperCase(),x,y);
+  pdf.setFont("helvetica","bold");
+  pdf.setFontSize(11);
+  pdf.setTextColor(12,24,41);
+  pdf.text(String(value||"—"),x,y+5);
+}
+
+function downloadCotizacionPDF(q){
+  const pdf = new jsPDF({unit:"mm",format:"a4"});
+  pdfHeader(pdf,"COTIZACIÓN",q.folio,q.modoLabel||q.modo||"");
+  pdfLabelValue(pdf,14,56,"Cliente / Empresa",q.cliente);
+  pdfLabelValue(pdf,110,56,"Contacto",q.contacto);
+  pdfLabelValue(pdf,14,70,"Destino / Ruta",q.destino);
+  pdfLabelValue(pdf,110,70,"Vehículo",q.vehiculoLabel);
+  let y = 84;
+  if(q.stops && q.stops.length>1){
+    pdf.setFont("helvetica","bold");pdf.setFontSize(8);pdf.setTextColor(96,112,128);
+    pdf.text("PARADAS DE RUTA",14,y); y+=5;
+    pdf.setFont("helvetica","normal");pdf.setFontSize(10);pdf.setTextColor(12,24,41);
+    q.stops.forEach((s,i)=>{
+      const t = (i+1)+". "+(s.city||s)+(s.pdv?" — "+s.pdv+" PDVs":"");
+      pdf.text(t,18,y); y+=5;
+    });
+    y+=3;
+  }
+  autoTable(pdf,{
+    startY:y,
+    head:[["Concepto","Importe"]],
+    body:(q.lines||[]).map(l=>[l.label,l.value]),
+    theme:"grid",
+    headStyles:{fillColor:[12,24,41],textColor:255,fontSize:9,fontStyle:"bold"},
+    bodyStyles:{fontSize:10,textColor:[12,24,41]},
+    columnStyles:{1:{halign:"right",fontStyle:"bold"}},
+    margin:{left:14,right:14},
+  });
+  let endY = pdf.lastAutoTable.finalY+6;
+  pdf.setFillColor(255,248,243);
+  pdf.roundedRect(14,endY,182,16,3,3,"F");
+  pdf.setFont("helvetica","normal");pdf.setFontSize(9);pdf.setTextColor(96,112,128);
+  pdf.text("TOTAL CON IVA",20,endY+9);
+  pdf.setFont("helvetica","bold");pdf.setFontSize(16);pdf.setTextColor(249,115,22);
+  pdf.text(mxMoney(q.total||0),190,endY+10,{align:"right"});
+  endY += 22;
+  if(q.notas){
+    pdf.setFont("helvetica","normal");pdf.setFontSize(9);pdf.setTextColor(96,112,128);
+    pdf.text("Notas: "+q.notas,14,endY,{maxWidth:182});
+    endY += 8;
+  }
+  pdf.setFont("helvetica","normal");pdf.setFontSize(8);pdf.setTextColor(96,112,128);
+  pdf.text("Propuesta válida 15 días. Incluye combustible, casetas y seguro básico. Sujeto a disponibilidad.",14,endY,{maxWidth:182});
+  pdfFooter(pdf);
+  pdf.save("Cotizacion_"+slug(q.folio||q.cliente)+".pdf");
+}
+
+function downloadFacturaPDF(f){
+  const pdf = new jsPDF({unit:"mm",format:"a4"});
+  const st  = f.status||"Pendiente";
+  pdfHeader(pdf,"FACTURA",f.folio,st.toUpperCase());
+  pdfLabelValue(pdf,14,56,"Empresa / Cliente",f.empresa||f.cliente);
+  pdfLabelValue(pdf,110,56,"Solicitante",f.solicitante);
+  pdfLabelValue(pdf,14,70,"Mes / Año",(f.mesOp||"")+" "+(f.anio||""));
+  pdfLabelValue(pdf,110,70,"Plan / Cuenta",f.plan);
+  const sub = Number(f.subtotal||f.monto||0);
+  const iva = Number(f.ivaAmt||f.iva||0);
+  const tot = Number(f.total||sub+iva||0);
+  autoTable(pdf,{
+    startY:84,
+    head:[["Descripción del servicio","Plan","Importe"]],
+    body:[[f.servicio||"Servicio de logística",f.plan||"—",mxMoney(sub)]],
+    theme:"grid",
+    headStyles:{fillColor:[12,24,41],textColor:255,fontSize:9,fontStyle:"bold"},
+    bodyStyles:{fontSize:10},
+    columnStyles:{2:{halign:"right",fontStyle:"bold"}},
+    margin:{left:14,right:14},
+  });
+  let y = pdf.lastAutoTable.finalY+8;
+  const totX = 120;
+  pdf.setFont("helvetica","normal");pdf.setFontSize(10);pdf.setTextColor(96,112,128);
+  pdf.text("Subtotal",totX,y); pdf.setTextColor(12,24,41);
+  pdf.text(mxMoney(sub),196,y,{align:"right"}); y+=6;
+  pdf.setTextColor(96,112,128); pdf.text("IVA 16%",totX,y);
+  pdf.setTextColor(12,24,41); pdf.text(mxMoney(iva),196,y,{align:"right"}); y+=3;
+  pdf.setDrawColor(249,115,22); pdf.setLineWidth(0.6); pdf.line(totX,y,196,y); y+=7;
+  pdf.setFont("helvetica","bold");pdf.setFontSize(14);pdf.setTextColor(249,115,22);
+  pdf.text("TOTAL",totX,y); pdf.text(mxMoney(tot),196,y,{align:"right"});
+  if(f.notas){
+    y+=12; pdf.setFont("helvetica","normal");pdf.setFontSize(9);pdf.setTextColor(96,112,128);
+    pdf.text("Notas: "+f.notas,14,y,{maxWidth:182});
+  }
+  pdfFooter(pdf);
+  pdf.save("Factura_"+slug(f.folio||f.empresa)+".pdf");
+}
+
+function downloadRutaPDF(r){
+  const pdf = new jsPDF({unit:"mm",format:"a4"});
+  pdfHeader(pdf,"RUTA",r.folio||r.id,r.status||"Programada");
+  pdfLabelValue(pdf,14,56,"Nombre de ruta",r.nombre);
+  pdfLabelValue(pdf,110,56,"Cliente",r.cliente);
+  pdfLabelValue(pdf,14,70,"Vehículo",r.vehiculoLabel);
+  pdfLabelValue(pdf,110,70,"Paradas",String((r.stops||[]).length));
+  autoTable(pdf,{
+    startY:84,
+    head:[["#","Ciudad","PDVs","Km"]],
+    body:(r.stops||[]).map((s,i)=>[i+1,s.city||"—",s.pdv||0,(s.km||0).toLocaleString("es-MX")]),
+    theme:"striped",
+    headStyles:{fillColor:[12,24,41],textColor:255,fontSize:9},
+    bodyStyles:{fontSize:9},
+    margin:{left:14,right:14},
+  });
+  let y = pdf.lastAutoTable.finalY+8;
+  autoTable(pdf,{
+    startY:y,
+    head:[["Concepto","Valor"]],
+    body:[
+      ["Vans",String(r.vans||1)],
+      ["Días de operación",String(r.diasOp||"—")],
+      ["Personal",String(r.crew||"—")],
+      ["Total PDVs",(r.totalPDV||0).toLocaleString("es-MX")],
+      ["Kilómetros ~",(r.totalKm||0).toLocaleString("es-MX")],
+      ["Tarifa transporte",mxMoney(r.tarifaT||0)],
+      ["Viáticos",mxMoney(r.xViat||0)],
+      ["Subtotal",mxMoney(r.sub||0)],
+      ["IVA 16%",mxMoney(r.iva||0)],
+      ["TOTAL",mxMoney(r.total||0)],
+    ],
+    theme:"grid",
+    headStyles:{fillColor:[124,58,237],textColor:255,fontSize:9},
+    bodyStyles:{fontSize:10},
+    columnStyles:{1:{halign:"right",fontStyle:"bold"}},
+    margin:{left:14,right:14},
+  });
+  pdfFooter(pdf);
+  pdf.save("Ruta_"+slug(r.nombre||r.folio)+".pdf");
+}
+
+function downloadPresupuestoPDF(p){
+  const pdf = new jsPDF({unit:"mm",format:"a4"});
+  pdfHeader(pdf,"PRESUPUESTO",p.folio,(p.status||"Borrador").toUpperCase());
+  pdfLabelValue(pdf,14,56,"Cliente",p.cliente);
+  pdfLabelValue(pdf,110,56,"Contacto",p.contacto);
+  pdfLabelValue(pdf,14,70,"Fecha",p.fecha);
+  pdfLabelValue(pdf,110,70,"Vigencia",p.vigencia);
+  autoTable(pdf,{
+    startY:84,
+    head:[["#","Concepto","Cant.","P. Unit.","Importe"]],
+    body:(p.conceptos||[]).map((c,i)=>[
+      i+1, c.desc||"—", c.cant||0, mxMoney(c.precio||0), mxMoney((c.cant||0)*(c.precio||0))
+    ]),
+    theme:"grid",
+    headStyles:{fillColor:[12,24,41],textColor:255,fontSize:9,fontStyle:"bold"},
+    bodyStyles:{fontSize:10},
+    columnStyles:{0:{halign:"center",cellWidth:10},2:{halign:"center",cellWidth:18},3:{halign:"right",cellWidth:32},4:{halign:"right",fontStyle:"bold",cellWidth:34}},
+    margin:{left:14,right:14},
+  });
+  let y = pdf.lastAutoTable.finalY+8;
+  const totX = 120;
+  const sub = Number(p.subtotal||0);
+  const iva = Number(p.ivaAmt||0);
+  const tot = Number(p.total||0);
+  pdf.setFont("helvetica","normal");pdf.setFontSize(10);pdf.setTextColor(96,112,128);
+  pdf.text("Subtotal",totX,y); pdf.setTextColor(12,24,41);
+  pdf.text(mxMoney(sub),196,y,{align:"right"}); y+=6;
+  pdf.setTextColor(96,112,128); pdf.text("IVA 16%",totX,y);
+  pdf.setTextColor(12,24,41); pdf.text(mxMoney(iva),196,y,{align:"right"}); y+=3;
+  pdf.setDrawColor(249,115,22); pdf.setLineWidth(0.6); pdf.line(totX,y,196,y); y+=7;
+  pdf.setFont("helvetica","bold");pdf.setFontSize(14);pdf.setTextColor(249,115,22);
+  pdf.text("TOTAL",totX,y); pdf.text(mxMoney(tot),196,y,{align:"right"});
+  if(p.notas){
+    y+=12; pdf.setFont("helvetica","normal");pdf.setFontSize(9);pdf.setTextColor(96,112,128);
+    pdf.text("Notas: "+p.notas,14,y,{maxWidth:182});
+  }
+  pdfFooter(pdf);
+  pdf.save("Presupuesto_"+slug(p.folio||p.cliente)+".pdf");
+}
+
+function exportXLSX(rows, filename, sheetName="Datos"){
+  if(!rows || rows.length===0){ alert("No hay datos para exportar"); return; }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const cols = Object.keys(rows[0]||{}).map(k=>({wch: Math.max(k.length+2, 14)}));
+  ws["!cols"] = cols;
+  XLSX.writeFile(wb, filename);
+}
+
+function exportFacturasXLSX(facts, mes){
+  const rows = facts.map(f=>({
+    Folio: f.folio||"",
+    "Mes": f.mesOp||"",
+    "Año": f.anio||"",
+    Empresa: f.empresa||f.cliente||"",
+    Solicitante: f.solicitante||"",
+    Plan: f.plan||"",
+    Servicio: f.servicio||"",
+    Subtotal: Number(f.subtotal||f.monto||0),
+    IVA: Number(f.ivaAmt||f.iva||0),
+    Total: Number(f.total||0),
+    Estado: f.status||"Pendiente",
+    Notas: f.notas||"",
+  }));
+  exportFacturasWithTotals(rows, `Facturacion_${mes||"Todos"}_${new Date().getFullYear()}.xlsx`);
+}
+
+function exportFacturasWithTotals(rows, filename){
+  if(rows.length===0){ alert("No hay facturas para exportar"); return; }
+  const totalSub = rows.reduce((a,r)=>a+(r.Subtotal||0),0);
+  const totalIVA = rows.reduce((a,r)=>a+(r.IVA||0),0);
+  const totalTot = rows.reduce((a,r)=>a+(r.Total||0),0);
+  const withTotals = [...rows, {
+    Folio:"", Mes:"", "Año":"", Empresa:"", Solicitante:"", Plan:"",
+    Servicio:"TOTALES", Subtotal:totalSub, IVA:totalIVA, Total:totalTot, Estado:"", Notas:""
+  }];
+  const ws = XLSX.utils.json_to_sheet(withTotals);
+  ws["!cols"] = Object.keys(rows[0]).map(k=>({wch: Math.max(k.length+2, 14)}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Facturación");
+  XLSX.writeFile(wb, filename);
+}
+
+function exportFinancierosXLSX(facts){
+  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const porMes = MESES.map(m=>{
+    const its = facts.filter(f=>f.mesOp===m);
+    const fac = its.reduce((a,f)=>a+(f.total||0),0);
+    const cob = its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
+    const pen = its.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
+    const ven = its.filter(f=>f.status==="Vencida").reduce((a,f)=>a+(f.total||0),0);
+    return {Mes:m, Registros:its.length, Facturado:fac, Cobrado:cob, Pendiente:pen, Vencido:ven, "% Cobrado":fac>0?Math.round(cob/fac*100):0};
+  });
+  const tot = {
+    Mes:"TOTAL",
+    Registros: porMes.reduce((a,r)=>a+r.Registros,0),
+    Facturado: porMes.reduce((a,r)=>a+r.Facturado,0),
+    Cobrado:   porMes.reduce((a,r)=>a+r.Cobrado,0),
+    Pendiente: porMes.reduce((a,r)=>a+r.Pendiente,0),
+    Vencido:   porMes.reduce((a,r)=>a+r.Vencido,0),
+    "% Cobrado": "",
+  };
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.json_to_sheet([...porMes, tot]);
+  ws1["!cols"] = [{wch:8},{wch:11},{wch:15},{wch:15},{wch:15},{wch:15},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws1, "Resumen Mensual");
+  const detalle = facts.map(f=>({
+    Folio:f.folio||"", Mes:f.mesOp||"", "Año":f.anio||"", Empresa:f.empresa||f.cliente||"",
+    Solicitante:f.solicitante||"", Plan:f.plan||"", Servicio:f.servicio||"",
+    Subtotal:Number(f.subtotal||f.monto||0), IVA:Number(f.ivaAmt||f.iva||0),
+    Total:Number(f.total||0), Estado:f.status||"Pendiente",
+  }));
+  const ws2 = XLSX.utils.json_to_sheet(detalle);
+  ws2["!cols"] = [{wch:14},{wch:6},{wch:6},{wch:24},{wch:20},{wch:14},{wch:28},{wch:14},{wch:12},{wch:14},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, ws2, "Detalle");
+  XLSX.writeFile(wb, "Financieros_"+new Date().getFullYear()+".xlsx");
+}
+
+function exportRutasXLSX(rutas){
+  const rows = rutas.map(r=>({
+    Nombre: r.nombre||"",
+    Cliente: r.cliente||"",
+    Vehículo: r.vehiculoLabel||"",
+    Paradas: (r.stops||[]).length,
+    "Total PDVs": r.totalPDV||0,
+    "Km ~": r.totalKm||0,
+    Vans: r.vans||1,
+    Días: r.diasOp||0,
+    Personal: r.crew||0,
+    Viáticos: r.xViat||0,
+    Subtotal: r.sub||0,
+    IVA: r.iva||0,
+    Total: r.total||0,
+    Estado: r.status||"Programada",
+  }));
+  exportXLSX(rows,"Rutas_"+new Date().getFullYear()+".xlsx","Rutas");
+}
+
+function exportPresupuestosXLSX(list){
+  const rows = list.map(p=>({
+    Folio: p.folio||"",
+    Cliente: p.cliente||"",
+    Contacto: p.contacto||"",
+    Fecha: p.fecha||"",
+    Vigencia: p.vigencia||"",
+    Conceptos: (p.conceptos||[]).length,
+    Subtotal: Number(p.subtotal||0),
+    IVA: Number(p.ivaAmt||0),
+    Total: Number(p.total||0),
+    Estado: p.status||"Borrador",
+  }));
+  exportXLSX(rows,"Presupuestos_"+new Date().getFullYear()+".xlsx","Presupuestos");
+}
+
 /* ─── ATOMS ──────────────────────────────────────────────────────────────── */
 function Tag({color=A,children,sm}){
   return <span style={{background:color+"16",color,border:"1px solid "+color+"28",borderRadius:20,padding:sm?"2px 8px":"3px 12px",fontSize:sm?10:11,fontWeight:700,whiteSpace:"nowrap"}}>{children}</span>;
@@ -432,14 +780,15 @@ function MiniBar({pct,color=A,h=4}){
 }
 /* ─── SIDEBAR ────────────────────────────────────────────────────────────── */
 const NAV=[
-  {id:"dashboard",  label:"Dashboard",        icon:LayoutDashboard},
-  {id:"cotizador",  label:"Cotizador Pro",     icon:DollarSign,  badge:"★"},
-  {id:"rutas",      label:"Planificador Rutas",icon:Map},
-  {id:"nacional",   label:"Proyectos Nacionales",icon:Target,   badge:"NEW"},
-  {id:"facturas",   label:"Facturación",       icon:FileText},
-  {id:"viaticos",   label:"Viáticos & Gastos", icon:Zap},
-  {id:"clientes",   label:"Clientes",          icon:Building2},
-  {id:"entregas",   label:"Entregas",          icon:Package},
+  {id:"dashboard",   label:"Dashboard",         icon:LayoutDashboard},
+  {id:"cotizador",   label:"Cotizador Pro",     icon:DollarSign,  badge:"★"},
+  {id:"presupuestos",label:"Presupuestos",      icon:ClipboardList, badge:"NEW"},
+  {id:"rutas",       label:"Planificador Rutas",icon:Map},
+  {id:"nacional",    label:"Proyectos Nacionales",icon:Target},
+  {id:"facturas",    label:"Facturación",       icon:FileText},
+  {id:"viaticos",    label:"Viáticos & Gastos", icon:Zap},
+  {id:"clientes",    label:"Clientes",          icon:Building2},
+  {id:"entregas",    label:"Entregas",          icon:Package},
 ];
 function Sidebar({view,setView,stats}){
   return(
@@ -489,7 +838,6 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[]}){
     return {m,fac:mf.reduce((a,f)=>a+(f.total||0),0),cob:mf.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0)};
   });
   const maxV=Math.max(...chartData.map(d=>d.fac),1);
-  const mesActual=MESES[new Date().getMonth()];
   const recentCots=cots.slice(0,5);
   const quickActions=[
     {icon:DollarSign,label:"Nueva cotización",color:A,v:"cotizador"},
@@ -1142,6 +1490,7 @@ function PlanificadorRutas(){
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
         <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Planificador de Rutas</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>Multi-parada · Flota automática · Google Maps</p></div>
+        <button onClick={()=>exportRutasXLSX(rutas)} className="btn" title="Exportar rutas guardadas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>Exportar XLSX</button>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 350px",gap:16,alignItems:"start"}}>
@@ -1330,7 +1679,8 @@ function PlanificadorRutas(){
           ))}
         </div>
         <div style={{display:"flex",gap:9}}>
-          {viewR.mapURL&&<a href={viewR.mapURL} target="_blank" rel="noopener noreferrer" className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Globe size={14}/>Google Maps</a>}
+          <button onClick={()=>downloadRutaPDF(viewR)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+VIOLET+"30",color:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={14}/>PDF</button>
+          {viewR.mapURL&&<a href={viewR.mapURL} target="_blank" rel="noopener noreferrer" className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Globe size={14}/>Maps</a>}
           <button onClick={async()=>{await updateDoc(doc(db,"rutas",viewR.id),{status:viewR.status==="En curso"?"Completada":"En curso"});setViewR(null);}} className="btn"
             style={{flex:1,padding:"10px 0",borderRadius:10,background:"linear-gradient(135deg,"+A+",#fb923c)",border:"none",cursor:"pointer",fontFamily:SANS,fontWeight:700,fontSize:13,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
             {viewR.status==="En curso"?<><CheckCircle size={14}/>Completar</>:<><Navigation size={14}/>Iniciar</>}
@@ -1716,7 +2066,11 @@ function Facturas(){
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
         <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Facturación & Finanzas</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>Control mensual · PDF descargable · Proyecciones anuales</p></div>
-        <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo registro</button>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>exportFacturasXLSX(filt,mesF==="todos"?null:mesF)} className="btn" title="Exportar facturas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>XLSX Facturas</button>
+          <button onClick={()=>exportFinancierosXLSX(items)} className="btn" title="Exportar financieros completos" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><BarChart2 size={13}/>XLSX Financiero</button>
+          <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo registro</button>
+        </div>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:18}}>
@@ -1769,8 +2123,11 @@ function Facturas(){
                 </td>
                 <td style={{padding:"10px 12px"}}>
                   <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                    <button onClick={()=>printFactura(f)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}>
+                    <button onClick={()=>downloadFacturaPDF(f)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}>
                       <Download size={12}/>PDF
+                    </button>
+                    <button onClick={()=>printFactura(f)} className="btn" title="Imprimir" style={{color:MUTED,padding:"4px 6px",border:"1px solid "+BD2,borderRadius:6,display:"flex",alignItems:"center",fontSize:11}}>
+                      <Printer size={12}/>
                     </button>
                     <button onClick={()=>openEdit(f)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
                     <button onClick={()=>del(f.id)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
@@ -2216,6 +2573,204 @@ function Entregas(){
 }
 
 
+/* ─── PRESUPUESTOS ───────────────────────────────────────────────────────── */
+function Presupuestos(){
+  const [items,setItems]=useState([]);
+  const [load,setLoad]=useState(true);
+  const [modal,setModal]=useState(false);
+  const [editItem,setEditItem]=useState(null);
+  const [toast,setToast]=useState(null);
+  const [q,setQ]=useState("");
+  const [statusF,setStatusF]=useState("todos");
+  const showT=(m,t="ok")=>setToast({msg:m,type:t});
+  const today=new Date().toISOString().slice(0,10);
+  const in15=new Date(Date.now()+15*86400000).toISOString().slice(0,10);
+  const empty={cliente:"",contacto:"",fecha:today,vigencia:in15,conceptos:[{desc:"",cant:1,precio:0}],iva:true,status:"Borrador",notas:""};
+  const [form,setForm]=useState(empty);
+
+  useEffect(()=>onSnapshot(collection(db,"presupuestos"),s=>{
+    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
+    setLoad(false);
+  }),[]);
+
+  const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
+  const openEdit=p=>{
+    setForm({
+      cliente:p.cliente||"", contacto:p.contacto||"",
+      fecha:p.fecha||today, vigencia:p.vigencia||in15,
+      conceptos:(p.conceptos&&p.conceptos.length?p.conceptos:[{desc:"",cant:1,precio:0}]).map(c=>({desc:c.desc||"",cant:Number(c.cant)||0,precio:Number(c.precio)||0})),
+      iva:p.ivaAmt>0||p.iva!==false,
+      status:p.status||"Borrador",
+      notas:p.notas||"",
+    });
+    setEditItem(p);setModal(true);
+  };
+
+  const subtotal=form.conceptos.reduce((a,c)=>a+(Number(c.cant)||0)*(Number(c.precio)||0),0);
+  const ivaAmt=form.iva?subtotal*.16:0;
+  const total=subtotal+ivaAmt;
+
+  const updConcepto=(i,k,v)=>setForm(f=>({...f,conceptos:f.conceptos.map((c,idx)=>idx===i?{...c,[k]:v}:c)}));
+  const addConcepto=()=>setForm(f=>({...f,conceptos:[...f.conceptos,{desc:"",cant:1,precio:0}]}));
+  const rmConcepto=i=>setForm(f=>({...f,conceptos:f.conceptos.length>1?f.conceptos.filter((_,idx)=>idx!==i):f.conceptos}));
+
+  const save=async()=>{
+    if(!form.cliente.trim()){showT("El cliente es obligatorio","err");return;}
+    if(form.conceptos.filter(c=>c.desc&&c.cant>0).length===0){showT("Agrega al menos un concepto con descripción y cantidad","err");return;}
+    const data={
+      ...form,
+      conceptos:form.conceptos.map(c=>({desc:c.desc,cant:Number(c.cant)||0,precio:Number(c.precio)||0})),
+      subtotal,ivaAmt,total,
+    };
+    try{
+      if(editItem){
+        await updateDoc(doc(db,"presupuestos",editItem.id),data);
+        showT("✓ Presupuesto actualizado");
+      }else{
+        await addDoc(collection(db,"presupuestos"),{...data,folio:"PRE-"+uid(),createdAt:serverTimestamp()});
+        showT("✓ Presupuesto creado");
+      }
+      setModal(false);setForm(empty);setEditItem(null);
+    }catch(e){showT(e.message,"err");}
+  };
+  const del=async id=>{if(!confirm("¿Eliminar este presupuesto?"))return;await deleteDoc(doc(db,"presupuestos",id));showT("Eliminado");};
+  const updStatus=async(id,status)=>updateDoc(doc(db,"presupuestos",id),{status});
+
+  const sc={Borrador:MUTED,Enviado:BLUE,Aprobado:GREEN,Rechazado:ROSE};
+  const statuses=["Borrador","Enviado","Aprobado","Rechazado"];
+  const filt=items.filter(p=>
+    (statusF==="todos"||p.status===statusF) &&
+    (!q || (p.cliente||"").toLowerCase().includes(q.toLowerCase()) || (p.folio||"").toLowerCase().includes(q.toLowerCase()))
+  );
+  const totAll=filt.reduce((a,p)=>a+(p.total||0),0);
+  const aprobados=items.filter(p=>p.status==="Aprobado").reduce((a,p)=>a+(p.total||0),0);
+  const pendientes=items.filter(p=>p.status==="Enviado").reduce((a,p)=>a+(p.total||0),0);
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Presupuestos</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Crea, envía y controla presupuestos · PDF · XLSX</p>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>exportPresupuestosXLSX(items)} className="btn" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>Exportar XLSX</button>
+          <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo presupuesto</button>
+        </div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
+        <KpiCard icon={ClipboardList} color={A} label="Total presupuestos" value={items.length} sub="en la base"/>
+        <KpiCard icon={DollarSign} color={VIOLET} label="Monto filtrado" value={fmtK(totAll)} sub={filt.length+" registros"}/>
+        <KpiCard icon={CheckCircle} color={GREEN} label="Aprobados" value={fmtK(aprobados)}/>
+        <KpiCard icon={Clock} color={BLUE} label="Enviados / por definir" value={fmtK(pendientes)}/>
+      </div>
+
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
+        {["todos",...statuses].map(s=>(
+          <button key={s} onClick={()=>setStatusF(s)} className="btn" style={{padding:"6px 14px",borderRadius:9,border:"1.5px solid "+(statusF===s?A:BD2),background:statusF===s?A+"10":"#fff",color:statusF===s?A:MUTED,fontSize:12,fontWeight:statusF===s?700:500,cursor:"pointer"}}>{s==="todos"?"Todos":s}</button>
+        ))}
+        <div style={{marginLeft:"auto",background:"#fff",border:"1px solid "+BORDER,borderRadius:10,padding:"7px 13px",display:"flex",alignItems:"center",gap:8,minWidth:240}}>
+          <Search size={13} color={MUTED}/>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar cliente o folio…" style={{background:"none",border:"none",fontSize:13,flex:1,outline:"none"}}/>
+        </div>
+      </div>
+
+      {load?<div style={{padding:40,textAlign:"center",color:MUTED}}>Cargando…</div>
+      :<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+        {filt.length===0?
+          <div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin presupuestos. <button onClick={openNew} style={{color:A,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Crear →</button></div>
+          :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:900}}>
+            <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
+              {["Folio","Cliente","Fecha","Vigencia","Conceptos","Subtotal","IVA","Total","Estado","Acciones"].map(h=>
+                <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
+              )}
+            </tr></thead>
+            <tbody>{filt.map(p=>(
+              <tr key={p.id} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
+                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:10,color:MUTED,whiteSpace:"nowrap"}}>{p.folio||"—"}</td>
+                <td style={{padding:"10px 12px",fontWeight:700,fontSize:13}}>{p.cliente||"—"}<div style={{fontSize:10,color:MUTED,fontWeight:400}}>{p.contacto}</div></td>
+                <td style={{padding:"10px 12px",fontSize:12,color:MUTED,whiteSpace:"nowrap"}}>{p.fecha||"—"}</td>
+                <td style={{padding:"10px 12px",fontSize:12,color:MUTED,whiteSpace:"nowrap"}}>{p.vigencia||"—"}</td>
+                <td style={{padding:"10px 12px",fontSize:12}}>{(p.conceptos||[]).length}</td>
+                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12}}>{fmt(p.subtotal||0)}</td>
+                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12,color:MUTED}}>{fmt(p.ivaAmt||0)}</td>
+                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:13,fontWeight:800}}>{fmt(p.total||0)}</td>
+                <td style={{padding:"10px 12px"}}>
+                  <select value={p.status||"Borrador"} onChange={e=>updStatus(p.id,e.target.value)} style={{background:"transparent",border:"1.5px solid "+(sc[p.status]||MUTED)+"28",borderRadius:8,padding:"3px 7px",color:sc[p.status]||MUTED,fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                    {statuses.map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                </td>
+                <td style={{padding:"10px 12px"}}>
+                  <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                    <button onClick={()=>downloadPresupuestoPDF(p)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}><Download size={12}/>PDF</button>
+                    <button onClick={()=>openEdit(p)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
+                    <button onClick={()=>del(p.id)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
+                  </div>
+                </td>
+              </tr>
+            ))}</tbody>
+          </table></div>}
+      </div>}
+
+      {modal&&<Modal title={editItem?"Editar presupuesto":"Nuevo presupuesto"} onClose={()=>{setModal(false);setEditItem(null);}} icon={ClipboardList} iconColor={A} wide>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+          <Inp label="Cliente *" value={form.cliente} onChange={e=>setForm({...form,cliente:e.target.value})} placeholder="Nombre de la empresa"/>
+          <Inp label="Contacto" value={form.contacto} onChange={e=>setForm({...form,contacto:e.target.value})} placeholder="Nombre del contacto"/>
+          <Inp label="Fecha" type="date" value={form.fecha} onChange={e=>setForm({...form,fecha:e.target.value})}/>
+          <Inp label="Vigencia hasta" type="date" value={form.vigencia} onChange={e=>setForm({...form,vigencia:e.target.value})}/>
+        </div>
+        <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>Conceptos</div>
+        <div style={{background:"#f8fafd",border:"1px solid "+BORDER,borderRadius:11,padding:11,marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"3fr 0.7fr 1fr 1fr 30px",gap:7,fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",marginBottom:6,padding:"0 4px"}}>
+            <div>Descripción</div><div style={{textAlign:"center"}}>Cant</div><div style={{textAlign:"right"}}>P. Unit</div><div style={{textAlign:"right"}}>Importe</div><div/>
+          </div>
+          {form.conceptos.map((c,i)=>(
+            <div key={i} style={{display:"grid",gridTemplateColumns:"3fr 0.7fr 1fr 1fr 30px",gap:7,marginBottom:6,alignItems:"center"}}>
+              <input value={c.desc} onChange={e=>updConcepto(i,"desc",e.target.value)} placeholder="Ej: Traslado MTY → GDL" style={{background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontSize:12}}/>
+              <input type="number" value={c.cant} onChange={e=>updConcepto(i,"cant",e.target.value)} style={{background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 6px",fontSize:12,fontFamily:MONO,textAlign:"center"}}/>
+              <input type="number" value={c.precio} onChange={e=>updConcepto(i,"precio",e.target.value)} style={{background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontSize:12,fontFamily:MONO,textAlign:"right"}}/>
+              <div style={{fontFamily:MONO,fontSize:12,fontWeight:700,textAlign:"right",padding:"7px 6px",color:TEXT}}>{fmt((Number(c.cant)||0)*(Number(c.precio)||0))}</div>
+              <button onClick={()=>rmConcepto(i)} className="btn" style={{color:ROSE,border:"1px solid "+ROSE+"28",borderRadius:6,padding:4,display:"flex",justifyContent:"center"}}><X size={11}/></button>
+            </div>
+          ))}
+          <button onClick={addConcepto} className="btn" style={{background:A+"10",color:A,border:"1.5px dashed "+A+"50",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:6,marginTop:6}}><Plus size={12}/>Agregar concepto</button>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado</div>
+            <select value={form.status} onChange={e=>setForm({...form,status:e.target.value})} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
+              {statuses.map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",alignItems:"center"}}>
+            <Tog checked={form.iva} onChange={v=>setForm(f=>({...f,iva:v}))} label="Incluir IVA 16%" sub={subtotal>0?"IVA: "+fmt(subtotal*.16):"Sin subtotal"} color={BLUE}/>
+          </div>
+        </div>
+
+        <div style={{padding:"14px 16px",background:"#fff8f3",borderRadius:12,border:"1.5px solid "+A+"24",marginBottom:12}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+            {[["Subtotal",fmt(subtotal),MUTED],["IVA 16%",fmt(ivaAmt),MUTED],["Total c/IVA",fmt(total),A]].map(([l,v,c])=>(
+              <div key={l}><div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>{l}</div><div style={{fontFamily:MONO,fontSize:18,fontWeight:800,color:c,marginTop:3}}>{v}</div></div>
+            ))}
+          </div>
+        </div>
+
+        <Txt label="Notas y condiciones" value={form.notas} onChange={e=>setForm({...form,notas:e.target.value})} placeholder="Términos, forma de pago, vigencia, etc."/>
+
+        <div style={{display:"flex",gap:8,marginTop:12}}>
+          <button onClick={save} className="btn" style={{flex:1,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:15}}>
+            {editItem?"Guardar cambios":"Crear presupuesto"}
+          </button>
+          <button onClick={()=>downloadPresupuestoPDF({folio:editItem?.folio||"PREVIEW",cliente:form.cliente,contacto:form.contacto,fecha:form.fecha,vigencia:form.vigencia,conceptos:form.conceptos,subtotal,ivaAmt,total,notas:form.notas,status:form.status})} className="btn" style={{background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"13px 20px",fontWeight:700,fontSize:14,display:"flex",alignItems:"center",gap:7}}><Download size={14}/>Vista PDF</button>
+        </div>
+      </Modal>}
+    </div>
+  );
+}
+
 /* ─── ROOT APP ───────────────────────────────────────────────────────────── */
 export default function App(){
   const [view,setView]=useState("dashboard");
@@ -2238,6 +2793,7 @@ export default function App(){
   const VIEWS={
     dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat}/>,
     cotizador:<Cotizador onSaved={()=>setView("dashboard")}/>,
+    presupuestos:<Presupuestos/>,
     rutas:<PlanificadorRutas/>,
     nacional:<PlanificadorNacional/>,
     facturas:<Facturas/>,
