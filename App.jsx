@@ -12,6 +12,7 @@ import {
   ArrowRight, AlertCircle, ChevronDown, ChevronUp, BarChart2,
   Printer, ChevronRight, Navigation, Upload,
   Download, Eye, Target, Zap, FolderOpen, ClipboardList,
+  Menu, Bell, ChevronLeft, Activity, Shield, Hash,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -68,6 +69,36 @@ body{background:#f1f4fb;font-family:${SANS};color:${TEXT};-webkit-font-smoothing
 .fr:hover{background:#f6f9ff!important}
 input,select,textarea{font-family:${SANS};color:${TEXT};outline:none}
 input:focus,select:focus,textarea:focus{border-color:${A}!important;box-shadow:0 0 0 3px ${A}18!important}
+button:focus-visible{outline:2px solid ${A};outline-offset:2px;border-radius:8px}
+@keyframes slideIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.slide-in{animation:slideIn .25s cubic-bezier(.22,1,.36,1) both}
+.skel{background:linear-gradient(90deg,#e8eef6 25%,#f1f4fb 50%,#e8eef6 75%);background-size:200% 100%;animation:shimmer 1.5s ease infinite;border-radius:8px}
+.pulse{animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite}
+.glass{background:rgba(255,255,255,.82);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%)}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.table-wrap table{min-width:800px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.g2-side{display:grid;grid-template-columns:1fr 340px;gap:16px}
+@media(max-width:1024px){
+  .g4{grid-template-columns:repeat(2,1fr)}
+  .g2-side{grid-template-columns:1fr}
+}
+@media(max-width:768px){
+  .g4,.g3,.g2{grid-template-columns:1fr}
+  .g2-side{grid-template-columns:1fr}
+  .hide-mobile{display:none!important}
+  .btn{min-height:40px}
+  .sidebar-desktop{transform:translateX(-100%);position:fixed;z-index:200}
+  .sidebar-desktop.open{transform:translateX(0)}
+  .mobile-backdrop{display:block!important}
+}
+@media(max-width:480px){
+  .g4,.g3,.g2{gap:8px}
+}
 @media print{.noprint{display:none!important}body{background:#fff}}
 `;
 
@@ -668,6 +699,7 @@ function Toast({msg,type,onClose}){
   );
 }
 function Modal({title,onClose,children,wide,icon:Icon,iconColor=A}){
+  useEffect(()=>{const h=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[onClose]);
   return(
     <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(12,24,41,.45)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
       <div className="pi" style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:wide?760:490,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 32px 80px rgba(0,0,0,.22)"}}>
@@ -775,172 +807,325 @@ function CitySearch({value,onChange,onSelect,veh,exclude=[]}){
     </div>
   );
 }
+function EmptyState({icon:Icon=Package,title="Sin datos",sub="",action,actionLabel="Crear",color=A}){
+  return(
+    <div className="au" style={{padding:"48px 24px",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:12}}>
+      <div style={{width:56,height:56,borderRadius:16,background:color+"10",display:"flex",alignItems:"center",justifyContent:"center",marginBottom:4}}><Icon size={24} color={color}/></div>
+      <div style={{fontFamily:DISP,fontWeight:700,fontSize:16,color:TEXT}}>{title}</div>
+      {sub&&<div style={{fontSize:13,color:MUTED,maxWidth:300}}>{sub}</div>}
+      {action&&<button onClick={action} className="btn" style={{marginTop:4,display:"flex",alignItems:"center",gap:7,background:"linear-gradient(135deg,"+color+","+color+"cc)",color:"#fff",borderRadius:11,padding:"10px 20px",fontWeight:700,fontSize:13,boxShadow:"0 4px 16px "+color+"30"}}><Plus size={14}/>{actionLabel}</button>}
+    </div>
+  );
+}
+function Skeleton({w="100%",h=16,r=8}){
+  return <div className="skel" style={{width:w,height:h,borderRadius:r}}/>;
+}
+function SkeletonRows({n=5}){
+  return <div style={{display:"flex",flexDirection:"column",gap:10,padding:16}}>{Array.from({length:n}).map((_,i)=><div key={i} style={{display:"flex",gap:12,alignItems:"center"}}><Skeleton w={40} h={40} r={10}/><div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}><Skeleton h={12} w="60%"/><Skeleton h={10} w="40%"/></div><Skeleton w={80} h={14}/></div>)}</div>;
+}
+function TopBar({view,setView,sidebarOpen,setSidebarOpen,setSearchOpen}){
+  const nav=NAV_SECTIONS.flatMap(s=>s.items);
+  const cur=nav.find(n=>n.id===view)||{label:"Dashboard",icon:LayoutDashboard};
+  const Icon=cur.icon;
+  return(
+    <div className="glass noprint" style={{position:"sticky",top:0,zIndex:100,height:56,display:"flex",alignItems:"center",gap:14,padding:"0 28px",borderBottom:"1px solid "+BORDER+"80"}}>
+      <button onClick={()=>setSidebarOpen(!sidebarOpen)} className="btn" style={{display:"none",width:36,height:36,borderRadius:10,border:"1px solid "+BD2,alignItems:"center",justifyContent:"center",color:MUTED,flexShrink:0}} id="hamburger"><Menu size={18}/></button>
+      <div style={{display:"flex",alignItems:"center",gap:9,flex:"0 0 auto"}}>
+        <div style={{width:30,height:30,borderRadius:9,background:A+"12",display:"flex",alignItems:"center",justifyContent:"center"}}><Icon size={15} color={A}/></div>
+        <span style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT}}>{cur.label}</span>
+      </div>
+      <button onClick={()=>setSearchOpen(true)} className="btn" style={{flex:1,maxWidth:420,margin:"0 auto",display:"flex",alignItems:"center",gap:10,padding:"8px 16px",borderRadius:11,border:"1.5px solid "+BD2,background:"#fff",cursor:"pointer"}}>
+        <Search size={14} color={MUTED}/>
+        <span style={{flex:1,textAlign:"left",fontSize:13,color:MUTED+"90"}}>Buscar en todo el sistema…</span>
+        <span style={{fontSize:10,fontFamily:MONO,color:BD2,background:"#f5f7fc",padding:"2px 8px",borderRadius:6,fontWeight:700}}>⌘K</span>
+      </button>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <button onClick={()=>setView("cotizador")} className="btn hide-mobile" style={{display:"flex",alignItems:"center",gap:6,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,boxShadow:"0 3px 12px "+A+"30"}}><Plus size={13}/>Cotizar</button>
+        <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:12,color:"#fff",cursor:"default",flexShrink:0}}>DM</div>
+      </div>
+    </div>
+  );
+}
+function SearchPalette({cots=[],facts=[],rutas=[],clientes=[],entregas=[],onSelect,onClose}){
+  const [q,setQ]=useState("");
+  const ref=useRef(null);
+  useEffect(()=>{ref.current?.focus();},[]);
+  useEffect(()=>{const h=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[onClose]);
+  const results=useMemo(()=>{
+    if(!q.trim()) return [];
+    const lq=q.toLowerCase();
+    const r=[];
+    cots.filter(c=>(c.cliente||"").toLowerCase().includes(lq)||(c.folio||"").toLowerCase().includes(lq)||(c.destino||"").toLowerCase().includes(lq)).slice(0,4).forEach(c=>r.push({type:"cotizador",icon:DollarSign,label:c.cliente||c.folio,sub:c.destino||c.modoLabel||"",extra:fmt(c.total||0),color:A}));
+    facts.filter(f=>(f.empresa||f.cliente||"").toLowerCase().includes(lq)||(f.folio||"").toLowerCase().includes(lq)||(f.servicio||"").toLowerCase().includes(lq)).slice(0,4).forEach(f=>r.push({type:"facturas",icon:FileText,label:f.empresa||f.cliente||f.folio,sub:f.servicio||"",extra:fmt(f.total||0),color:BLUE}));
+    rutas.filter(rt=>(rt.nombre||"").toLowerCase().includes(lq)||(rt.cliente||"").toLowerCase().includes(lq)).slice(0,3).forEach(rt=>r.push({type:"rutas",icon:Map,label:rt.nombre,sub:rt.cliente||"",extra:fmt(rt.total||0),color:VIOLET}));
+    clientes.filter(cl=>(cl.nombre||"").toLowerCase().includes(lq)||(cl.contacto||"").toLowerCase().includes(lq)||(cl.plan||"").toLowerCase().includes(lq)).slice(0,3).forEach(cl=>r.push({type:"clientes",icon:Building2,label:cl.nombre||"",sub:cl.plan||cl.contacto||"",color:BLUE}));
+    entregas.filter(e=>(e.pdv||"").toLowerCase().includes(lq)||(e.dir||"").toLowerCase().includes(lq)).slice(0,3).forEach(e=>r.push({type:"entregas",icon:Package,label:e.pdv||"",sub:e.dir||"",color:GREEN}));
+    return r;
+  },[q,cots,facts,rutas,clientes,entregas]);
+  return(
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(12,24,41,.5)",zIndex:600,display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:"15vh",backdropFilter:"blur(4px)"}}>
+      <div className="pi" style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:540,boxShadow:"0 32px 80px rgba(0,0,0,.28)",overflow:"hidden"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 20px",borderBottom:"1px solid "+BORDER}}>
+          <Search size={18} color={A}/>
+          <input ref={ref} value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar cotizaciones, facturas, rutas, clientes…" style={{flex:1,border:"none",fontSize:15,fontFamily:SANS,background:"transparent"}}/>
+          <button onClick={onClose} className="btn" style={{fontSize:10,fontFamily:MONO,color:MUTED,background:"#f5f7fc",padding:"3px 8px",borderRadius:6,fontWeight:700}}>ESC</button>
+        </div>
+        <div style={{maxHeight:360,overflowY:"auto"}}>
+          {q.trim()&&results.length===0&&<div style={{padding:32,textAlign:"center",color:MUTED,fontSize:13}}>Sin resultados para "{q}"</div>}
+          {results.map((r,i)=>(
+            <button key={i} onClick={()=>{onSelect(r.type);onClose();}} className="btn fr" style={{width:"100%",display:"flex",alignItems:"center",gap:11,padding:"11px 20px",borderBottom:"1px solid "+BORDER+"60",cursor:"pointer",background:"transparent",textAlign:"left"}}>
+              <div style={{width:32,height:32,borderRadius:9,background:r.color+"12",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><r.icon size={14} color={r.color}/></div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:600,fontSize:13,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.label}</div>
+                {r.sub&&<div style={{fontSize:11,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.sub}</div>}
+              </div>
+              {r.extra&&<span style={{fontFamily:MONO,fontSize:12,fontWeight:700,color:r.color,flexShrink:0}}>{r.extra}</span>}
+              <ChevronRight size={12} color={BD2}/>
+            </button>
+          ))}
+        </div>
+        {!q.trim()&&<div style={{padding:"20px 24px",color:MUTED,fontSize:12,textAlign:"center"}}>Escribe para buscar en cotizaciones, facturas, rutas, clientes y entregas</div>}
+      </div>
+    </div>
+  );
+}
+const ago=s=>{if(!s)return"";const d=Date.now()/1000-s;if(d<60)return"ahora";if(d<3600)return Math.floor(d/60)+"m";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d";};
 function MiniBar({pct,color=A,h=4}){
   return <div style={{background:BORDER,borderRadius:4,height:h,overflow:"hidden"}}><div style={{background:color,width:Math.min(100,pct)+"%",height:"100%",borderRadius:4,transition:"width .4s"}}/></div>;
 }
 /* ─── SIDEBAR ────────────────────────────────────────────────────────────── */
-const NAV=[
-  {id:"dashboard",   label:"Dashboard",         icon:LayoutDashboard},
-  {id:"cotizador",   label:"Cotizador Pro",     icon:DollarSign,  badge:"★"},
-  {id:"presupuestos",label:"Presupuestos",      icon:ClipboardList, badge:"NEW"},
-  {id:"rutas",       label:"Planificador Rutas",icon:Map},
-  {id:"nacional",    label:"Proyectos Nacionales",icon:Target},
-  {id:"facturas",    label:"Facturación",       icon:FileText},
-  {id:"viaticos",    label:"Viáticos & Gastos", icon:Zap},
-  {id:"clientes",    label:"Clientes",          icon:Building2},
-  {id:"entregas",    label:"Entregas",          icon:Package},
+const NAV_SECTIONS=[
+  {section:"CORE",items:[
+    {id:"dashboard",   label:"Dashboard",     icon:LayoutDashboard},
+    {id:"cotizador",   label:"Cotizador Pro", icon:DollarSign, badge:"★"},
+    {id:"presupuestos",label:"Presupuestos",  icon:ClipboardList, badge:"NEW"},
+  ]},
+  {section:"OPERACIONES",items:[
+    {id:"rutas",    label:"Planificador Rutas",    icon:Map},
+    {id:"nacional", label:"Proyectos Nacionales",  icon:Target},
+    {id:"entregas", label:"Entregas",              icon:Package},
+  ]},
+  {section:"ADMINISTRACIÓN",items:[
+    {id:"facturas", label:"Facturación",     icon:FileText},
+    {id:"viaticos", label:"Viáticos & Gastos",icon:Zap},
+    {id:"clientes", label:"Clientes",        icon:Building2},
+  ]},
 ];
-function Sidebar({view,setView,stats}){
+function Sidebar({view,setView,stats,open,setOpen}){
+  const w=open?220:64;
   return(
-    <aside className="noprint" style={{width:192,flexShrink:0,background:"#0a1628",display:"flex",flexDirection:"column",minHeight:"100vh",padding:"0 10px 16px"}}>
-      <div style={{padding:"20px 6px 16px",borderBottom:"1px solid #ffffff14",marginBottom:8}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:36,height:36,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:15,color:"#fff",flexShrink:0}}>DM</div>
-          <div><div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:"#fff",letterSpacing:"-0.02em"}}>DMvimiento</div><div style={{fontSize:9,color:"#ffffff60",fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase"}}>LOGISTICS OS</div></div>
-        </div>
+    <aside className={"noprint sidebar-desktop"+(open?" open":"")} style={{width:w,flexShrink:0,background:"#0a1628",display:"flex",flexDirection:"column",minHeight:"100vh",padding:"0 "+(open?"10px":"6px")+" 16px",transition:"width .22s cubic-bezier(.22,1,.36,1),padding .22s",overflow:"hidden"}}>
+      <div style={{padding:open?"20px 6px 14px":"20px 0 14px",borderBottom:"1px solid #ffffff14",marginBottom:6,display:"flex",alignItems:"center",gap:10,justifyContent:open?"flex-start":"center"}}>
+        <div style={{width:36,height:36,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:15,color:"#fff",flexShrink:0}}>DM</div>
+        {open&&<div><div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:"#fff",letterSpacing:"-0.02em",whiteSpace:"nowrap"}}>DMvimiento</div><div style={{fontSize:9,color:"#ffffff60",fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",whiteSpace:"nowrap"}}>LOGISTICS OS v2.1</div></div>}
       </div>
-      <nav style={{flex:1}}>
-        {NAV.map(({id,label,icon:Icon,badge})=>{
-          const a=view===id;
-          return(
-            <button key={id} onClick={()=>setView(id)} className="btn" style={{width:"100%",display:"flex",alignItems:"center",gap:9,padding:"8px 10px",borderRadius:9,marginBottom:1,cursor:"pointer",transition:"all .13s",background:a?"#f97316"+"22":"transparent"}}>
-              <Icon size={15} color={a?A:"#ffffff70"} strokeWidth={a?2.5:2}/>
-              <span style={{fontSize:12,fontWeight:a?700:500,color:a?A:"#ffffff90",flex:1,textAlign:"left"}}>{label}</span>
-              {badge&&<span style={{fontSize:8,fontWeight:800,background:a?A:badge==="NEW"?VIOLET:A,color:"#fff",borderRadius:6,padding:"1px 5px",letterSpacing:"0.05em"}}>{badge}</span>}
-            </button>
-          );
-        })}
+      {open&&<button onClick={()=>setOpen(false)} className="btn" style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:"1px solid #ffffff14",marginBottom:10,color:"#ffffff60",fontSize:11,whiteSpace:"nowrap"}}><Search size={12}/><span style={{flex:1,textAlign:"left"}}>Buscar… ⌘K</span></button>}
+      <nav style={{flex:1,overflowY:"auto"}}>
+        {NAV_SECTIONS.map(({section,items})=>(
+          <div key={section} style={{marginBottom:8}}>
+            {open&&<div style={{fontSize:9,fontWeight:800,color:"#ffffff30",letterSpacing:"0.12em",padding:"6px 10px 4px",textTransform:"uppercase",whiteSpace:"nowrap"}}>{section}</div>}
+            {items.map(({id,label,icon:Icon,badge})=>{
+              const a=view===id;
+              return(
+                <button key={id} onClick={()=>setView(id)} className="btn" title={open?"":label} style={{width:"100%",display:"flex",alignItems:"center",gap:open?9:0,padding:open?"8px 10px":"8px 0",borderRadius:9,marginBottom:1,cursor:"pointer",transition:"all .15s",background:a?A+"22":"transparent",justifyContent:open?"flex-start":"center",position:"relative"}}>
+                  {a&&<div style={{position:"absolute",left:0,top:"20%",bottom:"20%",width:3,borderRadius:4,background:A,transition:"all .15s"}}/>}
+                  <Icon size={15} color={a?A:"#ffffff70"} strokeWidth={a?2.5:2}/>
+                  {open&&<span style={{fontSize:12,fontWeight:a?700:500,color:a?A:"#ffffff90",flex:1,textAlign:"left",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</span>}
+                  {open&&badge&&<span style={{fontSize:8,fontWeight:800,background:a?A:badge==="NEW"?VIOLET:A,color:"#fff",borderRadius:6,padding:"1px 5px",letterSpacing:"0.05em"}}>{badge}</span>}
+                  {!open&&a&&<div style={{position:"absolute",right:-2,width:5,height:5,borderRadius:"50%",background:A}}/>}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </nav>
-      <div style={{borderTop:"1px solid #ffffff14",paddingTop:12,marginTop:4}}>
-        <div style={{display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
-          {[["🔥",GREEN,"FIREBASE",stats.fb],[stats.cot+"","#fff","cots",null],[stats.fac+"","#fff","facts",null]].map(([ic,c,l,blink])=>(
+      <div style={{borderTop:"1px solid #ffffff14",paddingTop:10,marginTop:4}}>
+        {open?<div style={{display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
+          {[["",GREEN,"En línea",stats.fb],[stats.cot+"","#fff","cots",null],[stats.fac+"","#fff","facts",null]].map(([ic,c,l,blink])=>(
             <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
-              {blink!==undefined&&<div style={{width:5,height:5,borderRadius:"50%",background:blink?GREEN:ROSE}}/>}
-              <span style={{fontSize:9,color:"#ffffff50",fontFamily:MONO}}>{ic||"·"} {l}</span>
+              {blink!==undefined&&<div className={blink?"pulse":""} style={{width:5,height:5,borderRadius:"50%",background:blink?GREEN:ROSE}}/>}
+              <span style={{fontSize:9,color:"#ffffff50",fontFamily:MONO}}>{ic} {l}</span>
             </div>
           ))}
-        </div>
+        </div>:<div style={{display:"flex",justifyContent:"center"}}><div className={stats.fb?"pulse":""} style={{width:6,height:6,borderRadius:"50%",background:stats.fb?GREEN:ROSE}}/></div>}
+        <button onClick={()=>setOpen(!open)} className="btn" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",marginTop:8,borderRadius:8,border:"1px solid #ffffff10",color:"#ffffff50"}}>
+          <ChevronLeft size={14} style={{transition:"transform .2s",transform:open?"":"rotate(180deg)"}}/>
+          {open&&<span style={{fontSize:10,fontWeight:600}}>Colapsar</span>}
+        </button>
       </div>
     </aside>
   );
 }
 /* ─── DASHBOARD ──────────────────────────────────────────────────────────── */
-function Dashboard({setView,cots,facts,rutas,entregas,viat=[]}){
+function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[]}){
   const totalFac=facts.reduce((a,f)=>a+(f.total||0),0);
   const cobrado=facts.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const pendiente=facts.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
   const pctCob=totalFac>0?Math.round(cobrado/totalFac*100):0;
   const totalGastos=viat.reduce((a,g)=>a+(g.monto||0),0);
+  const margen=cobrado-totalGastos;
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const mesActual=MESES[new Date().getMonth()];
-  const chartData=MESES.map((m,mi)=>{
+  const chartData=MESES.map(m=>{
     const mf=facts.filter(f=>f.mesOp===m);
     return {m,fac:mf.reduce((a,f)=>a+(f.total||0),0),cob:mf.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0)};
   });
   const maxV=Math.max(...chartData.map(d=>d.fac),1);
-  const recentCots=cots.slice(0,5);
+  const entregados=entregas.filter(e=>e.status==="Entregado").length;
+  const rutasActivas=rutas.filter(r=>r.status==="En curso").length;
+  const rutasProg=rutas.filter(r=>r.status==="Programada").length;
+  const rutasComp=rutas.filter(r=>r.status==="Completada").length;
+  const pctEnt=entregas.length>0?Math.round(entregados/entregas.length*100):0;
+  const healthScore=Math.round((pctCob*.4)+(pctEnt*.3)+(rutas.length>0?(rutasComp/rutas.length*100*.3):30));
+  const healthColor=healthScore>=70?GREEN:healthScore>=40?AMBER:ROSE;
+  // Top clients
+  const topClients=useMemo(()=>{
+    const map={};facts.forEach(f=>{const k=f.empresa||f.cliente||"—";map[k]=(map[k]||0)+(f.total||0);});
+    return Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  },[facts]);
+  const topMax=topClients[0]?topClients[0][1]:1;
+  // Activity feed
+  const feed=useMemo(()=>{
+    const all=[];
+    cots.slice(0,5).forEach(c=>all.push({icon:DollarSign,color:A,label:"Cotización "+((c.folio||"").slice(0,12)),sub:c.cliente||"",t:c.createdAt?.seconds||0,view:"cotizador"}));
+    facts.slice(0,5).forEach(f=>all.push({icon:FileText,color:BLUE,label:"Factura "+(f.folio||"").slice(0,14),sub:f.empresa||"",t:f.createdAt?.seconds||0,view:"facturas"}));
+    rutas.slice(0,3).forEach(r=>all.push({icon:Map,color:VIOLET,label:r.nombre||"Ruta",sub:r.cliente||"",t:r.createdAt?.seconds||0,view:"rutas"}));
+    entregas.slice(0,3).forEach(e=>all.push({icon:Package,color:GREEN,label:e.pdv||"Entrega",sub:e.status||"",t:e.createdAt?.seconds||0,view:"entregas"}));
+    return all.sort((a,b)=>b.t-a.t).slice(0,10);
+  },[cots,facts,rutas,entregas]);
   const quickActions=[
     {icon:DollarSign,label:"Nueva cotización",color:A,v:"cotizador"},
-    {icon:Map,label:"Planificar ruta",color:VIOLET,v:"rutas"},
-    {icon:FileText,label:"Registrar factura",color:BLUE,v:"facturas"},
-    {icon:Zap,label:"Registrar gasto",color:ROSE,v:"viaticos"},
+    {icon:ClipboardList,label:"Nuevo presupuesto",color:VIOLET,v:"presupuestos"},
+    {icon:Map,label:"Planificar ruta",color:BLUE,v:"rutas"},
+    {icon:FileText,label:"Registrar factura",color:GREEN,v:"facturas"},
   ];
+
   return(
-    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
-      {/* Header */}
-      <div className="au" style={{marginBottom:24}}>
+    <div className="slide-in" style={{flex:1,overflowY:"auto",padding:"24px 28px",background:"#f1f4fb"}}>
+      <div className="au" style={{marginBottom:20}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
           <div>
-            <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:30,color:TEXT,letterSpacing:"-0.03em"}}>Dashboard</h1>
-            <p style={{color:MUTED,fontSize:13,marginTop:4}}>Bienvenido a DMvimiento Logistics OS · {new Date().toLocaleDateString("es-MX",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
+            <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Dashboard</h1>
+            <p style={{color:MUTED,fontSize:13,marginTop:3}}>{new Date().toLocaleDateString("es-MX",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
           </div>
-          <button onClick={()=>setView("cotizador")} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:13,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 6px 20px "+A+"40"}}>
-            <Plus size={15}/>Nueva cotización
-          </button>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div className="ch" style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"10px 16px",display:"flex",alignItems:"center",gap:8,cursor:"default"}}>
+              <div style={{width:36,height:36,borderRadius:10,background:healthColor+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Shield size={16} color={healthColor}/></div>
+              <div><div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em"}}>Health Score</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:healthColor,lineHeight:1}}>{healthScore}</div></div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="au2" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+      <div className="g4 au2" style={{marginBottom:16}}>
         <KpiCard icon={DollarSign} color={A} label="Cotizaciones" value={cots.length} sub="total generadas" onClick={()=>setView("cotizador")}/>
         <KpiCard icon={TrendingUp} color={GREEN} label="Facturado total" value={fmtK(totalFac)} sub={pctCob+"% cobrado"} onClick={()=>setView("facturas")}/>
         <KpiCard icon={Clock} color={AMBER} label="Por cobrar" value={fmtK(pendiente)} sub={facts.filter(f=>f.status==="Pendiente").length+" facturas"} onClick={()=>setView("facturas")}/>
         <KpiCard icon={Zap} color={ROSE} label="Gastos operativos" value={fmtK(totalGastos)} sub={viat.length+" registros"} onClick={()=>setView("viaticos")}/>
       </div>
+      <div className="g4" style={{marginBottom:16}}>
+        <KpiCard icon={Package} color={BLUE} label="Entregas completadas" value={entregados+"/"+entregas.length} sub={pctEnt+"% completado"} onClick={()=>setView("entregas")}/>
+        <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutasActivas} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
+        <KpiCard icon={TrendingUp} color={margen>=0?GREEN:ROSE} label="Margen neto" value={fmtK(margen)} sub="cobrado - gastos"/>
+        <KpiCard icon={Building2} color={BLUE} label="Clientes activos" value={clientes.length} sub="en la base" onClick={()=>setView("clientes")}/>
+      </div>
 
-      <div className="au3" style={{display:"grid",gridTemplateColumns:"1fr 340px",gap:16,marginBottom:16}}>
-        {/* Chart */}
-        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:24}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-            <div>
-              <div style={{fontFamily:DISP,fontWeight:700,fontSize:16}}>Facturación mensual {new Date().getFullYear()}</div>
-              <div style={{fontSize:12,color:MUTED,marginTop:2}}>Facturado vs cobrado por mes</div>
+      <div className="g2-side" style={{marginBottom:16}}>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          {/* Chart */}
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:22}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+              <div>
+                <div style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Facturación mensual {new Date().getFullYear()}</div>
+                <div style={{fontSize:11,color:MUTED,marginTop:2}}>Facturado vs cobrado</div>
+              </div>
+              <div style={{display:"flex",gap:12}}>
+                {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
+              </div>
             </div>
-            <div style={{display:"flex",gap:12}}>
-              {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontSize:11,color:MUTED}}>{l}</span></div>)}
+            <div style={{display:"flex",alignItems:"flex-end",gap:4,height:130}}>
+              {chartData.map(d=>(
+                <div key={d.m} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                  {d.fac>0&&<div style={{fontSize:7,fontFamily:MONO,color:d.m===mesActual?A:MUTED,fontWeight:700}}>{fmtK(d.fac)}</div>}
+                  <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:95,position:"relative"}}>
+                    <div style={{width:"100%",background:d.m===mesActual?A:A+"38",borderRadius:"3px 3px 0 0",height:d.fac>0?Math.max(5,Math.round(d.fac/maxV*100))+"%":"4px",minHeight:3,transition:"height .4s"}}/>
+                    {d.cob>0&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:GREEN+"80",borderRadius:"3px 3px 0 0",height:Math.max(2,Math.round(d.cob/maxV*100))+"%"}}/>}
+                  </div>
+                  <div style={{fontSize:8,fontWeight:d.m===mesActual?800:500,color:d.m===mesActual?A:MUTED}}>{d.m}</div>
+                </div>
+              ))}
             </div>
           </div>
-          <div style={{display:"flex",alignItems:"flex-end",gap:5,height:140}}>
-            {chartData.map(d=>(
-              <div key={d.m} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-                {d.fac>0&&<div style={{fontSize:8,fontFamily:MONO,color:d.m===mesActual?A:MUTED,fontWeight:700}}>{fmtK(d.fac)}</div>}
-                <div style={{width:"100%",display:"flex",flexDirection:"column",justifyContent:"flex-end",height:100,position:"relative",gap:1}}>
-                  <div style={{width:"100%",background:d.m===mesActual?A:A+"38",borderRadius:"3px 3px 0 0",height:d.fac>0?Math.max(5,Math.round(d.fac/maxV*100))+"%":"4px",minHeight:3,transition:"height .3s"}}/>
-                  {d.cob>0&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:GREEN+"80",borderRadius:"3px 3px 0 0",height:Math.max(2,Math.round(d.cob/maxV*100))+"%"}}/>}
+          {/* Pipeline de rutas */}
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"16px 18px"}}>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,marginBottom:12}}>Pipeline de rutas</div>
+            <div className="g3">
+              {[[rutasProg,"Programadas",VIOLET],[rutasActivas,"En curso",BLUE],[rutasComp,"Completadas",GREEN]].map(([n,l,c])=>(
+                <div key={l} style={{textAlign:"center",padding:"12px 8px",background:c+"08",borderRadius:11,border:"1px solid "+c+"18"}}>
+                  <div style={{fontFamily:MONO,fontSize:24,fontWeight:800,color:c}}>{n}</div>
+                  <div style={{fontSize:10,fontWeight:600,color:MUTED,marginTop:2}}>{l}</div>
                 </div>
-                <div style={{fontSize:9,fontWeight:d.m===mesActual?800:500,color:d.m===mesActual?A:MUTED}}>{d.m}</div>
+              ))}
+            </div>
+          </div>
+          {/* Top clientes */}
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"16px 18px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <span style={{fontFamily:DISP,fontWeight:700,fontSize:14}}>Top clientes por facturación</span>
+              <button onClick={()=>setView("clientes")} className="btn" style={{fontSize:11,color:A,fontWeight:700}}>Ver todos →</button>
+            </div>
+            {topClients.length===0?<div style={{padding:16,textAlign:"center",color:MUTED,fontSize:12}}>Sin datos</div>
+            :topClients.map(([name,total],i)=>(
+              <div key={name} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <div style={{width:22,height:22,borderRadius:7,background:A+"12",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:A,flexShrink:0}}>{i+1}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</div>
+                  <MiniBar pct={total/topMax*100} color={A} h={3}/>
+                </div>
+                <span style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:A,flexShrink:0}}>{fmtK(total)}</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Quick actions */}
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {/* Right column */}
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {/* Quick actions */}
           <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,color:TEXT,paddingLeft:2}}>Acceso rápido</div>
           {quickActions.map(({icon:Icon,label,color,v})=>(
-            <button key={v} onClick={()=>setView(v)} className="btn ch" style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",borderRadius:13,border:"1px solid "+BORDER,background:"#fff",cursor:"pointer",textAlign:"left",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-              <div style={{width:38,height:38,borderRadius:11,background:color+"14",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon size={17} color={color}/></div>
+            <button key={v} onClick={()=>setView(v)} className="btn ch" style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:12,border:"1px solid "+BORDER,background:"#fff",cursor:"pointer",textAlign:"left",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+              <div style={{width:36,height:36,borderRadius:10,background:color+"14",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon size={16} color={color}/></div>
               <span style={{fontSize:13,fontWeight:600,color:TEXT}}>{label}</span>
               <ChevronRight size={14} color={MUTED} style={{marginLeft:"auto"}}/>
             </button>
           ))}
-          {/* Financial summary mini */}
-          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"14px 16px",marginTop:2}}>
+          {/* Financial summary */}
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"14px 16px",marginTop:4}}>
             <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10}}>Resumen financiero</div>
             <RowItem l="Facturado" v={fmtK(totalFac)} c={TEXT}/>
             <RowItem l="Cobrado" v={fmtK(cobrado)} c={GREEN}/>
             <RowItem l="Por cobrar" v={fmtK(pendiente)} c={AMBER}/>
-            <RowItem l="Gastos operativos" v={fmtK(totalGastos)} c={ROSE}/>
-            <RowItem l="Margen neto aprox." v={fmtK(cobrado-totalGastos)} c={cobrado>totalGastos?GREEN:ROSE}/>
-            <div style={{marginTop:8}}><MiniBar pct={pctCob} color={GREEN}/><div style={{fontSize:10,color:MUTED,marginTop:3}}>{pctCob}% cobrado</div></div>
+            <RowItem l="Gastos" v={fmtK(totalGastos)} c={ROSE}/>
+            <RowItem l="Margen neto" v={fmtK(margen)} c={margen>=0?GREEN:ROSE} bold/>
+            <div style={{marginTop:8}}><MiniBar pct={pctCob} color={GREEN}/><div style={{fontSize:10,color:MUTED,marginTop:3}}>{pctCob}% cobrado del total facturado</div></div>
+          </div>
+          {/* Activity feed */}
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"14px 16px"}}>
+            <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10}}>Actividad reciente</div>
+            {feed.length===0?<div style={{padding:12,textAlign:"center",color:MUTED,fontSize:11}}>Sin actividad</div>
+            :feed.map((f,i)=>(
+              <button key={i} onClick={()=>setView(f.view)} className="btn fr" style={{width:"100%",display:"flex",alignItems:"center",gap:9,padding:"7px 4px",borderBottom:i<feed.length-1?"1px solid "+BORDER+"60":"none",cursor:"pointer",background:"transparent",textAlign:"left"}}>
+                <div style={{width:28,height:28,borderRadius:8,background:f.color+"12",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><f.icon size={12} color={f.color}/></div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:11,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.label}</div>
+                  <div style={{fontSize:10,color:MUTED}}>{f.sub}</div>
+                </div>
+                <span style={{fontSize:9,color:MUTED,fontFamily:MONO,flexShrink:0}}>{ago(f.t)}</span>
+              </button>
+            ))}
           </div>
         </div>
       </div>
-
-      {/* Recent cotizaciones */}
-      {recentCots.length>0&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,overflow:"hidden"}}>
-        <div style={{padding:"16px 20px",borderBottom:"1px solid "+BORDER,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Cotizaciones recientes</span>
-          <button onClick={()=>setView("cotizador")} className="btn" style={{fontSize:12,color:A,fontWeight:700}}>Ver todas →</button>
-        </div>
-        <div style={{overflowX:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",minWidth:600}}>
-            <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
-              {["Folio","Cliente","Destino","Modo","Total",""].map(h=><th key={h} style={{padding:"9px 16px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase"}}>{h}</th>)}
-            </tr></thead>
-            <tbody>{recentCots.map((c,i)=>(
-              <tr key={c.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
-                <td style={{padding:"10px 16px",fontFamily:MONO,fontSize:10,color:MUTED}}>{c.folio||"—"}</td>
-                <td style={{padding:"10px 16px",fontWeight:700,fontSize:13}}>{c.cliente||"—"}</td>
-                <td style={{padding:"10px 16px",fontSize:12,color:MUTED}}>{c.destino||"—"}</td>
-                <td style={{padding:"10px 16px"}}><Tag color={c.modo==="local"?BLUE:c.modo==="masivo"?VIOLET:A} sm>{c.modoLabel||c.modo||"—"}</Tag></td>
-                <td style={{padding:"10px 16px",fontFamily:MONO,fontSize:13,fontWeight:800,color:A}}>{fmt(c.total||0)}</td>
-                <td style={{padding:"10px 16px"}}><button onClick={()=>printCotizacion(c)} className="btn" style={{color:MUTED}}><Printer size={13}/></button></td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-      </div>}
     </div>
   );
 }
@@ -1602,7 +1787,7 @@ function PlanificadorRutas(){
             <button onClick={handleSave} disabled={saving} className="btn" style={{flex:2,padding:"13px 0",borderRadius:12,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",fontFamily:DISP,fontWeight:700,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 5px 20px "+A+"35",opacity:saving?.7:1}}>
               {saving?<><div style={{width:15,height:15,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}} className="spin"/>Guardando…</>:<><Map size={17}/>Guardar Ruta</>}
             </button>
-            <button onClick={()=>{const q={folio:"RUT-"+uid(),cliente,modo:"ruta",modoLabel:"RUTA MULTI-PARADA",destino:stops.filter(s=>!s.isOrigin).map(s=>s.city).join(" → "),vehiculoLabel:vehD?.label,stops,lines:[{label:"Tarifa transporte",value:fmt(tarifaT)},urg&&{label:"⚡ Urgente",value:"+"+fmt(xU),color:ROSE},xViat>0&&{label:"Viáticos",value:"+"+fmt(xViat),color:AMBER},{label:"Subtotal",value:fmt(sub)},{label:"IVA 16%",value:fmt(iva),color:MUTED},{label:"TOTAL",value:fmt(total),bold:true,color:A}].filter(Boolean),flota:{vans,dias:diasOp,capDia},totalPDV,plazo,total};printCotizacion(q);}} className="btn"
+            <button onClick={()=>{const q={folio:"RUT-"+uid(),cliente,modo:"ruta",modoLabel:"RUTA MULTI-PARADA",destino:stops.filter(s=>!s.isOrigin).map(s=>s.city).join(" → "),vehiculoLabel:vehD?.label,stops,lines:[{label:"Tarifa transporte",value:fmt(tarifaT)},urg&&{label:"⚡ Urgente",value:"+"+fmt(xU),color:ROSE},xViat>0&&{label:"Viáticos",value:"+"+fmt(xViat),color:AMBER},{label:"Subtotal",value:fmt(sub)},{label:"IVA 16%",value:fmt(iva),color:MUTED},{label:"TOTAL",value:fmt(total),bold:true,color:A}].filter(Boolean),flota:{vans,dias:diasOp,capDia},totalPDV,plazo,total};downloadCotizacionPDF(q);}} className="btn"
               style={{flex:1,padding:"13px 0",borderRadius:12,border:"1.5px solid "+BD2,background:"#fff",fontFamily:SANS,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7,color:TEXT}}>
               <Printer size={14}/>PDF
             </button>
@@ -2780,7 +2965,10 @@ export default function App(){
   const [rutas,setRutas]=useState([]);
   const [entregas,setEntregas]=useState([]);
   const [viat,setViat]=useState([]);
+  const [clientes,setClientes]=useState([]);
   const [fbOk,setFbOk]=useState(false);
+  const [sidebarOpen,setSidebarOpen]=useState(true);
+  const [searchOpen,setSearchOpen]=useState(false);
 
   useEffect(()=>{
     const u1=onSnapshot(collection(db,"cotizaciones"),s=>{setCots(s.docs.map(d=>({id:d.id,...d.data()})));setFbOk(true);});
@@ -2788,11 +2976,24 @@ export default function App(){
     const u3=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u4=onSnapshot(collection(db,"entregas"),s=>setEntregas(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u5=onSnapshot(collection(db,"viaticos"),s=>setViat(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();u3();u4();u5();};
+    const u6=onSnapshot(collection(db,"cuentas"),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();u3();u4();u5();u6();};
+  },[]);
+
+  // Cmd+K shortcut
+  useEffect(()=>{
+    const h=e=>{if((e.metaKey||e.ctrlKey)&&e.key==="k"){e.preventDefault();setSearchOpen(o=>!o);}};
+    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
+  },[]);
+
+  // Responsive sidebar
+  useEffect(()=>{
+    const h=()=>{if(window.innerWidth<768)setSidebarOpen(false);};
+    h();window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);
   },[]);
 
   const VIEWS={
-    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat}/>,
+    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes}/>,
     cotizador:<Cotizador onSaved={()=>setView("dashboard")}/>,
     presupuestos:<Presupuestos/>,
     rutas:<PlanificadorRutas/>,
@@ -2807,11 +3008,15 @@ export default function App(){
     <>
       <style>{CSS}</style>
       <div style={{display:"flex",minHeight:"100vh",background:"#f1f4fb",color:TEXT,fontFamily:SANS}}>
-        <Sidebar view={view} setView={setView} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}}/>
-        <main style={{flex:1,overflowY:"auto",minHeight:"100vh",display:"flex",flexDirection:"column"}}>
-          {VIEWS[view]||VIEWS.dashboard}
-        </main>
+        <Sidebar view={view} setView={v=>{setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen}/>
+        <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
+          <TopBar view={view} setView={setView} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} setSearchOpen={setSearchOpen}/>
+          <main style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
+            {VIEWS[view]||VIEWS.dashboard}
+          </main>
+        </div>
       </div>
+      {searchOpen&&<SearchPalette cots={cots} facts={facts} rutas={rutas} clientes={clientes} entregas={entregas} onSelect={v=>setView(v)} onClose={()=>setSearchOpen(false)}/>}
     </>
   );
 }
