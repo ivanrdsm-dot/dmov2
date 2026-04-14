@@ -896,9 +896,10 @@ function MiniBar({pct,color=A,h=4}){
 /* ─── SIDEBAR ────────────────────────────────────────────────────────────── */
 const NAV_SECTIONS=[
   {section:"CORE",items:[
-    {id:"dashboard",   label:"Dashboard",     icon:LayoutDashboard},
-    {id:"cotizador",   label:"Cotizador Pro", icon:DollarSign, badge:"★"},
-    {id:"presupuestos",label:"Presupuestos",  icon:ClipboardList, badge:"NEW"},
+    {id:"dashboard",    label:"Dashboard",     icon:LayoutDashboard},
+    {id:"cotizador",    label:"Cotizador Pro", icon:DollarSign, badge:"★"},
+    {id:"presupuestos", label:"Presupuestos",  icon:ClipboardList},
+    {id:"prospeccion",  label:"Prospección",   icon:Target, badge:"NEW"},
   ]},
   {section:"OPERACIONES",items:[
     {id:"rutas",    label:"Planificador Rutas",    icon:Map},
@@ -957,7 +958,7 @@ function Sidebar({view,setView,stats,open,setOpen}){
   );
 }
 /* ─── DASHBOARD ──────────────────────────────────────────────────────────── */
-function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[]}){
+function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospectos=[]}){
   const totalFac=facts.reduce((a,f)=>a+(f.total||0),0);
   const cobrado=facts.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const pendiente=facts.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
@@ -1126,6 +1127,40 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[]}){
           </div>
         </div>
       </div>
+
+      {/* Prospección */}
+      {prospectos.length>0&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:22,marginTop:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Pipeline de Prospección</div>
+            <div style={{fontSize:11,color:MUTED,marginTop:2}}>Oportunidades de negocio en seguimiento</div>
+          </div>
+          <button onClick={()=>setView("prospeccion")} className="btn" style={{fontSize:12,color:VIOLET,fontWeight:700}}>Ver todo →</button>
+        </div>
+        <div className="g4" style={{marginBottom:14}}>
+          {[["Contacto inicial",MUTED],["En negociación",BLUE],["Propuesta enviada",AMBER],["Ganado",GREEN]].map(([s,c])=>{
+            const n=prospectos.filter(p=>p.status===s);
+            return(
+              <div key={s} style={{textAlign:"center",padding:"10px 8px",background:c+"08",borderRadius:10,border:"1px solid "+c+"18"}}>
+                <div style={{fontFamily:MONO,fontSize:20,fontWeight:800,color:c}}>{n.length}</div>
+                <div style={{fontSize:9,fontWeight:600,color:MUTED,marginTop:2}}>{s}</div>
+                <div style={{fontFamily:MONO,fontSize:11,color:c,fontWeight:700,marginTop:3}}>{fmtK(n.reduce((a,p)=>a+(p.total||0),0))}</div>
+              </div>
+            );
+          })}
+        </div>
+        {prospectos.filter(p=>p.status!=="Perdido").slice(0,5).map(p=>(
+          <div key={p.id} className="fr" style={{display:"flex",alignItems:"center",gap:10,padding:"8px 4px",borderBottom:"1px solid "+BORDER+"60",cursor:"pointer"}} onClick={()=>setView("prospeccion")}>
+            <div style={{width:32,height:32,borderRadius:9,background:VIOLET+"12",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Target size={14} color={VIOLET}/></div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.empresa}</div>
+              <div style={{fontSize:10,color:MUTED}}>{p.servicio||"—"}</div>
+            </div>
+            <Tag color={({"Contacto inicial":MUTED,"En negociación":BLUE,"Propuesta enviada":AMBER,Ganado:GREEN,Perdido:ROSE})[p.status]||MUTED} sm>{p.status}</Tag>
+            <span style={{fontFamily:MONO,fontSize:12,fontWeight:700,color:VIOLET,flexShrink:0}}>{fmtK(p.total||0)}</span>
+          </div>
+        ))}
+      </div>}
     </div>
   );
 }
@@ -2957,6 +2992,175 @@ function Presupuestos(){
   );
 }
 
+/* ─── PROSPECCIÓN ────────────────────────────────────────────────────────── */
+function Prospeccion(){
+  const [items,setItems]=useState([]);
+  const [load,setLoad]=useState(true);
+  const [modal,setModal]=useState(false);
+  const [editItem,setEditItem]=useState(null);
+  const [toast,setToast]=useState(null);
+  const [q,setQ]=useState("");
+  const [statusF,setStatusF]=useState("todos");
+  const showT=(m,t="ok")=>setToast({msg:m,type:t});
+  const statuses=["Contacto inicial","En negociación","Propuesta enviada","Ganado","Perdido"];
+  const sc={"Contacto inicial":MUTED,"En negociación":BLUE,"Propuesta enviada":AMBER,Ganado:GREEN,Perdido:ROSE};
+  const empty={empresa:"",contacto:"",servicio:"",monto:"",mes:"May",anio:2026,probabilidad:50,status:"Contacto inicial",notas:""};
+  const [form,setForm]=useState(empty);
+
+  useEffect(()=>onSnapshot(collection(db,"prospeccion"),s=>{
+    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
+    setLoad(false);
+  }),[]);
+
+  const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
+  const openEdit=p=>{setForm({empresa:p.empresa||"",contacto:p.contacto||"",servicio:p.servicio||"",monto:String(p.monto||""),mes:p.mes||"May",anio:p.anio||2026,probabilidad:p.probabilidad||50,status:p.status||"Contacto inicial",notas:p.notas||""});setEditItem(p);setModal(true);};
+
+  const save=async()=>{
+    if(!form.empresa.trim()){showT("La empresa es obligatoria","err");return;}
+    const monto=parseFloat(form.monto)||0;
+    const ivaAmt=monto*.16;
+    const data={...form,monto,ivaAmt,total:monto+ivaAmt,probabilidad:Number(form.probabilidad)||0};
+    try{
+      if(editItem){await updateDoc(doc(db,"prospeccion",editItem.id),data);showT("✓ Prospecto actualizado");}
+      else{await addDoc(collection(db,"prospeccion"),{...data,folio:"PROS-"+uid(),createdAt:serverTimestamp()});showT("✓ Prospecto creado");}
+      setModal(false);setForm(empty);setEditItem(null);
+    }catch(e){showT(e.message,"err");}
+  };
+  const del=async id=>{if(!confirm("¿Eliminar este prospecto?"))return;await deleteDoc(doc(db,"prospeccion",id));showT("Eliminado");};
+
+  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const filt=items.filter(p=>(statusF==="todos"||p.status===statusF)&&(!q||(p.empresa||"").toLowerCase().includes(q.toLowerCase())||(p.contacto||"").toLowerCase().includes(q.toLowerCase())));
+  const totPipeline=filt.reduce((a,p)=>a+(p.total||0),0);
+  const totGanado=items.filter(p=>p.status==="Ganado").reduce((a,p)=>a+(p.total||0),0);
+  const totNeg=items.filter(p=>p.status==="En negociación"||p.status==="Propuesta enviada").reduce((a,p)=>a+(p.total||0),0);
+  const pipelinePonderado=items.filter(p=>p.status!=="Perdido"&&p.status!=="Ganado").reduce((a,p)=>a+((p.total||0)*(p.probabilidad||0)/100),0);
+
+  // Pipeline counts
+  const pipeline=statuses.filter(s=>s!=="Perdido").map(s=>({status:s,color:sc[s],count:items.filter(p=>p.status===s).length,total:items.filter(p=>p.status===s).reduce((a,p)=>a+(p.total||0),0)}));
+
+  return(
+    <div className="slide-in" style={{flex:1,overflowY:"auto",padding:"24px 28px",background:"#f1f4fb"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Prospección</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Pipeline de ventas · Oportunidades de negocio · Seguimiento comercial</p>
+        </div>
+        <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+VIOLET+",#a855f7)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+VIOLET+"30"}}><Plus size={14}/>Nuevo prospecto</button>
+      </div>
+
+      {/* Pipeline visual */}
+      <div className="g4" style={{marginBottom:16}}>
+        {pipeline.map(({status,color,count,total})=>(
+          <div key={status} onClick={()=>setStatusF(statusF===status?"todos":status)} className="ch" style={{background:"#fff",border:"1.5px solid "+(statusF===status?color:BORDER),borderRadius:14,padding:"16px 18px",cursor:"pointer",transition:"all .15s"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <Tag color={color}>{status}</Tag>
+              <span style={{fontFamily:MONO,fontSize:18,fontWeight:800,color}}>{count}</span>
+            </div>
+            <div style={{fontFamily:MONO,fontSize:14,fontWeight:700,color:TEXT}}>{fmtK(total)}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* KPIs */}
+      <div className="g4" style={{marginBottom:16}}>
+        <KpiCard icon={Target} color={VIOLET} label="Pipeline total" value={fmtK(totPipeline)} sub={filt.length+" prospectos"}/>
+        <KpiCard icon={TrendingUp} color={GREEN} label="Ganados" value={fmtK(totGanado)}/>
+        <KpiCard icon={Clock} color={BLUE} label="En negociación" value={fmtK(totNeg)}/>
+        <KpiCard icon={Activity} color={AMBER} label="Ponderado" value={fmtK(pipelinePonderado)} sub="valor × probabilidad"/>
+      </div>
+
+      {/* Filters + search */}
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
+        {["todos",...statuses].map(s=>(
+          <button key={s} onClick={()=>setStatusF(s)} className="btn" style={{padding:"6px 14px",borderRadius:9,border:"1.5px solid "+(statusF===s?VIOLET:BD2),background:statusF===s?VIOLET+"10":"#fff",color:statusF===s?VIOLET:MUTED,fontSize:12,fontWeight:statusF===s?700:500}}>{s==="todos"?"Todos":s}</button>
+        ))}
+        <div style={{marginLeft:"auto",background:"#fff",border:"1px solid "+BORDER,borderRadius:10,padding:"7px 13px",display:"flex",alignItems:"center",gap:8,minWidth:220}}>
+          <Search size={13} color={MUTED}/>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar empresa…" style={{background:"none",border:"none",fontSize:13,flex:1}}/>
+        </div>
+      </div>
+
+      {/* Table */}
+      {load?<SkeletonRows n={4}/>
+      :<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+        {filt.length===0?<EmptyState icon={Target} title="Sin prospectos" sub="Agrega oportunidades de negocio para dar seguimiento" action={openNew} actionLabel="Nuevo prospecto" color={VIOLET}/>
+        :<div className="table-wrap"><table style={{width:"100%",borderCollapse:"collapse",minWidth:900}}>
+          <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
+            {["Folio","Empresa","Contacto","Servicio","Mes","Monto","Total c/IVA","Prob.","Estado","Acciones"].map(h=>
+              <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
+            )}
+          </tr></thead>
+          <tbody>{filt.map(p=>(
+            <tr key={p.id} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
+              <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:10,color:MUTED}}>{p.folio||"—"}</td>
+              <td style={{padding:"10px 12px",fontWeight:700,fontSize:13}}>{p.empresa||"—"}</td>
+              <td style={{padding:"10px 12px",fontSize:12,color:MUTED}}>{p.contacto||"—"}</td>
+              <td style={{padding:"10px 12px",fontSize:12,color:MUTED,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.servicio||"—"}</td>
+              <td style={{padding:"10px 12px"}}><span style={{background:VIOLET+"12",color:VIOLET,borderRadius:6,padding:"2px 7px",fontSize:11,fontWeight:700}}>{p.mes||"—"} {p.anio||""}</span></td>
+              <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12}}>{fmt(p.monto||0)}</td>
+              <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:13,fontWeight:800}}>{fmt(p.total||0)}</td>
+              <td style={{padding:"10px 12px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:5}}>
+                  <MiniBar pct={p.probabilidad||0} color={VIOLET} h={5}/>
+                  <span style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:VIOLET}}>{p.probabilidad||0}%</span>
+                </div>
+              </td>
+              <td style={{padding:"10px 12px"}}><Tag color={sc[p.status]||MUTED} sm>{p.status}</Tag></td>
+              <td style={{padding:"10px 12px"}}>
+                <div style={{display:"flex",gap:5}}>
+                  <button onClick={()=>openEdit(p)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
+                  <button onClick={()=>del(p.id)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
+                </div>
+              </td>
+            </tr>
+          ))}</tbody>
+        </table></div>}
+      </div>}
+
+      {/* Modal */}
+      {modal&&<Modal title={editItem?"Editar prospecto":"Nuevo prospecto"} onClose={()=>{setModal(false);setEditItem(null);}} icon={Target} iconColor={VIOLET} wide>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Inp label="Empresa *" value={form.empresa} onChange={e=>setForm({...form,empresa:e.target.value})} placeholder="Nombre de la empresa"/>
+          <Inp label="Contacto" value={form.contacto} onChange={e=>setForm({...form,contacto:e.target.value})} placeholder="Persona de contacto"/>
+          <div style={{gridColumn:"1/-1"}}><Inp label="Servicio / Descripción" value={form.servicio} onChange={e=>setForm({...form,servicio:e.target.value})} placeholder="Ej: Distribución masiva zona norte"/></div>
+          <Inp label="Monto (sin IVA)" type="number" value={form.monto} onChange={e=>setForm({...form,monto:e.target.value})} placeholder="0.00"/>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Probabilidad de cierre</div>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <input type="range" min="0" max="100" step="5" value={form.probabilidad} onChange={e=>setForm({...form,probabilidad:e.target.value})} style={{flex:1,accentColor:VIOLET}}/>
+              <span style={{fontFamily:MONO,fontSize:16,fontWeight:800,color:VIOLET,minWidth:40,textAlign:"right"}}>{form.probabilidad}%</span>
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Mes objetivo</div>
+            <select value={form.mes} onChange={e=>setForm({...form,mes:e.target.value})} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
+              {MESES.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado</div>
+            <select value={form.status} onChange={e=>setForm({...form,status:e.target.value})} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
+              {statuses.map(s=><option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          {(parseFloat(form.monto)||0)>0&&<div style={{gridColumn:"1/-1",padding:"12px 16px",background:VIOLET+"08",borderRadius:12,border:"1.5px solid "+VIOLET+"20"}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+              {[["Monto",fmt(parseFloat(form.monto)||0),MUTED],["IVA 16%",fmt((parseFloat(form.monto)||0)*.16),MUTED],["Total",fmt((parseFloat(form.monto)||0)*1.16),VIOLET]].map(([l,v,c])=>(
+                <div key={l}><div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>{l}</div><div style={{fontFamily:MONO,fontSize:18,fontWeight:800,color:c,marginTop:3}}>{v}</div></div>
+              ))}
+            </div>
+          </div>}
+          <div style={{gridColumn:"1/-1"}}><Txt label="Notas" value={form.notas} onChange={e=>setForm({...form,notas:e.target.value})} placeholder="Contexto, próximos pasos, competencia…"/></div>
+          <button onClick={save} className="btn" style={{gridColumn:"1/-1",background:"linear-gradient(135deg,"+VIOLET+",#a855f7)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:15}}>
+            {editItem?"Guardar cambios":"Crear prospecto"}
+          </button>
+        </div>
+      </Modal>}
+    </div>
+  );
+}
+
 /* ─── ROOT APP ───────────────────────────────────────────────────────────── */
 export default function App(){
   const [view,setView]=useState("dashboard");
@@ -2966,6 +3170,7 @@ export default function App(){
   const [entregas,setEntregas]=useState([]);
   const [viat,setViat]=useState([]);
   const [clientes,setClientes]=useState([]);
+  const [prospectos,setProspectos]=useState([]);
   const [fbOk,setFbOk]=useState(false);
   const [sidebarOpen,setSidebarOpen]=useState(true);
   const [searchOpen,setSearchOpen]=useState(false);
@@ -2977,7 +3182,8 @@ export default function App(){
     const u4=onSnapshot(collection(db,"entregas"),s=>setEntregas(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u5=onSnapshot(collection(db,"viaticos"),s=>setViat(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u6=onSnapshot(collection(db,"cuentas"),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();u3();u4();u5();u6();};
+    const u7=onSnapshot(collection(db,"prospeccion"),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();u3();u4();u5();u6();u7();};
   },[]);
 
   // Cmd+K shortcut
@@ -2993,9 +3199,10 @@ export default function App(){
   },[]);
 
   const VIEWS={
-    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes}/>,
+    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos}/>,
     cotizador:<Cotizador onSaved={()=>setView("dashboard")}/>,
     presupuestos:<Presupuestos/>,
+    prospeccion:<Prospeccion/>,
     rutas:<PlanificadorRutas/>,
     nacional:<PlanificadorNacional/>,
     facturas:<Facturas/>,
