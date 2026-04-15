@@ -2190,6 +2190,9 @@ function PlanificadorRutas(){
   const [optimResult,setOptimResult]=useState(null);
   const [showImport,setShowImport]=useState(false);
   const [showCapacidad,setShowCapacidad]=useState(false);
+  const [costoParadaExtra,setCostoParadaExtra]=useState(0);
+  const [aplicarParadaExtra,setAplicarParadaExtra]=useState(false);
+  const [paradasIncluidas,setParadasIncluidas]=useState(1);
   const [choferesList,setChoferesList]=useState([]);
   useEffect(()=>onSnapshot(collection(db,"choferes"),s=>setChoferesList(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo"))),[]);
   const [stops,setStops]=useState([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true,puntos:[]}]);
@@ -2227,8 +2230,12 @@ function PlanificadorRutas(){
   const crew=vans*((vehD?.crew||1)+pVan-1+(ayud?1:0));
   const {xC,xH,total:xViat,dias:diasF,noches}=useMemo(()=>calcViaticos(totalKm,crew,comida,hotel),[totalKm,crew,comida,hotel]);
   const tarifaT=useMemo(()=>stops.filter(s=>!s.isOrigin).reduce((a,s)=>a+(s.base||0),0)*vans,[stops,vans]);
+  // Cuenta todas las paradas (puntos específicos) de todos los destinos
+  const totalPuntosDestino = useMemo(()=>stops.filter(s=>!s.isOrigin).reduce((a,s)=>a+((s.puntos||[]).length||1),0),[stops]);
+  const paradasExtra = Math.max(0, totalPuntosDestino - paradasIncluidas);
+  const xParadasExtra = aplicarParadaExtra ? paradasExtra * (Number(costoParadaExtra)||0) : 0;
   const xU=urg?tarifaT*.35:0;
-  const sub=tarifaT+xU+xViat;
+  const sub=tarifaT+xU+xViat+xParadasExtra;
   const iva=sub*.16;
   const total=sub+iva;
   const mapU=useMemo(()=>mapsURL(stops.map(s=>s.city)),[stops]);
@@ -2313,17 +2320,34 @@ function PlanificadorRutas(){
           </div>
 
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"visible"}}>
-            <div style={{padding:"14px 20px",borderBottom:"1px solid "+BORDER,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{fontFamily:DISP,fontWeight:700,fontSize:14}}>Ciudades y puntos ({stops.length})</span>
-              <div style={{display:"flex",gap:7}}>
-                <Tag color={VIOLET}>{stops.filter(s=>!s.isOrigin).length} ciudades</Tag>
-                <Tag color={A}>{stops.reduce((a,s)=>a+(s.puntos?.length||0),0)} puntos</Tag>
-                <Tag color={BLUE}>{totalPDV.toLocaleString()} PDVs</Tag>
+            <div style={{padding:"14px 20px",borderBottom:"1px solid "+BORDER}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <span style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Armado de ruta</span>
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  <Tag color={GREEN} sm>{stops.filter(s=>s.isOrigin).length} orígenes</Tag>
+                  <Tag color={A} sm>{stops.filter(s=>!s.isOrigin).length} destinos</Tag>
+                  <Tag color={VIOLET} sm>{stops.reduce((a,s)=>a+(s.puntos?.length||0),0)} puntos</Tag>
+                  <Tag color={BLUE} sm>{totalPDV.toLocaleString()} PDVs</Tag>
+                </div>
+              </div>
+              <div style={{fontSize:11,color:MUTED,lineHeight:1.5}}>
+                📤 <strong style={{color:GREEN}}>Orígenes</strong>: donde se carga la mercancía (bodegas, almacenes).<br/>
+                📥 <strong style={{color:A}}>Destinos</strong>: donde se entrega. Puedes agregar varios puntos por ciudad (ej: 10 Walmarts en Acapulco).
               </div>
             </div>
             <div style={{padding:14,display:"flex",flexDirection:"column",gap:10}}>
-              {stops.map((s,i)=>(
-                <div key={s.id} style={{background:s.isOrigin?"#f8fafd":"#fff",border:"1.5px solid "+(s.isOrigin?BD2:A+"30"),borderRadius:12,overflow:"visible",transition:"all .13s",position:"relative"}}>
+              {/* SECCIÓN ORÍGENES */}
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 2px"}}>
+                <div style={{width:20,height:20,borderRadius:6,background:GREEN,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <span style={{color:"#fff",fontSize:11,fontWeight:800}}>↑</span>
+                </div>
+                <span style={{fontSize:11,fontWeight:800,color:GREEN,letterSpacing:"0.06em",textTransform:"uppercase"}}>Orígenes · Puntos de carga</span>
+                <div style={{flex:1,height:1,background:GREEN+"30"}}/>
+              </div>
+              {stops.filter(s=>s.isOrigin).map((s,originIdx)=>{
+                const i = stops.findIndex(x=>x.id===s.id);
+                return(
+                <div key={s.id} style={{background:GREEN+"05",border:"1.5px solid "+GREEN+"35",borderRadius:12,overflow:"visible",transition:"all .13s",position:"relative"}}>
                   {/* Header de la ciudad */}
                   <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:s.isOrigin?"#f8fafd":A+"06",borderBottom:s.isOrigin?"none":"1px solid "+A+"15"}}>
                     <div style={{width:24,height:24,borderRadius:"50%",background:s.isOrigin?BLUE:A,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
@@ -2393,10 +2417,94 @@ function PlanificadorRutas(){
                     </div>}
                   </div>
                 </div>
-              ))}
+              );})}
+              {/* Botón agregar otro origen */}
+              <div style={{padding:"10px 12px",background:GREEN+"06",border:"1.5px dashed "+GREEN+"40",borderRadius:11}}>
+                <div style={{fontSize:10,fontWeight:800,color:GREEN,marginBottom:6,letterSpacing:"0.05em"}}>+ AGREGAR OTRO ORIGEN (carga desde otra ciudad)</div>
+                <CitySearch value={search} onChange={setSearch} onSelect={t=>{
+                  setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:0,isOrigin:true,puntos:[]}]);
+                  setSearch("");
+                }} veh={veh} exclude={stops.filter(s=>s.isOrigin).map(s=>s.city)}/>
+              </div>
+
+              {/* SECCIÓN DESTINOS */}
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 2px 4px",marginTop:8}}>
+                <div style={{width:20,height:20,borderRadius:6,background:A,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <span style={{color:"#fff",fontSize:11,fontWeight:800}}>↓</span>
+                </div>
+                <span style={{fontSize:11,fontWeight:800,color:A,letterSpacing:"0.06em",textTransform:"uppercase"}}>Destinos · Puntos de entrega</span>
+                <div style={{flex:1,height:1,background:A+"30"}}/>
+              </div>
+              {stops.filter(s=>!s.isOrigin).length===0&&<div style={{padding:"14px 14px",background:A+"04",border:"1.5px dashed "+A+"30",borderRadius:11,textAlign:"center",color:MUTED,fontSize:12}}>
+                Aún no agregas destinos. Usa el buscador de abajo para agregar la primera ciudad donde vas a entregar.
+              </div>}
+              {stops.filter(s=>!s.isOrigin).map((s)=>{
+                const i = stops.findIndex(x=>x.id===s.id);
+                return(
+                <div key={s.id} style={{background:"#fff",border:"1.5px solid "+A+"30",borderRadius:12,overflow:"visible",transition:"all .13s",position:"relative"}}>
+                  {/* Header */}
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:A+"06",borderBottom:"1px solid "+A+"15"}}>
+                    <div style={{width:24,height:24,borderRadius:"50%",background:A,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{stops.filter(x=>!x.isOrigin).findIndex(x=>x.id===s.id)+1}</div>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                        <span style={{fontWeight:700,fontSize:14,color:TEXT}}>{s.city}</span>
+                        {s.km>0&&<span style={{fontFamily:MONO,fontSize:10,color:MUTED}}>{s.km.toLocaleString()} km</span>}
+                        {s.puntos?.length>0&&<Tag color={VIOLET} sm>{s.puntos.length} puntos</Tag>}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:3}}>
+                      <button onClick={()=>mvUp(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronUp size={10}/></button>
+                      <button onClick={()=>mvDn(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronDown size={10}/></button>
+                      <button onClick={()=>rmStop(s.id)} className="btn" style={{border:"1px solid "+ROSE+"28",background:ROSE+"08",borderRadius:6,padding:"3px 5px",color:ROSE}}><X size={10}/></button>
+                    </div>
+                  </div>
+                  {/* Contenido */}
+                  <div style={{padding:"10px 14px"}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Total PDVs ciudad</div>
+                        <input type="number" value={s.pdv||""} onChange={e=>updStop(s.id,"pdv",parseInt(e.target.value)||0)} placeholder="0"
+                          style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontFamily:MONO,fontSize:15,fontWeight:700,color:A}}/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Zona general</div>
+                        <input type="text" value={s.addr||""} onChange={e=>updStop(s.id,"addr",e.target.value)} placeholder="Opcional"
+                          style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontSize:13}}/>
+                      </div>
+                    </div>
+                    {/* Puntos específicos del destino */}
+                    {(s.puntos||[]).map((p,pi)=>(
+                      <div key={p.id} style={{display:"flex",alignItems:"flex-start",gap:9,padding:"8px 10px",background:VIOLET+"06",border:"1px solid "+VIOLET+"20",borderRadius:9,marginBottom:6}}>
+                        <div style={{width:20,height:20,borderRadius:"50%",background:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#fff",flexShrink:0,marginTop:2}}>{pi+1}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:700,fontSize:12,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                          <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.address}</div>
+                          <input value={p.notas||""} onChange={e=>{
+                            const puntos = s.puntos.map(x=>x.id===p.id?{...x,notas:e.target.value}:x);
+                            updStop(s.id,"puntos",puntos);
+                          }} placeholder="Agregar nota/referencia…" style={{width:"100%",marginTop:5,background:"#fff",border:"1px solid "+BD2,borderRadius:6,padding:"4px 8px",fontSize:11}}/>
+                        </div>
+                        <button onClick={()=>{
+                          const puntos = s.puntos.filter(x=>x.id!==p.id);
+                          updStop(s.id,"puntos",puntos);
+                        }} className="btn" style={{color:ROSE,padding:4}}><X size={11}/></button>
+                      </div>
+                    ))}
+                    {/* Agregar punto en este destino */}
+                    {MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:VIOLET+"04",border:"1.5px dashed "+VIOLET+"40",borderRadius:9,marginTop:6}}>
+                      <div style={{fontSize:9,fontWeight:800,color:VIOLET,marginBottom:6,letterSpacing:"0.05em"}}>+ AGREGAR PUNTO ESPECÍFICO EN {s.city.toUpperCase()}</div>
+                      <AddressSearch compact placeholder={"Ej: Walmart "+s.city+", Chedraui, dirección…"} onSelect={(place)=>{
+                        const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:""}];
+                        updStop(s.id,"puntos",puntos);
+                      }}/>
+                    </div>}
+                  </div>
+                </div>
+              );})}
+              {/* Botón agregar ciudad destino */}
               <div style={{padding:"11px 13px",background:A+"06",border:"1.5px dashed "+A+"38",borderRadius:11}}>
-                <div style={{fontSize:10,fontWeight:800,color:A,marginBottom:8,letterSpacing:"0.05em"}}>+ AGREGAR CIUDAD A LA RUTA</div>
-                <CitySearch value={search} onChange={setSearch} onSelect={addStop} veh={veh} exclude={stops.map(s=>s.city)}/>
+                <div style={{fontSize:10,fontWeight:800,color:A,marginBottom:8,letterSpacing:"0.05em"}}>+ AGREGAR CIUDAD DESTINO</div>
+                <CitySearch value={search} onChange={setSearch} onSelect={addStop} veh={veh} exclude={stops.filter(s=>!s.isOrigin).map(s=>s.city)}/>
               </div>
             </div>
           </div>
@@ -2495,16 +2603,67 @@ function PlanificadorRutas(){
             </div>}
           </div>
 
-          <div style={{display:"flex",gap:9}}>
-            <button onClick={handleSave} disabled={saving} className="btn" style={{flex:2,padding:"13px 0",borderRadius:12,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",fontFamily:DISP,fontWeight:700,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 5px 20px "+A+"35",opacity:saving?.7:1}}>
+          {/* COSTO POR PARADA EXTRA */}
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
+            <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:13}}>Cargos adicionales por paradas</div>
+            <Tog checked={aplicarParadaExtra} onChange={setAplicarParadaExtra} label="🛑 Cobrar extra por cada parada adicional" sub={aplicarParadaExtra?"Se aplicará un cargo por cada punto más allá del # incluido":"El precio total NO incluye costo por parada extra"} color={AMBER}/>
+            {aplicarParadaExtra&&<div style={{marginTop:11,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <div>
+                <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Paradas incluidas</div>
+                <input type="number" min="0" value={paradasIncluidas} onChange={e=>setParadasIncluidas(Math.max(0,parseInt(e.target.value)||0))} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
+                <div style={{fontSize:10,color:MUTED,marginTop:3}}>Primeras N paradas sin costo extra</div>
+              </div>
+              <div>
+                <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Costo por parada extra</div>
+                <input type="number" min="0" value={costoParadaExtra} onChange={e=>setCostoParadaExtra(parseFloat(e.target.value)||0)} placeholder="200" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700,color:AMBER}}/>
+                <div style={{fontSize:10,color:MUTED,marginTop:3}}>MXN por cada parada adicional</div>
+              </div>
+            </div>}
+            {aplicarParadaExtra&&paradasExtra>0&&<div style={{marginTop:11,padding:"10px 12px",background:AMBER+"08",borderRadius:9,border:"1px solid "+AMBER+"20"}}>
+              <div style={{fontSize:11,color:AMBER,fontWeight:700}}>📍 Total puntos entrega: {totalPuntosDestino}</div>
+              <div style={{fontSize:11,color:AMBER,marginTop:2}}>{paradasIncluidas} incluidas + {paradasExtra} extra × {fmt(costoParadaExtra)} = <strong>{fmt(xParadasExtra)}</strong></div>
+            </div>}
+          </div>
+
+          <div style={{display:"flex",gap:9,flexWrap:"wrap"}}>
+            <button onClick={handleSave} disabled={saving} className="btn" style={{flex:"2 1 200px",padding:"13px 0",borderRadius:12,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",fontFamily:DISP,fontWeight:700,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 5px 20px "+A+"35",opacity:saving?.7:1}}>
               {saving?<><div style={{width:15,height:15,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}} className="spin"/>Guardando…</>:<><Map size={17}/>Guardar Ruta</>}
             </button>
-            <button onClick={()=>{const q={folio:"RUT-"+uid(),cliente,modo:"ruta",modoLabel:"RUTA MULTI-PARADA",destino:stops.filter(s=>!s.isOrigin).map(s=>s.city).join(" → "),vehiculoLabel:vehD?.label,stops,lines:[{label:"Tarifa transporte",value:fmt(tarifaT)},urg&&{label:"⚡ Urgente",value:"+"+fmt(xU),color:ROSE},xViat>0&&{label:"Viáticos",value:"+"+fmt(xViat),color:AMBER},{label:"Subtotal",value:fmt(sub)},{label:"IVA 16%",value:fmt(iva),color:MUTED},{label:"TOTAL",value:fmt(total),bold:true,color:A}].filter(Boolean),flota:{vans,dias:diasOp,capDia},totalPDV,plazo,total};downloadCotizacionPDF(q);}} className="btn"
-              style={{flex:1,padding:"13px 0",borderRadius:12,border:"1.5px solid "+BD2,background:"#fff",fontFamily:SANS,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7,color:TEXT}}>
+            <button onClick={async()=>{
+              if(!cliente.trim()){showT("Agrega un cliente primero","err");return;}
+              if(stops.filter(s=>!s.isOrigin).length===0){showT("Agrega al menos un destino","err");return;}
+              // Construye conceptos detallados para el presupuesto
+              const today=new Date().toISOString().slice(0,10);
+              const in15=new Date(Date.now()+15*86400000).toISOString().slice(0,10);
+              const conceptos=[];
+              const destinos=stops.filter(s=>!s.isOrigin).map(s=>s.city).join(" → ");
+              conceptos.push({desc:`Transporte ${vehD?.label||""} · ${destinos}`,cant:vans,precio:tarifaT/vans});
+              if(xViat>0) conceptos.push({desc:`Viáticos del personal (${crew} personas × ${diasF} días)`,cant:1,precio:xViat});
+              if(xU>0) conceptos.push({desc:"Recargo urgente +35%",cant:1,precio:xU});
+              if(xParadasExtra>0) conceptos.push({desc:`Paradas extra (${paradasExtra} × ${fmt(costoParadaExtra)})`,cant:paradasExtra,precio:Number(costoParadaExtra)||0});
+              try{
+                const ref = await addDoc(collection(db,"presupuestos"),{
+                  folio:"PRE-"+uid(),
+                  cliente,contacto:"",
+                  fecha:today,vigencia:in15,
+                  conceptos,
+                  subtotal:sub,ivaAmt:iva,total,iva:true,
+                  status:"Borrador",
+                  notas:`Generado desde ruta: ${nombre||"Sin nombre"}. Vehículo: ${vehD?.label}. ${stops.filter(s=>!s.isOrigin).length} ciudades destino, ${totalPuntosDestino} puntos específicos.`,
+                  rutaOrigenId:null,
+                  createdAt:serverTimestamp(),
+                });
+                showT("✓ Presupuesto creado. Búscalo en el módulo Presupuestos.");
+              }catch(e){showT("Error: "+e.message,"err");}
+            }} className="btn" style={{flex:"1 1 160px",padding:"13px 0",borderRadius:12,background:"linear-gradient(135deg,"+VIOLET+",#a855f7)",color:"#fff",fontFamily:SANS,fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:7,boxShadow:"0 4px 16px "+VIOLET+"30"}}>
+              <ClipboardList size={14}/>Crear Presupuesto
+            </button>
+            <button onClick={()=>{const q={folio:"RUT-"+uid(),cliente,modo:"ruta",modoLabel:"RUTA MULTI-PARADA",destino:stops.filter(s=>!s.isOrigin).map(s=>s.city).join(" → "),vehiculoLabel:vehD?.label,stops,lines:[{label:"Tarifa transporte",value:fmt(tarifaT)},urg&&{label:"⚡ Urgente",value:"+"+fmt(xU),color:ROSE},xViat>0&&{label:"Viáticos",value:"+"+fmt(xViat),color:AMBER},xParadasExtra>0&&{label:"Paradas extra",value:"+"+fmt(xParadasExtra),color:AMBER},{label:"Subtotal",value:fmt(sub)},{label:"IVA 16%",value:fmt(iva),color:MUTED},{label:"TOTAL",value:fmt(total),bold:true,color:A}].filter(Boolean),flota:{vans,dias:diasOp,capDia},totalPDV,plazo,total};downloadCotizacionPDF(q);}} className="btn"
+              style={{flex:"1 1 100px",padding:"13px 0",borderRadius:12,border:"1.5px solid "+BD2,background:"#fff",fontFamily:SANS,fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:7,color:TEXT}}>
               <Printer size={14}/>PDF
             </button>
             {mapU&&<a href={mapU} target="_blank" rel="noopener noreferrer" className="btn"
-              style={{flex:1,padding:"13px 0",borderRadius:12,border:"1.5px solid "+BLUE+"28",background:BLUE+"0e",fontFamily:SANS,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7,color:BLUE,textDecoration:"none"}}>
+              style={{flex:"1 1 100px",padding:"13px 0",borderRadius:12,border:"1.5px solid "+BLUE+"28",background:BLUE+"0e",fontFamily:SANS,fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:7,color:BLUE,textDecoration:"none"}}>
               <Globe size={14}/>Maps
             </a>}
           </div>
@@ -2518,7 +2677,7 @@ function PlanificadorRutas(){
               <div style={{fontSize:11,color:MUTED,marginTop:4}}>{stops.filter(s=>!s.isOrigin).length} destinos · {totalPDV.toLocaleString()} PDVs</div>
             </div>
             <div style={{padding:"13px 17px"}}>
-              {[[fmt(tarifaT),"Transporte×"+vans],[xU>0&&"+"+fmt(xU),"⚡ Urgente",ROSE],[xViat>0&&"+"+fmt(xViat),"Viáticos",AMBER],[fmt(sub),"Subtotal"],[fmt(iva),"IVA 16%",MUTED]].filter(r=>r&&r[0]).map(([v,l,c],i)=>(
+              {[[fmt(tarifaT),"Transporte×"+vans],[xU>0&&"+"+fmt(xU),"⚡ Urgente",ROSE],[xViat>0&&"+"+fmt(xViat),"Viáticos",AMBER],[xParadasExtra>0&&"+"+fmt(xParadasExtra),"🛑 "+paradasExtra+" paradas extra",AMBER],[fmt(sub),"Subtotal"],[fmt(iva),"IVA 16%",MUTED]].filter(r=>r&&r[0]).map(([v,l,c],i)=>(
                 <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid "+BORDER,fontSize:12}}>
                   <span style={{color:MUTED}}>{l}</span><span style={{fontFamily:MONO,fontWeight:700,color:c||TEXT}}>{v}</span>
                 </div>
