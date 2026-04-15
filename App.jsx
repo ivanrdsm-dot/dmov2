@@ -1503,7 +1503,7 @@ function Cotizador({onSaved}){
   const [fRes,setFRes]=useState(false);
   const [fExtra,setFExtra]=useState(0);
   const [fComida,setFComida]=useState(COMIDA);
-  const [fBuilding2,setFBuilding2]=useState(HOTEL);
+  const [fHotel,setFHotel]=useState(HOTEL);
 
   // ── MASIVO
   const [mVeh,setMVeh]=useState("cam");
@@ -1512,11 +1512,11 @@ function Cotizador({onSaved}){
   const [mAyud,setMAyud]=useState(false);
   const [mUrg,setMUrg]=useState(false);
   const [mComida,setMComida]=useState(COMIDA);
-  const [mBuilding2,setMBuilding2]=useState(HOTEL);
+  const [mHotel,setMHotel]=useState(HOTEL);
   const [mCiudades,setMCiudades]=useState([]);
   const [mSearch,setMSearch]=useState("");
 
-  const calcMVans=(pdv,dias,mpd)=>Math.max(1,Math.ceil(pdv/(mpd*Math.max(dias,1))));
+  const calcMVans=(pdv,dias,mpd)=>Math.max(1,Math.ceil(pdv/(Math.max(1,mpd)*Math.max(1,dias))));
   const addMCiudad=t=>{
     const vans=calcMVans(20,1,mMaxDia);
     setMCiudades(p=>[...p,{...t,id:uid(),pdv:20,dias:1,paradas:[{id:uid(),dir:"",ref:""}],vans,tarifa:t[mVeh]||0}]);
@@ -1540,7 +1540,7 @@ function Cotizador({onSaved}){
   const fCrew=(fVD?.crew||1)+fExtra;
   const fMaxKm=fCiudades.length>0?Math.max(...fCiudades.map(c=>c.km)):0;
   const fBaseTotal=fCiudades.reduce((a,c)=>a+(c[fVeh]||0),0);
-  const {xC:fXC,xH:fXH,total:fXV,dias:fDias,noches:fNoches}=useMemo(()=>fMaxKm>0?calcViaticos(fMaxKm,fCrew,fComida,fBuilding2):{xC:0,xH:0,total:0,dias:0,noches:0},[fMaxKm,fCrew,fComida,fBuilding2]);
+  const {xC:fXC,xH:fXH,total:fXV,dias:fDias,noches:fNoches}=useMemo(()=>fMaxKm>0?calcViaticos(fMaxKm,fCrew,fComida,fHotel):{xC:0,xH:0,total:0,dias:0,noches:0},[fMaxKm,fCrew,fComida,fHotel]);
   const fXU=fUrg?fBaseTotal*.35:0;
   const fXM=fMani?AYUD*fNumAyud:0;
   const fXR=fRes&&fCiudades.length>0?(LOC[fVeh]?.resguardo||0):0;
@@ -1565,7 +1565,7 @@ function Cotizador({onSaved}){
   const mBaseTotal=mCiudades.reduce((a,c)=>a+(c.tarifa||0)*c.vans,0);
   const mXU=mUrg?mBaseTotal*.35:0;
   const mMaxKm=mCiudades.length>0?Math.max(...mCiudades.map(c=>c.km)):0;
-  const {xC:mXC,xH:mXH,total:mXV}=useMemo(()=>mMaxKm>0?calcViaticos(mMaxKm,mPersonasT,mComida,mBuilding2):{xC:0,xH:0,total:0},[mMaxKm,mPersonasT,mComida,mBuilding2]);
+  const {xC:mXC,xH:mXH,total:mXV}=useMemo(()=>mMaxKm>0?calcViaticos(mMaxKm,mPersonasT,mComida,mHotel):{xC:0,xH:0,total:0},[mMaxKm,mPersonasT,mComida,mHotel]);
   const mSub=mBaseTotal+mXU+mXV;const mIva=mSub*.16;const mTot=mSub+mIva;
 
   const total=modo==="foraneo"?fTot:modo==="local"?lTot:mTot;
@@ -1753,7 +1753,7 @@ function Cotizador({onSaved}){
                 </div>
                 <div>
                   <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/persona/noche</div>
-                  <input type="number" value={fBuilding2} onChange={e=>setFBuilding2(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
+                  <input type="number" value={fHotel} onChange={e=>setFHotel(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
@@ -1862,7 +1862,7 @@ function Cotizador({onSaved}){
                 </div>
                 <div>
                   <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/persona/noche</div>
-                  <input type="number" value={mBuilding2} onChange={e=>setMBuilding2(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
+                  <input type="number" value={mHotel} onChange={e=>setMHotel(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
               </div>
             </S>
@@ -2291,7 +2291,7 @@ function PlanificadorRutas(){
   const [maxDia,setMaxDia]=useState(20);
   const [plazo,setPlazo]=useState(5);
   const [comida,setComida]=useState(COMIDA);
-  const [hotel,setBuilding2]=useState(HOTEL);
+  const [hotel,setHotel]=useState(HOTEL);
   const [pVan,setPVan]=useState(1);
   const [ayud,setAyud]=useState(false);
   const [urg,setUrg]=useState(false);
@@ -2710,7 +2710,7 @@ function PlanificadorRutas(){
               </div>
               <div>
                 <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/persona/noche</div>
-                <input type="number" value={hotel} onChange={e=>setBuilding2(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
+                <input type="number" value={hotel} onChange={e=>setHotel(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
               </div>
             </div>
             {diasF>0&&<div style={{padding:"9px 12px",background:BLUE+"08",borderRadius:9,border:"1px solid "+BLUE+"18"}}>
@@ -2920,14 +2920,31 @@ function PlanificadorRutas(){
         </div>
 
         <div style={{display:"flex",gap:9,flexWrap:"wrap"}}>
-          <button onClick={()=>downloadRutaPDF(viewR)} className="btn" style={{flex:"1 1 100px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+VIOLET+"30",color:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={14}/>PDF</button>
-          {viewR.mapURL&&<a href={viewR.mapURL} target="_blank" rel="noopener noreferrer" className="btn" style={{flex:"1 1 100px",padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Globe size={14}/>Maps</a>}
+          <button onClick={()=>downloadRutaPDF(viewR)} className="btn" style={{flex:"1 1 90px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+VIOLET+"30",color:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={14}/>PDF</button>
+          <button onClick={async()=>{
+            if(!confirm("¿Duplicar esta ruta?\n\nSe creará una copia en estado 'Programada' para que la edites y asignes.")) return;
+            const copy = {...viewR};
+            delete copy.id;
+            copy.nombre = (copy.nombre||"Ruta") + " (copia)";
+            copy.status = "Programada";
+            copy.progreso = 0;
+            copy.stopsStatus = [];
+            copy.iniciadaEn = null;
+            copy.completadaEn = null;
+            copy.trackingId = Math.random().toString(36).slice(2,10).toUpperCase();
+            copy.choferId = ""; copy.choferNombre = ""; copy.choferTel = ""; copy.choferPlaca = "";
+            copy.createdAt = serverTimestamp();
+            await addDoc(collection(db,"rutas"),copy);
+            setViewR(null);
+            showT("✓ Ruta duplicada");
+          }} className="btn" style={{flex:"1 1 90px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+BLUE+"30",color:BLUE,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><RefreshCw size={14}/>Duplicar</button>
+          {viewR.mapURL&&<a href={viewR.mapURL} target="_blank" rel="noopener noreferrer" className="btn" style={{flex:"1 1 90px",padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Globe size={14}/>Maps</a>}
           <button onClick={async()=>{
             if(!confirm("¿Eliminar esta ruta permanentemente?\n\nEsta acción no se puede deshacer.")) return;
             await deleteDoc(doc(db,"rutas",viewR.id));
             setViewR(null);
             showT("Ruta eliminada");
-          }} className="btn" style={{flex:"1 1 100px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+ROSE+"30",color:ROSE,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Trash2 size={14}/>Eliminar</button>
+          }} className="btn" style={{flex:"1 1 90px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+ROSE+"30",color:ROSE,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Trash2 size={14}/>Eliminar</button>
           <button onClick={async()=>{
             const nuevoStatus = viewR.status==="En curso"?"Completada":viewR.status==="Completada"?"Programada":"En curso";
             await updateDoc(doc(db,"rutas",viewR.id),{status:nuevoStatus});
@@ -3777,7 +3794,7 @@ function Entregas(){
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   useEffect(()=>onSnapshot(collection(db,"entregas"),s=>{setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));setLoad(false);}),[]);
   const save=async()=>{if(!form.pdv){showT("PDV requerido","err");return;}try{await addDoc(collection(db,"entregas"),{...form,hora:new Date().toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),createdAt:serverTimestamp()});setForm({pdv:"",dir:"",receptor:"",notas:"",status:"Entregado"});showT("✓ Entrega registrada");}catch(e){showT(e.message,"err");}};
-  const del=async id=>{await deleteDoc(doc(db,"entregas",id));showT("Eliminada");};
+  const del=async id=>{if(!confirm("¿Eliminar esta entrega?"))return;await deleteDoc(doc(db,"entregas",id));showT("Eliminada");};
   const filt=items.filter(e=>e.pdv?.toLowerCase().includes(q.toLowerCase())||e.dir?.toLowerCase().includes(q.toLowerCase()));
   const sc={Entregado:GREEN,"En tránsito":BLUE,Pendiente:AMBER,Rechazado:ROSE};
   return(
@@ -4446,6 +4463,9 @@ function LiveTracking(){
   },[selected,rutas,driverLocs]);
 
   const activos = driverLocs.filter(d=>d.lat&&d.lng&&Date.now()/1000-(d.ts?.seconds||0)<300);
+  // Detecta choferes que llevan mucho tiempo sin moverse (posible problema)
+  const sinSenal = driverLocs.filter(d=>d.lat&&d.lng&&Date.now()/1000-(d.ts?.seconds||0)>=300&&Date.now()/1000-(d.ts?.seconds||0)<1800);
+  const parados = activos.filter(d=>(d.speed||0)<0.5); // menos de 1.8 km/h por 5+ min
   const rutaSeleccionada = selected?rutas.find(r=>r.id===selected.rutaId):null;
 
   return(
@@ -4459,6 +4479,16 @@ function LiveTracking(){
             </h1>
             <p style={{color:MUTED,fontSize:12,marginTop:3}}>Ubicación en tiempo real · {activos.length} chofer{activos.length===1?"":"es"} activo{activos.length===1?"":"s"} · {rutas.length} ruta{rutas.length===1?"":"s"} en curso</p>
           </div>
+          {(sinSenal.length>0||parados.length>0)&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {sinSenal.length>0&&<div style={{background:AMBER+"10",border:"1.5px solid "+AMBER+"40",borderRadius:9,padding:"6px 12px",display:"flex",alignItems:"center",gap:6}}>
+              <AlertCircle size={13} color={AMBER}/>
+              <span style={{fontSize:11,fontWeight:700,color:AMBER}}>{sinSenal.length} sin señal</span>
+            </div>}
+            {parados.length>0&&<div style={{background:ROSE+"10",border:"1.5px solid "+ROSE+"40",borderRadius:9,padding:"6px 12px",display:"flex",alignItems:"center",gap:6}}>
+              <Clock size={13} color={ROSE}/>
+              <span style={{fontSize:11,fontWeight:700,color:ROSE}}>{parados.length} detenidos</span>
+            </div>}
+          </div>}
         </div>
       </div>
       {!MAPBOX_TOKEN?<div style={{padding:40,textAlign:"center",color:ROSE}}><AlertCircle size={32}/><div style={{fontSize:14,marginTop:10}}>Falta configurar VITE_MAPBOX_TOKEN en .env</div></div>
@@ -4792,8 +4822,8 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
                 <span><Package size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{(r.totalPDV||0).toLocaleString()} PDVs</span>
                 {r.totalKm>0&&<span><Globe size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{r.totalKm.toLocaleString()} km</span>}
               </div>
-              <button onClick={()=>startTracking(r)} className="btn" style={{width:"100%",background:"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 16px "+GREEN+"30"}}>
-                <Play size={15}/>Iniciar ruta
+              <button onClick={()=>startTracking(r)} className="btn" style={{width:"100%",background:"linear-gradient(135deg,"+(r.status==="En curso"?BLUE:GREEN)+","+(r.status==="En curso"?"#3b82f6":"#10b981")+")",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 16px "+(r.status==="En curso"?BLUE:GREEN)+"30"}}>
+                {r.status==="En curso"?<><Navigation size={15}/>Continuar ruta</>:<><Play size={15}/>Iniciar ruta</>}
               </button>
             </div>
           );
