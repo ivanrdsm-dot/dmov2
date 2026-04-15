@@ -2,8 +2,9 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
-  doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc,
+  doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
 } from "firebase/firestore";
+import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
   Truck, Package, FileText, LayoutDashboard, DollarSign, Plus,
   Search, X, Check, Minus, MapPin, Clock, CheckCircle, Send,
@@ -32,6 +33,17 @@ const firebaseConfig = {
 };
 const fbApp = initializeApp(firebaseConfig);
 const db   = getFirestore(fbApp);
+const storage = getStorage(fbApp);
+
+/* Helper: sube foto a Firebase Storage y retorna URL pública */
+async function uploadEvidencia(file, rutaId, stopIdx){
+  const ts = Date.now();
+  const ext = file.name?.split(".").pop()||"jpg";
+  const path = `evidencias/${rutaId}/${stopIdx}_${ts}.${ext}`;
+  const r = sRef(storage, path);
+  await uploadBytes(r, file);
+  return await getDownloadURL(r);
+}
 
 /* ─── MAPBOX ─────────────────────────────────────────────────────────────── */
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "";
@@ -1815,11 +1827,80 @@ function Cotizador({onSaved}){
     </div>
   );
 }
+/* Mini-mapa que muestra todos los puntos de una ruta en preview */
+function RouteMapPreview({stops,height=280}){
+  const mapRef = useRef(null);
+  const mapCont = useRef(null);
+  const markersRef = useRef([]);
+
+  // Recopila todos los puntos (lat,lng) con categoría
+  const allPoints = useMemo(()=>{
+    const arr = [];
+    stops.forEach((s,ci)=>{
+      (s.puntos||[]).forEach((p,pi)=>{
+        if(p.lat&&p.lng) arr.push({lat:p.lat,lng:p.lng,name:p.name,ciudad:s.city,cityIdx:ci,puntoIdx:pi,isOrigin:s.isOrigin||p.isOrigin});
+      });
+    });
+    return arr;
+  },[stops]);
+
+  useEffect(()=>{
+    if(!MAPBOX_TOKEN||!mapCont.current||mapRef.current)return;
+    mapRef.current = new mapboxgl.Map({
+      container:mapCont.current,
+      style:"mapbox://styles/mapbox/streets-v12",
+      center:MX_CENTER,
+      zoom:5,
+    });
+    mapRef.current.addControl(new mapboxgl.NavigationControl(),"top-right");
+    return()=>{mapRef.current?.remove();mapRef.current=null;};
+  },[]);
+
+  useEffect(()=>{
+    if(!mapRef.current) return;
+    // Limpia marcadores previos
+    markersRef.current.forEach(m=>m.remove());
+    markersRef.current = [];
+    if(allPoints.length===0) return;
+    allPoints.forEach((p,idx)=>{
+      const el = document.createElement("div");
+      const color = p.isOrigin?BLUE:A;
+      el.style.cssText = `width:28px;height:28px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 2px 8px rgba(12,24,41,.25);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:11px;font-family:${MONO};cursor:pointer;`;
+      el.textContent = String(idx+1);
+      const popup = new mapboxgl.Popup({offset:16,closeButton:false}).setHTML(`<div style="font-family:${SANS};padding:4px;max-width:200px"><div style="font-weight:700;font-size:12px">${p.name}</div><div style="font-size:10px;color:#607080">${p.ciudad}</div></div>`);
+      const marker = new mapboxgl.Marker(el).setLngLat([p.lng,p.lat]).setPopup(popup).addTo(mapRef.current);
+      markersRef.current.push(marker);
+    });
+    // Fit bounds
+    const bounds = new mapboxgl.LngLatBounds();
+    allPoints.forEach(p=>bounds.extend([p.lng,p.lat]));
+    if(!bounds.isEmpty()) mapRef.current.fitBounds(bounds,{padding:50,maxZoom:14,duration:500});
+  },[allPoints]);
+
+  if(!MAPBOX_TOKEN){
+    return <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20,textAlign:"center",color:MUTED,fontSize:12}}>Mapbox token no configurado</div>;
+  }
+  return(
+    <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+      <div style={{padding:"12px 18px",borderBottom:"1px solid "+BORDER,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase"}}>Vista previa de la ruta</div>
+        <Tag color={A} sm>{allPoints.length} puntos</Tag>
+      </div>
+      <div ref={mapCont} style={{width:"100%",height}}/>
+      {allPoints.length===0&&<div style={{position:"relative",top:-height/2-20,textAlign:"center",color:MUTED,fontSize:12,pointerEvents:"none"}}>Agrega puntos específicos a las ciudades para visualizarlos aquí</div>}
+    </div>
+  );
+}
+
 function PlanificadorRutas(){
   const [nombre,setNombre]=useState("");
   const [cliente,setCliente]=useState("");
+  const [clienteTel,setClienteTel]=useState("");
+  const [clienteEmail,setClienteEmail]=useState("");
   const [veh,setVeh]=useState("cam");
   const [choferId,setChoferId]=useState("");
+  const [optimizing,setOptimizing]=useState(false);
+  const [optimResult,setOptimResult]=useState(null);
   const [choferesList,setChoferesList]=useState([]);
   useEffect(()=>onSnapshot(collection(db,"choferes"),s=>setChoferesList(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo"))),[]);
   const [stops,setStops]=useState([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true,puntos:[]}]);
@@ -1885,7 +1966,19 @@ function PlanificadorRutas(){
     setSaving(true);
     try{
       const choferSel = choferesList.find(c=>c.id===choferId);
-      await addDoc(collection(db,"rutas"),{nombre,cliente,veh,vehiculoLabel:vehD?.label,stops:stops.map(s=>({city:s.city,pdv:s.pdv||0,km:s.km||0,addr:s.addr||"",isOrigin:!!s.isOrigin,puntos:(s.puntos||[]).map(p=>({id:p.id,name:p.name||"",address:p.address||"",lat:p.lat||0,lng:p.lng||0,notas:p.notas||"",isOrigin:!!p.isOrigin}))})),totalPDV,totalKm,vans,diasOp,capDia,crew,xViat,tarifaT,sub,iva,total,plazo,maxDia,mapURL:mapU,status:"Programada",progreso:0,choferId:choferId||"",choferNombre:choferSel?.nombre||"",choferTel:choferSel?.tel||"",choferPlaca:choferSel?.placa||"",createdAt:serverTimestamp()});
+      const trackingId = Math.random().toString(36).slice(2,10).toUpperCase();
+      await addDoc(collection(db,"rutas"),{nombre,cliente,clienteTel:(clienteTel||"").replace(/\D/g,""),clienteEmail:clienteEmail||"",trackingId,veh,vehiculoLabel:vehD?.label,stops:stops.map(s=>({city:s.city,pdv:s.pdv||0,km:s.km||0,addr:s.addr||"",isOrigin:!!s.isOrigin,puntos:(s.puntos||[]).map(p=>({id:p.id,name:p.name||"",address:p.address||"",lat:p.lat||0,lng:p.lng||0,notas:p.notas||"",isOrigin:!!p.isOrigin}))})),totalPDV,totalKm,vans,diasOp,capDia,crew,xViat,tarifaT,sub,iva,total,plazo,maxDia,mapURL:mapU,status:"Programada",progreso:0,choferId:choferId||"",choferNombre:choferSel?.nombre||"",choferTel:choferSel?.tel||"",choferPlaca:choferSel?.placa||"",createdAt:serverTimestamp()});
+      // Notifica al cliente si tiene tel
+      if(clienteTel&&clienteTel.replace(/\D/g,"").length===10){
+        setTimeout(()=>{
+          const url = `${window.location.origin}/track/${trackingId}`;
+          const msg = `Hola ${cliente||""}! Tu ruta "${nombre}" de DMvimiento ha sido programada. Puedes seguirla en tiempo real aquí: ${url}`;
+          const waUrl = `https://wa.me/52${clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
+          if(confirm("¿Enviar link de tracking al cliente por WhatsApp?\n\nSe abrirá WhatsApp con el mensaje pre-llenado.")){
+            window.open(waUrl,"_blank");
+          }
+        },400);
+      }
       showT("✓ Ruta guardada");
     }catch(e){showT(e.message,"err");}
     setSaving(false);
@@ -1909,6 +2002,12 @@ function PlanificadorRutas(){
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11,marginBottom:11}}>
               <Inp label="Nombre de ruta *" value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Ej: MTY Noreste S12"/>
               <Inp label="Cliente" value={cliente} onChange={e=>setCliente(e.target.value)} placeholder="Nombre del cliente"/>
+              <Inp label="WhatsApp cliente (10 díg)" value={clienteTel} onChange={e=>setClienteTel(e.target.value)} placeholder="5512345678"/>
+              <Inp label="Email cliente (opcional)" type="email" value={clienteEmail} onChange={e=>setClienteEmail(e.target.value)} placeholder="cliente@empresa.com"/>
+            </div>
+            <div style={{padding:"8px 12px",background:BLUE+"08",borderRadius:8,fontSize:11,color:BLUE,marginBottom:11,display:"flex",alignItems:"center",gap:7}}>
+              <Bell size={12}/>
+              <span>El cliente recibirá link de tracking + notificaciones por WhatsApp cuando se registren entregas</span>
             </div>
             <div>
               <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,letterSpacing:"0.07em",textTransform:"uppercase"}}>Asignar chofer</div>
@@ -2008,6 +2107,56 @@ function PlanificadorRutas(){
               </div>
             </div>
           </div>
+
+          {/* Vista previa del mapa + optimización IA */}
+          <RouteMapPreview stops={stops}/>
+
+          {stops.reduce((a,s)=>a+(s.puntos||[]).filter(p=>p.lat&&p.lng).length,0)>=3&&<div style={{background:"linear-gradient(135deg,"+VIOLET+"08,"+A+"08)",border:"1.5px solid "+VIOLET+"30",borderRadius:14,padding:16,display:"flex",alignItems:"center",gap:14}}>
+            <div style={{width:44,height:44,borderRadius:12,background:VIOLET+"18",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Zap size={20} color={VIOLET}/></div>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:TEXT}}>Optimización con IA</div>
+              <div style={{fontSize:11,color:MUTED,marginTop:2}}>Reordena los puntos automáticamente para minimizar kilómetros y tiempo de manejo</div>
+              {optimResult&&<div style={{fontSize:11,color:GREEN,fontWeight:700,marginTop:4}}>
+                ✓ Optimizado: {(optimResult.distance/1000).toFixed(1)} km · {Math.round(optimResult.duration/60)} min
+              </div>}
+            </div>
+            <button onClick={async()=>{
+              setOptimizing(true);setOptimResult(null);
+              try{
+                // Extrae puntos con lat/lng en orden actual
+                const points = [];
+                const mapping = [];
+                stops.forEach((s,ci)=>{
+                  (s.puntos||[]).forEach((p,pi)=>{
+                    if(p.lat&&p.lng){points.push([p.lng,p.lat]);mapping.push({ci,pi});}
+                  });
+                });
+                if(points.length<3){showT("Necesitas al menos 3 puntos con coordenadas","warn");setOptimizing(false);return;}
+                const result = await optimizeStops(points);
+                if(!result){showT("No se pudo optimizar la ruta","err");setOptimizing(false);return;}
+                // Reordena los puntos dentro de cada ciudad según el resultado
+                const newOrder = result.order;
+                // Reconstruye el orden
+                const reorderedByCity = {};
+                newOrder.forEach((origIdx,newPos)=>{
+                  const m = mapping[origIdx];
+                  if(!m)return;
+                  if(!reorderedByCity[m.ci]) reorderedByCity[m.ci] = [];
+                  reorderedByCity[m.ci].push(stops[m.ci].puntos[m.pi]);
+                });
+                // Aplica
+                setStops(p=>p.map((s,ci)=>{
+                  if(reorderedByCity[ci]) return {...s,puntos:reorderedByCity[ci]};
+                  return s;
+                }));
+                setOptimResult(result);
+                showT("✓ Ruta optimizada con IA");
+              }catch(e){showT(e.message,"err");}
+              setOptimizing(false);
+            }} disabled={optimizing} className="btn" style={{background:"linear-gradient(135deg,"+VIOLET+",#a855f7)",color:"#fff",borderRadius:10,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:13,boxShadow:"0 4px 16px "+VIOLET+"30",display:"flex",alignItems:"center",gap:7}}>
+              {optimizing?<><div className="spin" style={{width:12,height:12,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Optimizando…</>:<><Zap size={14}/>Optimizar</>}
+            </button>
+          </div>}
 
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
             <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:13}}>Vehículo y flota</div>
@@ -2162,6 +2311,15 @@ function PlanificadorRutas(){
             </div>
           ))}
         </div>
+        {/* Tracking link para el cliente */}
+        {viewR.trackingId&&<div style={{marginBottom:12,padding:"12px 14px",background:VIOLET+"08",borderRadius:12,border:"1.5px solid "+VIOLET+"24"}}>
+          <div style={{fontSize:10,fontWeight:800,color:VIOLET,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6,display:"flex",alignItems:"center",gap:6}}><Globe size={11}/>Link de tracking para cliente</div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <input readOnly value={`${window.location.origin}/track/${viewR.trackingId}`} onClick={e=>e.target.select()} style={{flex:1,fontFamily:MONO,fontSize:11,padding:"7px 10px",border:"1px solid "+BD2,borderRadius:7,background:"#fff"}}/>
+            <button onClick={()=>{navigator.clipboard.writeText(`${window.location.origin}/track/${viewR.trackingId}`);alert("Link copiado ✓");}} className="btn" style={{background:VIOLET,color:"#fff",borderRadius:7,padding:"7px 12px",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:5}}><Hash size={11}/>Copiar</button>
+            {viewR.clienteTel&&<a href={`https://wa.me/52${viewR.clienteTel}?text=${encodeURIComponent(`Hola ${viewR.cliente||""}! Aquí el tracking de tu ruta "${viewR.nombre}" de DMvimiento: ${window.location.origin}/track/${viewR.trackingId}`)}`} target="_blank" rel="noopener noreferrer" className="btn" style={{background:GREEN,color:"#fff",borderRadius:7,padding:"7px 12px",fontSize:11,fontWeight:700,textDecoration:"none",display:"flex",alignItems:"center",gap:5}}>WhatsApp</a>}
+          </div>
+        </div>}
         <div style={{display:"flex",gap:9}}>
           <button onClick={()=>downloadRutaPDF(viewR)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+VIOLET+"30",color:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={14}/>PDF</button>
           {viewR.mapURL&&<a href={viewR.mapURL} target="_blank" rel="noopener noreferrer" className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Globe size={14}/>Maps</a>}
@@ -3913,17 +4071,42 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
 }
 
 function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
-  const [stops,setStops]=useState(()=>(ruta.stops||[]).map((s,i)=>({...s,idx:i,status:i===0?"origen":"pendiente"})));
+  const [stops,setStops]=useState(()=>(ruta.stops||[]).map((s,i)=>({...s,idx:i,status:i===0?"origen":"pendiente",fotoURL:"",receptor:""})));
   const [modalStop,setModalStop]=useState(null);
   const [comentario,setComentario]=useState("");
+  const [receptor,setReceptor]=useState("");
+  const [fotoFile,setFotoFile]=useState(null);
+  const [fotoPreview,setFotoPreview]=useState("");
   const [submitting,setSubmitting]=useState(false);
 
-  const updateStopStatus = async (stopIdx, newStatus, notas="")=>{
-    const nuevo = stops.map(s=>s.idx===stopIdx?{...s,status:newStatus,notas,ts:Date.now()}:s);
+  const pickPhoto = (e)=>{
+    const file = e.target.files?.[0];
+    if(!file) return;
+    setFotoFile(file);
+    const reader = new FileReader();
+    reader.onload = ev => setFotoPreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
+
+  // Genera link WhatsApp del cliente con mensaje prellenado
+  const notifyCliente = (tipo, stop, fotoURL="", notas="")=>{
+    if(!ruta.clienteTel||ruta.clienteTel.replace(/\D/g,"").length!==10) return;
+    const trackUrl = `${window.location.origin}/track/${ruta.trackingId||ruta.id}`;
+    const emoji = tipo==="arrival"?"📍":tipo==="delivered"?"✅":tipo==="issue"?"⚠️":"🚚";
+    let msg = "";
+    if(tipo==="arrival") msg = `${emoji} DMvimiento: El chofer ${chofer.nombre} llegó a ${stop.city}. Puedes verlo en tiempo real: ${trackUrl}`;
+    else if(tipo==="delivered") msg = `${emoji} DMvimiento: Entrega completada en ${stop.city}${notas?" · "+notas:""}${fotoURL?"\n📸 Evidencia: "+fotoURL:""}\nTracking: ${trackUrl}`;
+    else if(tipo==="issue") msg = `${emoji} DMvimiento: Incidencia en ${stop.city}: ${notas}\nTracking: ${trackUrl}`;
+    const waUrl = `https://wa.me/52${ruta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
+    window.open(waUrl,"_blank");
+  };
+
+  const updateStopStatus = async (stopIdx, newStatus, notas="", fotoURL="", receptorNombre="")=>{
+    const nuevo = stops.map(s=>s.idx===stopIdx?{...s,status:newStatus,notas,fotoURL,receptor:receptorNombre,ts:Date.now()}:s);
     setStops(nuevo);
     const done = nuevo.filter(s=>s.status==="entregado").length;
     const prog = Math.round(done/nuevo.filter(s=>s.status!=="origen").length*100);
-    await updateDoc(doc(db,"rutas",ruta.id),{progreso:prog,stopsStatus:nuevo.map(s=>({idx:s.idx,status:s.status,notas:s.notas||"",ts:s.ts||0}))}).catch(()=>{});
+    await updateDoc(doc(db,"rutas",ruta.id),{progreso:prog,stopsStatus:nuevo.map(s=>({idx:s.idx,status:s.status,notas:s.notas||"",fotoURL:s.fotoURL||"",receptor:s.receptor||"",ts:s.ts||0}))}).catch(()=>{});
     const stop = nuevo.find(s=>s.idx===stopIdx);
     if(newStatus==="llegue") postAlert(ruta.id,chofer.id,chofer.nombre,"arrival","Llegó a "+(stop.city||"parada "+(stopIdx+1)),{stopIdx});
     if(newStatus==="entregado") postAlert(ruta.id,chofer.id,chofer.nombre,"delivered","Entregó en "+(stop.city||"parada "+(stopIdx+1))+(notas?" · "+notas:""),{stopIdx,notas});
@@ -4002,7 +4185,10 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
               </div>}
               {!isOrigen&&s.status!=="entregado"&&<div style={{display:"flex",gap:8,marginTop:8}}>
                 <button onClick={()=>openNavigation(s)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Navigation size={13}/>Navegar ciudad</button>
-                {s.status==="pendiente"&&<button onClick={()=>updateStopStatus(i,"llegue")} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><MapPin size={13}/>Llegué</button>}
+                {s.status==="pendiente"&&<button onClick={async()=>{
+                  await updateStopStatus(i,"llegue");
+                  if(ruta.clienteTel) notifyCliente("arrival",s);
+                }} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><MapPin size={13}/>Llegué</button>}
                 {s.status==="llegue"&&<>
                   <button onClick={()=>setModalStop({...s,action:"entregado"})} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:GREEN,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><CheckCircle size={13}/>Entregué</button>
                   <button onClick={()=>setModalStop({...s,action:"problema"})} className="btn" style={{padding:"10px 14px",borderRadius:10,background:ROSE+"10",border:"1.5px solid "+ROSE+"30",color:ROSE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}><AlertCircle size={13}/></button>
@@ -4021,31 +4207,285 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
       </div>
 
       {/* Confirmation modal */}
-      {modalStop&&<Modal title={modalStop.action==="entregado"?"Confirmar entrega":"Reportar problema"} onClose={()=>{setModalStop(null);setComentario("");}} icon={modalStop.action==="entregado"?CheckCircle:AlertCircle} iconColor={modalStop.action==="entregado"?GREEN:ROSE}>
+      {modalStop&&<Modal title={modalStop.action==="entregado"?"Confirmar entrega":"Reportar problema"} onClose={()=>{setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setReceptor("");}} icon={modalStop.action==="entregado"?CheckCircle:AlertCircle} iconColor={modalStop.action==="entregado"?GREEN:ROSE}>
         <div style={{marginBottom:12}}>
           <div style={{fontSize:12,color:MUTED,marginBottom:4}}>Parada</div>
           <div style={{fontWeight:700,fontSize:15}}>{modalStop.city}</div>
         </div>
-        <Txt label={modalStop.action==="entregado"?"¿Quién recibió? / Comentarios":"Describe el problema"} value={comentario} onChange={e=>setComentario(e.target.value)} placeholder={modalStop.action==="entregado"?"Ej: Recibido por Juan P. sin observaciones":"Ej: Local cerrado, regreso en 1h"}/>
-        <button onClick={async()=>{setSubmitting(true);await updateStopStatus(modalStop.idx,modalStop.action,comentario);setSubmitting(false);setModalStop(null);setComentario("");}} disabled={submitting} className="btn" style={{width:"100%",marginTop:14,background:modalStop.action==="entregado"?"linear-gradient(135deg,"+GREEN+",#10b981)":"linear-gradient(135deg,"+ROSE+",#f43f5e)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14}}>
-          {submitting?"Enviando…":"Confirmar"}
+        {modalStop.action==="entregado"&&<div style={{marginBottom:11}}>
+          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Nombre de quien recibió</div>
+          <input value={receptor} onChange={e=>setReceptor(e.target.value)} placeholder="Juan Pérez" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14}}/>
+        </div>}
+        <Txt label={modalStop.action==="entregado"?"Comentarios / Observaciones":"Describe el problema"} value={comentario} onChange={e=>setComentario(e.target.value)} placeholder={modalStop.action==="entregado"?"Sin observaciones":"Ej: Local cerrado, regreso en 1h"}/>
+        {/* Foto evidencia */}
+        <div style={{marginTop:13}}>
+          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>
+            {modalStop.action==="entregado"?"Foto de evidencia":"Foto del problema (opcional)"}
+          </div>
+          {fotoPreview?<div style={{position:"relative",borderRadius:12,overflow:"hidden",border:"1.5px solid "+BD2}}>
+            <img src={fotoPreview} alt="preview" style={{width:"100%",display:"block",maxHeight:260,objectFit:"cover"}}/>
+            <button onClick={()=>{setFotoFile(null);setFotoPreview("");}} className="btn" style={{position:"absolute",top:8,right:8,background:"rgba(12,24,41,.7)",color:"#fff",borderRadius:"50%",width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center"}}><X size={14}/></button>
+          </div>
+          :<label htmlFor={"foto-"+modalStop.idx} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"22px 14px",background:A+"06",border:"2px dashed "+A+"40",borderRadius:12,cursor:"pointer",color:A,fontWeight:700,fontSize:13}}>
+            <Camera size={18}/>Tomar foto
+            <input id={"foto-"+modalStop.idx} type="file" accept="image/*" capture="environment" onChange={pickPhoto} style={{display:"none"}}/>
+          </label>}
+        </div>
+        <button onClick={async()=>{
+          setSubmitting(true);
+          try{
+            let fotoURL = "";
+            if(fotoFile){
+              try{fotoURL = await uploadEvidencia(fotoFile,ruta.id,modalStop.idx);}
+              catch(e){
+                if(!confirm("No se pudo subir la foto. ¿Continuar sin foto?\n\nError: "+e.message)){
+                  setSubmitting(false);return;
+                }
+              }
+            }
+            const notasFull = [receptor?"Recibió: "+receptor:"",comentario].filter(Boolean).join(" · ");
+            await updateStopStatus(modalStop.idx,modalStop.action,notasFull,fotoURL,receptor);
+            // Notifica al cliente
+            if(ruta.clienteTel) notifyCliente(modalStop.action==="entregado"?"delivered":"issue",modalStop,fotoURL,notasFull);
+            showT(modalStop.action==="entregado"?"✓ Entrega confirmada":"⚠ Problema reportado");
+          }catch(e){showT(e.message,"err");}
+          setSubmitting(false);
+          setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setReceptor("");
+        }} disabled={submitting||(modalStop.action==="entregado"&&!receptor.trim())} className="btn" style={{width:"100%",marginTop:14,background:modalStop.action==="entregado"&&!receptor.trim()?"#e0e0e0":(modalStop.action==="entregado"?"linear-gradient(135deg,"+GREEN+",#10b981)":"linear-gradient(135deg,"+ROSE+",#f43f5e)"),color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+          {submitting?<><div className="spin" style={{width:14,height:14,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Enviando…</>:<><CheckCircle size={14}/>Confirmar</>}
         </button>
       </Modal>}
     </div>
   );
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   TRACKING PÚBLICO — /track/:trackingId (tipo FedEx/Uber Eats)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function ClientTracking({trackingId}){
+  const [ruta,setRuta]=useState(null);
+  const [driverLoc,setDriverLoc]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [notFound,setNotFound]=useState(false);
+  const [photoModal,setPhotoModal]=useState(null);
+  const mapRef=useRef(null);
+  const mapCont=useRef(null);
+  const markersRef=useRef([]);
+  const driverMarkerRef=useRef(null);
+
+  // Busca la ruta por trackingId
+  useEffect(()=>{
+    const q = query(collection(db,"rutas"),where("trackingId","==",trackingId));
+    const unsub = onSnapshot(q,s=>{
+      if(s.empty){setNotFound(true);setLoading(false);return;}
+      const r = {id:s.docs[0].id,...s.docs[0].data()};
+      setRuta(r);
+      setLoading(false);
+    });
+    return()=>unsub();
+  },[trackingId]);
+
+  // Live driver location
+  useEffect(()=>{
+    if(!ruta?.choferId) return;
+    const unsub = onSnapshot(doc(db,"driverLocations",ruta.choferId),s=>{
+      if(s.exists()){setDriverLoc({id:s.id,...s.data()});}
+    });
+    return()=>unsub();
+  },[ruta?.choferId]);
+
+  // Init map
+  useEffect(()=>{
+    if(!MAPBOX_TOKEN||!mapCont.current||mapRef.current||!ruta)return;
+    mapRef.current = new mapboxgl.Map({
+      container:mapCont.current,
+      style:"mapbox://styles/mapbox/streets-v12",
+      center:MX_CENTER,
+      zoom:5,
+    });
+    mapRef.current.addControl(new mapboxgl.NavigationControl(),"top-right");
+    return()=>{mapRef.current?.remove();mapRef.current=null;};
+  },[ruta]);
+
+  // Paint stops
+  useEffect(()=>{
+    if(!mapRef.current||!ruta)return;
+    markersRef.current.forEach(m=>m.remove());
+    markersRef.current = [];
+    const bounds = new mapboxgl.LngLatBounds();
+    const stopStates = (ruta.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+    (ruta.stops||[]).forEach((s,ci)=>{
+      (s.puntos||[]).forEach((p,pi)=>{
+        if(!p.lat||!p.lng)return;
+        const st = stopStates[ci];
+        const color = st?.status==="entregado"?GREEN:st?.status==="llegue"?BLUE:st?.status==="problema"?ROSE:s.isOrigin?MUTED:A;
+        const el = document.createElement("div");
+        el.style.cssText = `width:30px;height:30px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 2px 8px rgba(12,24,41,.25);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:11px;font-family:${MONO};cursor:pointer;`;
+        el.textContent = String(ci)+"."+String(pi+1);
+        const popup = new mapboxgl.Popup({offset:18,closeButton:false}).setHTML(`<div style="font-family:${SANS};padding:4px;max-width:220px"><div style="font-weight:700;font-size:13px">${p.name}</div><div style="font-size:11px;color:#607080">${p.address}</div></div>`);
+        const m = new mapboxgl.Marker(el).setLngLat([p.lng,p.lat]).setPopup(popup).addTo(mapRef.current);
+        markersRef.current.push(m);
+        bounds.extend([p.lng,p.lat]);
+      });
+    });
+    if(!bounds.isEmpty()) mapRef.current.fitBounds(bounds,{padding:60,maxZoom:14,duration:400});
+  },[ruta]);
+
+  // Driver marker live
+  useEffect(()=>{
+    if(!mapRef.current||!driverLoc?.lat||!driverLoc?.lng) return;
+    const stale = Date.now()/1000-(driverLoc.ts?.seconds||0)>300;
+    if(stale){if(driverMarkerRef.current){driverMarkerRef.current.remove();driverMarkerRef.current=null;}return;}
+    if(driverMarkerRef.current){
+      driverMarkerRef.current.setLngLat([driverLoc.lng,driverLoc.lat]);
+    }else{
+      const el = document.createElement("div");
+      el.style.cssText = `width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,${VIOLET},#a855f7);border:4px solid #fff;box-shadow:0 6px 16px rgba(124,58,237,.5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px;cursor:pointer;animation:pulse 2s ease infinite;`;
+      el.textContent = "🚚";
+      driverMarkerRef.current = new mapboxgl.Marker(el).setLngLat([driverLoc.lng,driverLoc.lat]).addTo(mapRef.current);
+    }
+  },[driverLoc]);
+
+  if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f1f4fb"}}><Skeleton w={220} h={20}/></div>;
+  if(notFound) return(
+    <div style={{minHeight:"100vh",background:"#f1f4fb",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{textAlign:"center",maxWidth:340}}>
+        <AlertCircle size={48} color={ROSE} style={{marginBottom:12}}/>
+        <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:22,color:TEXT}}>Ruta no encontrada</h1>
+        <p style={{color:MUTED,fontSize:13,marginTop:8}}>El código de tracking "{trackingId}" no existe o fue eliminado.</p>
+      </div>
+    </div>
+  );
+
+  const stopStates = (ruta.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+  const totalStops = (ruta.stops||[]).filter(s=>!s.isOrigin).length;
+  const done = Object.values(stopStates).filter(s=>s.status==="entregado").length;
+  const pct = totalStops>0?Math.round(done/totalStops*100):0;
+  const etaEstado = ruta.status==="Completada"?"Completada":ruta.status==="En curso"?"En ruta":"Programada";
+  const sc = {Completada:GREEN,"En curso":BLUE,Programada:VIOLET};
+  const estadoColor = sc[etaEstado]||MUTED;
+
+  return(
+    <div style={{minHeight:"100vh",background:"#f1f4fb",fontFamily:SANS,paddingBottom:20}}>
+      {/* Header */}
+      <div style={{background:"linear-gradient(135deg,#0a1628,#1e293b)",color:"#fff",padding:"22px 20px"}}>
+        <div style={{maxWidth:800,margin:"0 auto"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <div style={{width:36,height:36,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:14}}>DM</div>
+            <div>
+              <div style={{fontFamily:DISP,fontWeight:800,fontSize:15}}>DMvimiento Tracking</div>
+              <div style={{fontSize:10,color:"#ffffff70",fontFamily:MONO,letterSpacing:"0.1em"}}>#{trackingId}</div>
+            </div>
+          </div>
+          <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:22,letterSpacing:"-0.02em",marginTop:4}}>{ruta.nombre}</h1>
+          {ruta.cliente&&<div style={{fontSize:12,color:"#ffffff90",marginTop:3}}>Cliente: {ruta.cliente}</div>}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:14,flexWrap:"wrap"}}>
+            <span style={{display:"inline-flex",alignItems:"center",gap:6,background:estadoColor+"25",color:"#fff",border:"1px solid "+estadoColor+"60",borderRadius:20,padding:"5px 12px",fontSize:11,fontWeight:700}}>
+              <div className={ruta.status==="En curso"?"pulse":""} style={{width:7,height:7,borderRadius:"50%",background:estadoColor}}/>
+              {etaEstado.toUpperCase()}
+            </span>
+            <span style={{fontFamily:MONO,fontSize:13,fontWeight:700}}>{done}/{totalStops} entregas · {pct}%</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{background:"#fff",padding:"12px 20px",borderBottom:"1px solid "+BORDER}}>
+        <div style={{maxWidth:800,margin:"0 auto"}}>
+          <MiniBar pct={pct} color={GREEN} h={8}/>
+        </div>
+      </div>
+
+      <div style={{maxWidth:800,margin:"0 auto",padding:"16px 16px"}}>
+        {/* Chofer info */}
+        {ruta.choferNombre&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:14,marginBottom:14,display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:44,height:44,borderRadius:14,background:"linear-gradient(135deg,"+A+"22,"+VIOLET+"22)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:800,fontSize:15,color:A}}>{(ruta.choferNombre||"?").slice(0,2).toUpperCase()}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>Tu chofer</div>
+            <div style={{fontWeight:700,fontSize:14}}>{ruta.choferNombre}</div>
+            <div style={{fontSize:11,color:MUTED}}>{ruta.choferPlaca||""} · {ruta.vehiculoLabel||""}</div>
+          </div>
+          {driverLoc&&Date.now()/1000-(driverLoc.ts?.seconds||0)<300&&<div className="pulse" style={{display:"flex",alignItems:"center",gap:5,color:GREEN,fontSize:11,fontWeight:700}}>
+            <Radio size={12}/>EN VIVO
+          </div>}
+          {ruta.choferTel&&<a href={"tel:"+ruta.choferTel} className="btn" style={{background:GREEN,color:"#fff",borderRadius:10,padding:"8px 12px",textDecoration:"none",display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:700}}><Phone size={13}/>Llamar</a>}
+        </div>}
+
+        {/* Live map */}
+        {MAPBOX_TOKEN&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,overflow:"hidden",marginBottom:14}}>
+          <div style={{padding:"10px 14px",borderBottom:"1px solid "+BORDER,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em"}}>Mapa en vivo</span>
+            <div style={{display:"flex",gap:8,fontSize:10}}>
+              <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:GREEN}}/>Entregado</span>
+              <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:BLUE}}/>En sitio</span>
+              <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:A}}/>Pendiente</span>
+            </div>
+          </div>
+          <div ref={mapCont} style={{width:"100%",height:320}}/>
+        </div>}
+
+        {/* Stops with evidence */}
+        <div style={{fontSize:11,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10,paddingLeft:4}}>Seguimiento de entregas</div>
+        {(ruta.stops||[]).map((s,ci)=>{
+          const st = stopStates[ci];
+          const isOrigen = s.isOrigin;
+          const color = st?.status==="entregado"?GREEN:st?.status==="llegue"?BLUE:st?.status==="problema"?ROSE:isOrigen?MUTED:A;
+          return(
+            <div key={ci} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,border:"1px solid "+BORDER,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:s.puntos?.length>0||st?"10":"0"}}>
+                <div style={{width:32,height:32,borderRadius:"50%",background:color+"14",border:"2px solid "+color,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:800,fontSize:12,color}}>{ci+1}</div>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{s.city}</div>
+                  {s.pdv>0&&<div style={{fontSize:11,color:MUTED}}>{s.pdv} PDVs</div>}
+                </div>
+                <Tag color={color} sm>{isOrigen?"Origen":st?.status==="entregado"?"✓ Entregado":st?.status==="llegue"?"En sitio":st?.status==="problema"?"⚠ Problema":"Pendiente"}</Tag>
+              </div>
+              {st&&(st.receptor||st.notas||st.fotoURL)&&<div style={{background:"#f8fafd",borderRadius:10,padding:"10px 12px",marginBottom:8,marginTop:6}}>
+                {st.receptor&&<div style={{fontSize:12}}><strong>Recibió:</strong> {st.receptor}</div>}
+                {st.notas&&<div style={{fontSize:12,color:MUTED,marginTop:3}}>📝 {st.notas}</div>}
+                {st.ts&&<div style={{fontSize:10,color:MUTED,fontFamily:MONO,marginTop:4}}>{new Date(st.ts).toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"})}</div>}
+                {st.fotoURL&&<button onClick={()=>setPhotoModal(st.fotoURL)} className="btn" style={{marginTop:8,display:"flex",alignItems:"center",gap:6,background:A+"10",border:"1.5px solid "+A+"30",color:A,borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:700}}><Camera size={12}/>Ver evidencia</button>}
+              </div>}
+              {s.puntos?.length>0&&<div style={{marginTop:6}}>
+                {s.puntos.map((p,pi)=>(
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0",borderTop:pi>0?"1px solid "+BORDER:"none"}}>
+                    <MapPin size={11} color={VIOLET} style={{flexShrink:0}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                      <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.address}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>}
+            </div>
+          );
+        })}
+
+        <div style={{textAlign:"center",marginTop:20,padding:"16px",color:MUTED,fontSize:10,borderTop:"1px solid "+BORDER+"60"}}>
+          🚚 DMvimiento Logistics · Actualización en tiempo real
+        </div>
+      </div>
+
+      {/* Photo modal */}
+      {photoModal&&<div onClick={()=>setPhotoModal(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.9)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:20,cursor:"pointer"}}>
+        <button onClick={()=>setPhotoModal(null)} className="btn" style={{position:"absolute",top:16,right:16,background:"rgba(255,255,255,.15)",color:"#fff",borderRadius:"50%",width:40,height:40,display:"flex",alignItems:"center",justifyContent:"center"}}><X size={20}/></button>
+        <img src={photoModal} alt="evidencia" style={{maxWidth:"100%",maxHeight:"90vh",borderRadius:12}}/>
+      </div>}
+    </div>
+  );
+}
+
 /* ─── ROOT APP ───────────────────────────────────────────────────────────── */
 export default function App(){
-  // Check if we're on /chofer route — render driver app
-  const isChoferRoute = typeof window!=="undefined" && window.location.pathname.startsWith("/chofer");
-  if(isChoferRoute){
-    return(
-      <>
-        <style>{CSS}</style>
-        <ChoferApp/>
-      </>
-    );
+  const path = typeof window!=="undefined"?window.location.pathname:"";
+  // /chofer route — driver PWA
+  if(path.startsWith("/chofer")){
+    return(<><style>{CSS}</style><ChoferApp/></>);
+  }
+  // /track/:id route — public tracking page
+  const trackMatch = path.match(/^\/track\/([A-Z0-9]+)/i);
+  if(trackMatch){
+    return(<><style>{CSS}</style><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></>);
   }
 
   const [view,setView]=useState("dashboard");
