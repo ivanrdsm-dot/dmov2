@@ -1845,6 +1845,275 @@ function Cotizador({onSaved}){
     </div>
   );
 }
+/* ─── IMPORTACIÓN MASIVA CSV/Excel ──────────────────────────────────────── */
+function ImportRutasModal({onClose,choferes,showT}){
+  const [file,setFile]=useState(null);
+  const [rows,setRows]=useState([]);
+  const [grouped,setGrouped]=useState({});
+  const [step,setStep]=useState(1);
+  const [saving,setSaving]=useState(false);
+  const [choferAsignado,setChoferAsignado]=useState("");
+  const [clienteGlobal,setClienteGlobal]=useState("");
+  const [vehGlobal,setVehGlobal]=useState("cam");
+
+  const downloadTemplate = ()=>{
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["ciudad","punto_nombre","direccion_completa","pdv","notas","cliente","fecha"],
+      ["Acapulco","Walmart Costera","Av. Costera Miguel Alemán 123, Acapulco",1,"Entregar antes de 3pm","Cliente X","2026-05-10"],
+      ["Acapulco","Chedraui Marina","Plaza Marina, Acapulco",1,"","Cliente X","2026-05-10"],
+      ["Cuernavaca","Walmart Galerías","Av. Vicente Guerrero 101, Cuernavaca",2,"2 PDVs","Cliente X","2026-05-10"],
+    ]);
+    ws["!cols"]=[{wch:16},{wch:24},{wch:40},{wch:8},{wch:20},{wch:20},{wch:12}];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,"Rutas");
+    XLSX.writeFile(wb,"template_rutas_dmov.xlsx");
+  };
+
+  const parseFile = async(f)=>{
+    const reader = new FileReader();
+    reader.onload = (e)=>{
+      try{
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data,{type:"array"});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(ws);
+        if(json.length===0){showT("Archivo vacío","err");return;}
+        setRows(json);
+        // Agrupa por ciudad + fecha + cliente
+        const g = {};
+        json.forEach(r=>{
+          const key = `${(r.cliente||clienteGlobal||"Sin cliente").trim()}|${(r.fecha||"").trim()}|${(r.ciudad||"").trim()}`;
+          if(!g[key]) g[key] = {cliente:(r.cliente||clienteGlobal||"").trim(),fecha:(r.fecha||"").trim(),ciudad:(r.ciudad||"").trim(),puntos:[]};
+          g[key].puntos.push({name:(r.punto_nombre||"").trim(),address:(r.direccion_completa||"").trim(),pdv:Number(r.pdv)||1,notas:(r.notas||"").trim()});
+        });
+        setGrouped(g);
+        setStep(2);
+      }catch(err){showT("Error leyendo archivo: "+err.message,"err");}
+    };
+    reader.readAsArrayBuffer(f);
+  };
+
+  const geocodeAddress = async(address)=>{
+    if(!MAPBOX_TOKEN||!address) return null;
+    try{
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${MAPBOX_TOKEN}&country=MX&limit=1`;
+      const res = await fetch(url);
+      const d = await res.json();
+      const f = d.features?.[0];
+      if(f) return {lat:f.center[1],lng:f.center[0],address:f.place_name};
+    }catch(e){}
+    return null;
+  };
+
+  const saveAll = async()=>{
+    setSaving(true);
+    let creadas = 0;
+    try{
+      for(const [key,g] of Object.entries(grouped)){
+        // Geocodifica los puntos que no tengan coordenadas
+        const puntos = [];
+        for(const p of g.puntos){
+          const geo = await geocodeAddress(p.address||p.name);
+          puntos.push({id:uid(),name:p.name,address:geo?.address||p.address,lat:geo?.lat||0,lng:geo?.lng||0,notas:p.notas||""});
+        }
+        const totalPDV = g.puntos.reduce((a,p)=>a+(p.pdv||1),0);
+        // Busca la ciudad en TAR para sacar km y tarifa base
+        const tar = TAR.find(t=>t.c.toLowerCase()===g.ciudad.toLowerCase());
+        const base = tar?tar[vehGlobal]:0;
+        const km = tar?tar.km:0;
+        const chof = choferes.find(c=>c.id===choferAsignado);
+        const nombre = `${g.ciudad} · ${g.fecha||new Date().toLocaleDateString("es-MX")} · ${g.cliente||"Masiva"}`;
+        const trackingId = Math.random().toString(36).slice(2,10).toUpperCase();
+        const stops = [
+          {city:"Ciudad de México",pdv:0,km:0,isOrigin:true,puntos:[]},
+          {city:g.ciudad,pdv:totalPDV,km:km,addr:"",isOrigin:false,puntos:puntos},
+        ];
+        const sub = base*1; // tarifa básica
+        const iva = sub*0.16;
+        const total = sub+iva;
+        await addDoc(collection(db,"rutas"),{
+          nombre,cliente:g.cliente,clienteTel:"",clienteEmail:"",trackingId,
+          veh:vehGlobal,vehiculoLabel:VEHK.find(v=>v.k===vehGlobal)?.label,
+          stops,totalPDV,totalKm:km,vans:1,diasOp:1,capDia:20,crew:1,xViat:0,tarifaT:sub,sub,iva,total,plazo:3,maxDia:20,
+          mapURL:"",status:"Programada",progreso:0,
+          choferId:choferAsignado||"",choferNombre:chof?.nombre||"",choferTel:chof?.tel||"",choferPlaca:chof?.placa||"",
+          importada:true,
+          fechaProgramada:g.fecha||"",
+          createdAt:serverTimestamp(),
+        });
+        creadas++;
+      }
+      showT(`✓ ${creadas} rutas creadas`);
+      onClose();
+    }catch(e){showT("Error: "+e.message,"err");}
+    setSaving(false);
+  };
+
+  return(
+    <Modal title={step===1?"Importar rutas desde CSV/Excel":"Revisar y confirmar rutas"} onClose={onClose} wide icon={Upload} iconColor={BLUE}>
+      {step===1&&<div>
+        <div style={{padding:"14px 16px",background:BLUE+"08",borderRadius:11,border:"1.5px solid "+BLUE+"20",marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:700,color:BLUE,marginBottom:6}}>📋 Formato del archivo</div>
+          <div style={{fontSize:11,color:TEXT,lineHeight:1.6}}>
+            Tu archivo debe tener estas columnas: <strong>ciudad</strong>, <strong>punto_nombre</strong>, <strong>direccion_completa</strong>, <strong>pdv</strong>, <strong>notas</strong>, <strong>cliente</strong>, <strong>fecha</strong>.
+            Las filas con la misma <strong>ciudad + cliente + fecha</strong> se agrupan en una sola ruta automáticamente.
+          </div>
+          <button onClick={downloadTemplate} className="btn" style={{marginTop:10,display:"flex",alignItems:"center",gap:6,background:BLUE,color:"#fff",borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700}}><Download size={12}/>Descargar plantilla Excel</button>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          <Inp label="Cliente global (opcional)" value={clienteGlobal} onChange={e=>setClienteGlobal(e.target.value)} placeholder="Si el CSV no trae columna cliente"/>
+          <Sel label="Tipo de vehículo" value={vehGlobal} onChange={e=>setVehGlobal(e.target.value)} options={[{v:"eur",l:"Eurovan"},{v:"cam",l:"Camioneta 3.5T"},{v:"kra",l:"Krafter"}]}/>
+        </div>
+        <div>
+          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Asignar chofer a todas las rutas</div>
+          <select value={choferAsignado} onChange={e=>setChoferAsignado(e.target.value)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:13,marginBottom:14}}>
+            <option value="">— Sin asignar (asignar después) —</option>
+            {choferes.map(c=><option key={c.id} value={c.id}>{c.nombre} · {c.tel}</option>)}
+          </select>
+        </div>
+
+        <label style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:"28px 14px",background:BLUE+"06",border:"2px dashed "+BLUE+"40",borderRadius:14,cursor:"pointer",color:BLUE,fontWeight:700}}>
+          <Upload size={28}/>
+          <div style={{fontSize:14}}>{file?file.name:"Click para seleccionar archivo (.csv, .xlsx)"}</div>
+          <div style={{fontSize:11,color:MUTED,fontWeight:500}}>o arrastra tu archivo aquí</div>
+          <input type="file" accept=".csv,.xlsx,.xls" onChange={e=>{const f=e.target.files?.[0];if(f){setFile(f);parseFile(f);}}} style={{display:"none"}}/>
+        </label>
+      </div>}
+
+      {step===2&&<div>
+        <div style={{padding:"12px 14px",background:GREEN+"08",borderRadius:10,border:"1.5px solid "+GREEN+"20",marginBottom:14}}>
+          <div style={{fontSize:12,color:GREEN,fontWeight:700}}>✓ Archivo procesado: {rows.length} filas · {Object.keys(grouped).length} rutas generadas</div>
+        </div>
+        <div style={{maxHeight:340,overflowY:"auto",marginBottom:14}}>
+          {Object.entries(grouped).map(([key,g])=>(
+            <div key={key} style={{background:"#f8fafd",border:"1px solid "+BORDER,borderRadius:10,padding:"10px 12px",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div style={{fontWeight:700,fontSize:13}}>{g.ciudad}</div>
+                <Tag color={VIOLET} sm>{g.puntos.length} puntos</Tag>
+              </div>
+              <div style={{fontSize:11,color:MUTED}}>{g.cliente||"Sin cliente"} · {g.fecha||"Sin fecha"}</div>
+              <div style={{fontSize:10,color:MUTED,marginTop:4}}>
+                {g.puntos.slice(0,3).map(p=>p.name).join(", ")}{g.puntos.length>3?"…":""}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setStep(1)} className="btn" style={{flex:1,padding:"12px 0",borderRadius:10,border:"1.5px solid "+BD2,background:"#fff",color:MUTED,fontWeight:700,fontSize:13}}>Atrás</button>
+          <button onClick={saveAll} disabled={saving} className="btn" style={{flex:2,padding:"12px 0",borderRadius:10,background:"linear-gradient(135deg,"+BLUE+",#3b82f6)",color:"#fff",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+            {saving?<><div className="spin" style={{width:14,height:14,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Creando rutas y geocodificando…</>:<><Check size={14}/>Crear {Object.keys(grouped).length} rutas</>}
+          </button>
+        </div>
+      </div>}
+    </Modal>
+  );
+}
+
+/* ─── MODAL DE CAPACIDAD OPERATIVA ───────────────────────────────────────── */
+function CapacidadModal({onClose,rutas,choferes}){
+  const hoy = new Date().toISOString().slice(0,10);
+  const manana = new Date(Date.now()+86400000).toISOString().slice(0,10);
+  const disponibles = choferes.filter(c=>c.status==="Disponible").length;
+  const enRuta = choferes.filter(c=>c.status==="En ruta").length;
+  // Rutas por tipo vehículo
+  const porVehiculo = VEHK.reduce((a,v)=>{
+    const chofs = choferes.filter(c=>c.vehiculo===v.k&&c.status!=="Inactivo");
+    const rutasVeh = rutas.filter(r=>r.veh===v.k&&r.status!=="Completada"&&r.status!=="Cancelada");
+    a[v.k] = {label:v.label,icon:v.icon,total:chofs.length,disp:chofs.filter(c=>c.status==="Disponible").length,enRuta:chofs.filter(c=>c.status==="En ruta").length,rutasActivas:rutasVeh.length};
+    return a;
+  },{});
+  // Rutas próximas por fecha
+  const rutasHoy = rutas.filter(r=>r.fechaProgramada===hoy&&r.status!=="Completada");
+  const rutasManana = rutas.filter(r=>r.fechaProgramada===manana);
+  // Ciudades más frecuentes
+  const ciudades = {};
+  rutas.forEach(r=>(r.stops||[]).forEach(s=>{if(!s.isOrigin)ciudades[s.city]=(ciudades[s.city]||0)+1;}));
+  const topCiudades = Object.entries(ciudades).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  // Capacidad estimada
+  const capacidadDiaria = choferes.filter(c=>c.status!=="Inactivo").length * 20; // ~20 entregas/chofer/día
+
+  return(
+    <Modal title="Capacidad Operativa" onClose={onClose} wide icon={Activity} iconColor={VIOLET}>
+      {/* KPIs principales */}
+      <div className="g4" style={{marginBottom:16}}>
+        <div style={{background:VIOLET+"08",border:"1.5px solid "+VIOLET+"20",borderRadius:12,padding:"12px 14px"}}>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Flota total</div>
+          <div style={{fontFamily:MONO,fontSize:24,fontWeight:800,color:VIOLET}}>{choferes.length}</div>
+          <div style={{fontSize:10,color:MUTED}}>choferes</div>
+        </div>
+        <div style={{background:GREEN+"08",border:"1.5px solid "+GREEN+"20",borderRadius:12,padding:"12px 14px"}}>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Disponibles</div>
+          <div style={{fontFamily:MONO,fontSize:24,fontWeight:800,color:GREEN}}>{disponibles}</div>
+          <div style={{fontSize:10,color:MUTED}}>listos ya</div>
+        </div>
+        <div style={{background:BLUE+"08",border:"1.5px solid "+BLUE+"20",borderRadius:12,padding:"12px 14px"}}>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>En ruta</div>
+          <div style={{fontFamily:MONO,fontSize:24,fontWeight:800,color:BLUE}}>{enRuta}</div>
+          <div style={{fontSize:10,color:MUTED}}>activos</div>
+        </div>
+        <div style={{background:A+"08",border:"1.5px solid "+A+"20",borderRadius:12,padding:"12px 14px"}}>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Cap. diaria</div>
+          <div style={{fontFamily:MONO,fontSize:24,fontWeight:800,color:A}}>{capacidadDiaria}</div>
+          <div style={{fontSize:10,color:MUTED}}>~entregas/día</div>
+        </div>
+      </div>
+
+      {/* Por tipo de vehículo */}
+      <div style={{fontSize:11,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8,marginTop:12}}>Por tipo de vehículo</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16}}>
+        {Object.entries(porVehiculo).map(([k,v])=>(
+          <div key={k} style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"12px 14px",textAlign:"center"}}>
+            <div style={{fontSize:20,marginBottom:4}}>{v.icon}</div>
+            <div style={{fontSize:12,fontWeight:700}}>{v.label}</div>
+            <div style={{fontFamily:MONO,fontSize:18,fontWeight:800,color:A,marginTop:6}}>{v.total}</div>
+            <div style={{fontSize:10,color:MUTED}}>choferes asignados</div>
+            <div style={{display:"flex",gap:6,justifyContent:"center",marginTop:6,fontSize:9}}>
+              <span style={{color:GREEN,fontWeight:700}}>● {v.disp} disp.</span>
+              <span style={{color:BLUE,fontWeight:700}}>● {v.enRuta} en ruta</span>
+            </div>
+            <div style={{fontSize:10,color:MUTED,marginTop:4}}>{v.rutasActivas} rutas activas</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Agenda */}
+      <div className="g2" style={{marginBottom:16}}>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:8}}>📅 Hoy ({hoy})</div>
+          <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:A}}>{rutasHoy.length}</div>
+          <div style={{fontSize:11,color:MUTED}}>rutas programadas</div>
+        </div>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:8}}>📅 Mañana ({manana})</div>
+          <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:VIOLET}}>{rutasManana.length}</div>
+          <div style={{fontSize:11,color:MUTED}}>rutas programadas</div>
+        </div>
+      </div>
+
+      {/* Top ciudades */}
+      {topCiudades.length>0&&<div>
+        <div style={{fontSize:11,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8}}>Top ciudades recurrentes</div>
+        {topCiudades.map(([ciudad,n],i)=>(
+          <div key={ciudad} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"#f8fafd",borderRadius:9,marginBottom:5}}>
+            <div style={{width:22,height:22,borderRadius:7,background:A+"12",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:A}}>{i+1}</div>
+            <div style={{flex:1,fontSize:13,fontWeight:600}}>{ciudad}</div>
+            <span style={{fontFamily:MONO,fontSize:12,fontWeight:700,color:A}}>{n} rutas</span>
+          </div>
+        ))}
+      </div>}
+
+      {/* Alertas */}
+      {disponibles===0&&choferes.length>0&&<div style={{marginTop:14,padding:"12px 14px",background:ROSE+"08",borderRadius:10,border:"1.5px solid "+ROSE+"20",fontSize:12,color:ROSE,fontWeight:600}}>
+        ⚠️ No hay choferes disponibles en este momento
+      </div>}
+      {capacidadDiaria<rutasHoy.length*3&&rutasHoy.length>0&&<div style={{marginTop:14,padding:"12px 14px",background:AMBER+"08",borderRadius:10,border:"1.5px solid "+AMBER+"20",fontSize:12,color:AMBER,fontWeight:600}}>
+        ⚠️ Podría haber sobrecarga hoy: {rutasHoy.length} rutas vs capacidad de ~{capacidadDiaria} entregas
+      </div>}
+    </Modal>
+  );
+}
+
 /* Mini-mapa que muestra todos los puntos de una ruta en preview */
 function RouteMapPreview({stops,height=280}){
   const mapRef = useRef(null);
@@ -1919,6 +2188,8 @@ function PlanificadorRutas(){
   const [choferId,setChoferId]=useState("");
   const [optimizing,setOptimizing]=useState(false);
   const [optimResult,setOptimResult]=useState(null);
+  const [showImport,setShowImport]=useState(false);
+  const [showCapacidad,setShowCapacidad]=useState(false);
   const [choferesList,setChoferesList]=useState([]);
   useEffect(()=>onSnapshot(collection(db,"choferes"),s=>setChoferesList(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo"))),[]);
   const [stops,setStops]=useState([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true,puntos:[]}]);
@@ -2007,9 +2278,13 @@ function PlanificadorRutas(){
   return(
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
-      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
-        <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Planificador de Rutas</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>Multi-parada · Flota automática · Google Maps</p></div>
-        <button onClick={()=>exportRutasXLSX(rutas)} className="btn" title="Exportar rutas guardadas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>Exportar XLSX</button>
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,flexWrap:"wrap",gap:10}}>
+        <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Planificador de Rutas</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>Multi-parada · Flota automática · Import CSV/Excel</p></div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button onClick={()=>setShowCapacidad(true)} className="btn" title="Capacidad operativa" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Activity size={13}/>Capacidad</button>
+          <button onClick={()=>setShowImport(true)} className="btn" title="Importar rutas desde CSV/Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Upload size={13}/>Importar CSV</button>
+          <button onClick={()=>exportRutasXLSX(rutas)} className="btn" title="Exportar rutas guardadas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>Exportar XLSX</button>
+        </div>
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 350px",gap:16,alignItems:"start"}}>
@@ -2286,6 +2561,9 @@ function PlanificadorRutas(){
         </div>
       </div>
 
+      {showImport&&<ImportRutasModal onClose={()=>setShowImport(false)} choferes={choferesList} showT={showT}/>}
+      {showCapacidad&&<CapacidadModal onClose={()=>setShowCapacidad(false)} rutas={rutas} choferes={choferesList}/>}
+
       {viewR&&<Modal title={viewR.nombre} onClose={()=>setViewR(null)} wide icon={Map} iconColor={VIOLET}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11,marginBottom:16}}>
           <InfoBox icon={Truck} color={A} title="Vans" value={viewR.vans||1} sub={VEHK.find(v=>v.k===viewR.veh)?.label}/>
@@ -2338,12 +2616,50 @@ function PlanificadorRutas(){
             {viewR.clienteTel&&<a href={`https://wa.me/52${viewR.clienteTel}?text=${encodeURIComponent(`Hola ${viewR.cliente||""}! Aquí el tracking de tu ruta "${viewR.nombre}" de DMvimiento: ${window.location.origin}/track/${viewR.trackingId}`)}`} target="_blank" rel="noopener noreferrer" className="btn" style={{background:GREEN,color:"#fff",borderRadius:7,padding:"7px 12px",fontSize:11,fontWeight:700,textDecoration:"none",display:"flex",alignItems:"center",gap:5}}>WhatsApp</a>}
           </div>
         </div>}
-        <div style={{display:"flex",gap:9}}>
-          <button onClick={()=>downloadRutaPDF(viewR)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+VIOLET+"30",color:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={14}/>PDF</button>
-          {viewR.mapURL&&<a href={viewR.mapURL} target="_blank" rel="noopener noreferrer" className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Globe size={14}/>Maps</a>}
-          <button onClick={async()=>{await updateDoc(doc(db,"rutas",viewR.id),{status:viewR.status==="En curso"?"Completada":"En curso"});setViewR(null);}} className="btn"
-            style={{flex:1,padding:"10px 0",borderRadius:10,background:"linear-gradient(135deg,"+A+",#fb923c)",border:"none",cursor:"pointer",fontFamily:SANS,fontWeight:700,fontSize:13,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
-            {viewR.status==="En curso"?<><CheckCircle size={14}/>Completar</>:<><Navigation size={14}/>Iniciar</>}
+        {/* Override precio manual */}
+        <div style={{marginBottom:14,padding:"12px 14px",background:AMBER+"08",borderRadius:11,border:"1.5px solid "+AMBER+"25"}}>
+          <div style={{fontSize:10,fontWeight:800,color:AMBER,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}><DollarSign size={11}/>Precios (editables)</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+            <div>
+              <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase"}}>Subtotal</div>
+              <input type="number" defaultValue={viewR.sub||0} onBlur={async e=>{
+                const sub=parseFloat(e.target.value)||0;const iva=sub*0.16;const total=sub+iva;
+                await updateDoc(doc(db,"rutas",viewR.id),{sub,iva,total,precioOverride:true});
+                setViewR({...viewR,sub,iva,total,precioOverride:true});
+              }} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontFamily:MONO,fontSize:13,fontWeight:700}}/>
+            </div>
+            <div>
+              <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase"}}>IVA 16%</div>
+              <div style={{background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:8,padding:"7px 10px",fontFamily:MONO,fontSize:13,fontWeight:700,color:MUTED}}>{fmt(viewR.iva||0)}</div>
+            </div>
+            <div>
+              <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase"}}>Total c/IVA</div>
+              <input type="number" defaultValue={viewR.total||0} onBlur={async e=>{
+                const total=parseFloat(e.target.value)||0;const sub=total/1.16;const iva=total-sub;
+                await updateDoc(doc(db,"rutas",viewR.id),{sub,iva,total,precioOverride:true});
+                setViewR({...viewR,sub,iva,total,precioOverride:true});
+              }} style={{width:"100%",background:"#fff",border:"1.5px solid "+A+"30",borderRadius:8,padding:"7px 10px",fontFamily:MONO,fontSize:14,fontWeight:800,color:A}}/>
+            </div>
+          </div>
+          {viewR.precioOverride&&<div style={{fontSize:10,color:AMBER,marginTop:6,fontWeight:600}}>⚠ Precio modificado manualmente (no se recalcula automáticamente)</div>}
+        </div>
+
+        <div style={{display:"flex",gap:9,flexWrap:"wrap"}}>
+          <button onClick={()=>downloadRutaPDF(viewR)} className="btn" style={{flex:"1 1 100px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+VIOLET+"30",color:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={14}/>PDF</button>
+          {viewR.mapURL&&<a href={viewR.mapURL} target="_blank" rel="noopener noreferrer" className="btn" style={{flex:"1 1 100px",padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Globe size={14}/>Maps</a>}
+          <button onClick={async()=>{
+            if(!confirm("¿Eliminar esta ruta permanentemente?\n\nEsta acción no se puede deshacer.")) return;
+            await deleteDoc(doc(db,"rutas",viewR.id));
+            setViewR(null);
+            showT("Ruta eliminada");
+          }} className="btn" style={{flex:"1 1 100px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+ROSE+"30",color:ROSE,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Trash2 size={14}/>Eliminar</button>
+          <button onClick={async()=>{
+            const nuevoStatus = viewR.status==="En curso"?"Completada":viewR.status==="Completada"?"Programada":"En curso";
+            await updateDoc(doc(db,"rutas",viewR.id),{status:nuevoStatus});
+            setViewR(null);
+          }} className="btn"
+            style={{flex:"1 1 120px",padding:"10px 0",borderRadius:10,background:"linear-gradient(135deg,"+A+",#fb923c)",border:"none",cursor:"pointer",fontFamily:SANS,fontWeight:700,fontSize:13,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+            {viewR.status==="En curso"?<><CheckCircle size={14}/>Completar</>:viewR.status==="Completada"?<><RefreshCw size={14}/>Reabrir</>:<><Navigation size={14}/>Iniciar</>}
           </button>
         </div>
       </Modal>}
@@ -4019,9 +4335,11 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
 
   useEffect(()=>()=>{if(watchIdRef.current!==null)navigator.geolocation.clearWatch(watchIdRef.current);},[]);
 
+  const [tabChofer,setTabChofer]=useState("activas");
   const hoy = new Date().toISOString().slice(0,10);
   const rutasActivas = misRutas.filter(r=>r.status!=="Completada"&&r.status!=="Cancelada");
-  const completadas = misRutas.filter(r=>r.status==="Completada").length;
+  const rutasCompletadas = misRutas.filter(r=>r.status==="Completada");
+  const completadas = rutasCompletadas.length;
 
   return(
     <div style={{minHeight:"100vh",background:"#f1f4fb",fontFamily:SANS}}>
@@ -4056,8 +4374,17 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           </div>
         </div>
 
-        <div style={{fontSize:11,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10,paddingLeft:4}}>Mis rutas</div>
-        {rutasActivas.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+        {/* Tabs */}
+        <div style={{display:"flex",gap:6,marginBottom:12,background:"#fff",padding:4,borderRadius:12,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <button onClick={()=>setTabChofer("activas")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="activas"?A:"transparent",color:tabChofer==="activas"?"#fff":MUTED,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+            <Play size={12}/>Activas ({rutasActivas.length})
+          </button>
+          <button onClick={()=>setTabChofer("historial")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="historial"?GREEN:"transparent",color:tabChofer==="historial"?"#fff":MUTED,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+            <CheckCircle size={12}/>Historial ({rutasCompletadas.length})
+          </button>
+        </div>
+
+        {tabChofer==="activas"&&(rutasActivas.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
           <Package size={32} color={BD2} style={{marginBottom:8}}/>
           <div>No tienes rutas asignadas</div>
           <div style={{fontSize:11,marginTop:4}}>Contacta a administración</div>
@@ -4082,7 +4409,29 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
               </button>
             </div>
           );
-        })}
+        }))}
+
+        {tabChofer==="historial"&&(rutasCompletadas.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <CheckCircle size={32} color={BD2} style={{marginBottom:8}}/>
+          <div>Sin rutas completadas</div>
+        </div>
+        :rutasCompletadas.map(r=>{
+          const done = (r.stopsStatus||[]).filter(s=>s.status==="entregado").length;
+          const fecha = r.completadaEn?.seconds?new Date(r.completadaEn.seconds*1000).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"—";
+          return(
+            <div key={r.id} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,boxShadow:"0 1px 4px rgba(12,24,41,.04)",border:"1px solid "+GREEN+"20"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <div style={{fontWeight:700,fontSize:14}}>{r.nombre}</div>
+                <Tag color={GREEN} sm>✓ Completada</Tag>
+              </div>
+              {r.cliente&&<div style={{fontSize:11,color:MUTED,marginBottom:6}}>{r.cliente}</div>}
+              <div style={{display:"flex",gap:12,fontSize:11,color:MUTED}}>
+                <span><Calendar size={10} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{fecha}</span>
+                <span><CheckCircle size={10} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{done} entregas</span>
+              </div>
+            </div>
+          );
+        }))}
       </div>}
     </div>
   );
