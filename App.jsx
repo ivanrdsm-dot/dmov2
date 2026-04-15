@@ -2037,7 +2037,7 @@ function PlanificadorRutas(){
             </div>
           </div>
 
-          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"visible"}}>
             <div style={{padding:"14px 20px",borderBottom:"1px solid "+BORDER,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <span style={{fontFamily:DISP,fontWeight:700,fontSize:14}}>Ciudades y puntos ({stops.length})</span>
               <div style={{display:"flex",gap:7}}>
@@ -2048,7 +2048,7 @@ function PlanificadorRutas(){
             </div>
             <div style={{padding:14,display:"flex",flexDirection:"column",gap:10}}>
               {stops.map((s,i)=>(
-                <div key={s.id} style={{background:s.isOrigin?"#f8fafd":"#fff",border:"1.5px solid "+(s.isOrigin?BD2:A+"30"),borderRadius:12,overflow:"hidden",transition:"all .13s"}}>
+                <div key={s.id} style={{background:s.isOrigin?"#f8fafd":"#fff",border:"1.5px solid "+(s.isOrigin?BD2:A+"30"),borderRadius:12,overflow:"visible",transition:"all .13s",position:"relative"}}>
                   {/* Header de la ciudad */}
                   <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:s.isOrigin?"#f8fafd":A+"06",borderBottom:s.isOrigin?"none":"1px solid "+A+"15"}}>
                     <div style={{width:24,height:24,borderRadius:"50%",background:s.isOrigin?BLUE:A,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
