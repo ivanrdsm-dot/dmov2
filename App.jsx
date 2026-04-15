@@ -1013,6 +1013,7 @@ const NAV_SECTIONS=[
   ]},
   {section:"OPERACIONES",items:[
     {id:"rutas",    label:"Planificador Rutas",    icon:Map},
+    {id:"choferes", label:"Choferes",              icon:Users, badge:"NEW"},
     {id:"nacional", label:"Proyectos Nacionales",  icon:Target},
     {id:"entregas", label:"Entregas",              icon:Package},
   ]},
@@ -1746,6 +1747,9 @@ function PlanificadorRutas(){
   const [nombre,setNombre]=useState("");
   const [cliente,setCliente]=useState("");
   const [veh,setVeh]=useState("cam");
+  const [choferId,setChoferId]=useState("");
+  const [choferesList,setChoferesList]=useState([]);
+  useEffect(()=>onSnapshot(collection(db,"choferes"),s=>setChoferesList(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo"))),[]);
   const [stops,setStops]=useState([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true}]);
   const [search,setSearch]=useState("");
   const [maxDia,setMaxDia]=useState(20);
@@ -1808,7 +1812,8 @@ function PlanificadorRutas(){
     if(!nombre.trim()||stops.length<2){showT("Agrega nombre y al menos un destino","err");return;}
     setSaving(true);
     try{
-      await addDoc(collection(db,"rutas"),{nombre,cliente,veh,vehiculoLabel:vehD?.label,stops:stops.map(s=>({city:s.city,pdv:s.pdv||0,km:s.km||0})),totalPDV,totalKm,vans,diasOp,capDia,crew,xViat,tarifaT,sub,iva,total,plazo,maxDia,mapURL:mapU,status:"Programada",progreso:0,createdAt:serverTimestamp()});
+      const choferSel = choferesList.find(c=>c.id===choferId);
+      await addDoc(collection(db,"rutas"),{nombre,cliente,veh,vehiculoLabel:vehD?.label,stops:stops.map(s=>({city:s.city,pdv:s.pdv||0,km:s.km||0})),totalPDV,totalKm,vans,diasOp,capDia,crew,xViat,tarifaT,sub,iva,total,plazo,maxDia,mapURL:mapU,status:"Programada",progreso:0,choferId:choferId||"",choferNombre:choferSel?.nombre||"",choferTel:choferSel?.tel||"",choferPlaca:choferSel?.placa||"",createdAt:serverTimestamp()});
       showT("✓ Ruta guardada");
     }catch(e){showT(e.message,"err");}
     setSaving(false);
@@ -1829,9 +1834,17 @@ function PlanificadorRutas(){
 
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
             <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:13}}>Datos de la ruta</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11,marginBottom:11}}>
               <Inp label="Nombre de ruta *" value={nombre} onChange={e=>setNombre(e.target.value)} placeholder="Ej: MTY Noreste S12"/>
               <Inp label="Cliente" value={cliente} onChange={e=>setCliente(e.target.value)} placeholder="Nombre del cliente"/>
+            </div>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,letterSpacing:"0.07em",textTransform:"uppercase"}}>Asignar chofer</div>
+              <select value={choferId} onChange={e=>setChoferId(e.target.value)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14,cursor:"pointer"}}>
+                <option value="">— Sin asignar —</option>
+                {choferesList.map(c=><option key={c.id} value={c.id}>{c.nombre} · {c.tel} {c.placa?"· "+c.placa:""} {c.status!=="Disponible"?"("+c.status+")":""}</option>)}
+              </select>
+              {choferesList.length===0&&<div style={{fontSize:11,color:AMBER,marginTop:5}}>⚠️ No hay choferes registrados. Ve a "Choferes" para agregar.</div>}
             </div>
           </div>
 
@@ -1985,7 +1998,8 @@ function PlanificadorRutas(){
                     <Tag color={sc[r.status]||MUTED} sm>{r.status||"Programada"}</Tag>
                   </div>
                   <div style={{fontSize:11,color:MUTED,marginBottom:4}}>{r.cliente||"Sin cliente"} · {r.stops?.length||0} paradas</div>
-                  <div style={{display:"flex",gap:7}}><Tag color={A} sm>{fmt(r.total||0)}</Tag><Tag color={VIOLET} sm>{r.vans||1} vans</Tag></div>
+                  {r.choferNombre&&<div style={{fontSize:10,color:BLUE,marginBottom:4,display:"flex",alignItems:"center",gap:4}}><Users size={10}/>{r.choferNombre} {r.choferPlaca?"· "+r.choferPlaca:""}</div>}
+                  <div style={{display:"flex",gap:7}}><Tag color={A} sm>{fmt(r.total||0)}</Tag><Tag color={VIOLET} sm>{r.vans||1} vans</Tag>{!r.choferId&&<Tag color={AMBER} sm>Sin chofer</Tag>}</div>
                 </div>
               ))}
             </div>
@@ -1999,6 +2013,21 @@ function PlanificadorRutas(){
           <InfoBox icon={Calendar} color={BLUE} title="Días" value={(viewR.diasOp||"—")+" días"} sub={"Plazo: "+(viewR.plazo||"—")+" días"}/>
           <InfoBox icon={Package} color={VIOLET} title="PDVs" value={(viewR.totalPDV||0).toLocaleString()} sub={(viewR.capDia||0)+"/día"}/>
           <InfoBox icon={Globe} color={GREEN} title="~Km" value={(viewR.totalKm||0).toLocaleString()}/>
+        </div>
+        <div style={{marginBottom:14,padding:"12px 14px",background:(viewR.choferId?BLUE:AMBER)+"08",borderRadius:11,border:"1px solid "+(viewR.choferId?BLUE:AMBER)+"20"}}>
+          <div style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Chofer asignado</div>
+          {viewR.choferId?<div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:34,height:34,borderRadius:10,background:BLUE+"18",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:800,fontSize:12,color:BLUE,flexShrink:0}}>{(viewR.choferNombre||"?").slice(0,2).toUpperCase()}</div>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:700,fontSize:13}}>{viewR.choferNombre}</div>
+              <div style={{fontSize:11,color:MUTED,fontFamily:MONO}}>{viewR.choferTel} {viewR.choferPlaca?" · "+viewR.choferPlaca:""}</div>
+            </div>
+            <button onClick={async()=>{await updateDoc(doc(db,"rutas",viewR.id),{choferId:"",choferNombre:"",choferTel:"",choferPlaca:""});setViewR({...viewR,choferId:"",choferNombre:"",choferTel:"",choferPlaca:""});}} className="btn" style={{color:ROSE,fontSize:11,border:"1px solid "+ROSE+"28",borderRadius:6,padding:"4px 8px"}}>Quitar</button>
+          </div>
+          :<select onChange={async e=>{const id=e.target.value;if(!id)return;const c=choferesList.find(x=>x.id===id);await updateDoc(doc(db,"rutas",viewR.id),{choferId:id,choferNombre:c?.nombre||"",choferTel:c?.tel||"",choferPlaca:c?.placa||""});setViewR({...viewR,choferId:id,choferNombre:c?.nombre,choferTel:c?.tel,choferPlaca:c?.placa});}} defaultValue="" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
+            <option value="">Seleccionar chofer…</option>
+            {choferesList.map(c=><option key={c.id} value={c.id}>{c.nombre} · {c.tel} {c.placa?"· "+c.placa:""}</option>)}
+          </select>}
         </div>
         <div style={{marginBottom:14}}>
           {(viewR.stops||[]).map((s,i)=>(
@@ -3102,6 +3131,136 @@ function Presupuestos(){
   );
 }
 
+/* ─── CHOFERES ───────────────────────────────────────────────────────────── */
+function Choferes(){
+  const [items,setItems]=useState([]);
+  const [load,setLoad]=useState(true);
+  const [modal,setModal]=useState(false);
+  const [editItem,setEditItem]=useState(null);
+  const [toast,setToast]=useState(null);
+  const [q,setQ]=useState("");
+  const [statusF,setStatusF]=useState("todos");
+  const showT=(m,t="ok")=>setToast({msg:m,type:t});
+  const statuses=["Disponible","En ruta","Descanso","Inactivo"];
+  const sc={Disponible:GREEN,"En ruta":BLUE,Descanso:AMBER,Inactivo:MUTED};
+  const empty={nombre:"",tel:"",email:"",placa:"",vehiculo:"cam",licencia:"",emergencia:"",emergenciaTel:"",status:"Disponible",fotoURL:"",notas:""};
+  const [form,setForm]=useState(empty);
+
+  useEffect(()=>onSnapshot(collection(db,"choferes"),s=>{
+    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nombre||"").localeCompare(b.nombre||"")));
+    setLoad(false);
+  }),[]);
+
+  const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
+  const openEdit=c=>{setForm({nombre:c.nombre||"",tel:c.tel||"",email:c.email||"",placa:c.placa||"",vehiculo:c.vehiculo||"cam",licencia:c.licencia||"",emergencia:c.emergencia||"",emergenciaTel:c.emergenciaTel||"",status:c.status||"Disponible",fotoURL:c.fotoURL||"",notas:c.notas||""});setEditItem(c);setModal(true);};
+
+  const save=async()=>{
+    if(!form.nombre.trim()||!form.tel.trim()){showT("Nombre y teléfono son obligatorios","err");return;}
+    // Normalizar teléfono (quitar espacios, dashes, etc.)
+    const telNorm = form.tel.replace(/\D/g,"");
+    if(telNorm.length<10){showT("El teléfono debe tener al menos 10 dígitos","err");return;}
+    const data={...form,tel:telNorm};
+    try{
+      if(editItem){await updateDoc(doc(db,"choferes",editItem.id),data);showT("✓ Chofer actualizado");}
+      else{await addDoc(collection(db,"choferes"),{...data,codigoAcceso:Math.random().toString(36).slice(2,8).toUpperCase(),createdAt:serverTimestamp()});showT("✓ Chofer agregado");}
+      setModal(false);setForm(empty);setEditItem(null);
+    }catch(e){showT(e.message,"err");}
+  };
+  const del=async id=>{if(!confirm("¿Eliminar este chofer?"))return;await deleteDoc(doc(db,"choferes",id));showT("Eliminado");};
+  const updStatus=async(id,status)=>updateDoc(doc(db,"choferes",id),{status});
+
+  const filt=items.filter(c=>(statusF==="todos"||c.status===statusF)&&(!q||(c.nombre||"").toLowerCase().includes(q.toLowerCase())||(c.tel||"").includes(q)||(c.placa||"").toLowerCase().includes(q.toLowerCase())));
+  const disponibles=items.filter(c=>c.status==="Disponible").length;
+  const enRuta=items.filter(c=>c.status==="En ruta").length;
+
+  return(
+    <div className="slide-in" style={{flex:1,overflowY:"auto",padding:"24px 28px",background:"#f1f4fb"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Choferes</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Equipo operativo · Asignación a rutas · Código de acceso móvil</p>
+        </div>
+        <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo chofer</button>
+      </div>
+
+      <div className="g4" style={{marginBottom:16}}>
+        <KpiCard icon={Users} color={A} label="Total choferes" value={items.length} sub="en la flota"/>
+        <KpiCard icon={CheckCircle} color={GREEN} label="Disponibles" value={disponibles}/>
+        <KpiCard icon={Navigation} color={BLUE} label="En ruta" value={enRuta}/>
+        <KpiCard icon={Clock} color={AMBER} label="En descanso" value={items.filter(c=>c.status==="Descanso").length}/>
+      </div>
+
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
+        {["todos",...statuses].map(s=>(
+          <button key={s} onClick={()=>setStatusF(s)} className="btn" style={{padding:"6px 14px",borderRadius:9,border:"1.5px solid "+(statusF===s?A:BD2),background:statusF===s?A+"10":"#fff",color:statusF===s?A:MUTED,fontSize:12,fontWeight:statusF===s?700:500}}>{s==="todos"?"Todos":s}</button>
+        ))}
+        <div style={{marginLeft:"auto",background:"#fff",border:"1px solid "+BORDER,borderRadius:10,padding:"7px 13px",display:"flex",alignItems:"center",gap:8,minWidth:220}}>
+          <Search size={13} color={MUTED}/>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar nombre, tel, placa…" style={{background:"none",border:"none",fontSize:13,flex:1,outline:"none"}}/>
+        </div>
+      </div>
+
+      {load?<SkeletonRows n={4}/>
+      :<div className="g3">
+        {filt.length===0?<div style={{gridColumn:"1/-1"}}><EmptyState icon={Users} title="Sin choferes" sub="Agrega tu equipo de choferes para asignarles rutas" action={openNew} actionLabel="Nuevo chofer"/></div>
+        :filt.map(c=>(
+          <div key={c.id} className="ch" style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:16,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+              <div style={{width:48,height:48,borderRadius:14,background:"linear-gradient(135deg,"+A+"22,"+VIOLET+"22)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:800,fontSize:16,color:A,flexShrink:0}}>{(c.nombre||"?").slice(0,2).toUpperCase()}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</div>
+                <div style={{fontSize:11,color:MUTED,fontFamily:MONO}}>{c.tel}</div>
+              </div>
+              <select value={c.status||"Disponible"} onChange={e=>updStatus(c.id,e.target.value)} style={{background:"transparent",border:"1.5px solid "+(sc[c.status]||MUTED)+"28",borderRadius:8,padding:"3px 7px",color:sc[c.status]||MUTED,fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                {statuses.map(s=><option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10,fontSize:11}}>
+              <div><div style={{color:MUTED,fontWeight:700,textTransform:"uppercase",fontSize:9}}>Placa</div><div style={{fontFamily:MONO,fontWeight:700}}>{c.placa||"—"}</div></div>
+              <div><div style={{color:MUTED,fontWeight:700,textTransform:"uppercase",fontSize:9}}>Licencia</div><div style={{fontFamily:MONO}}>{c.licencia||"—"}</div></div>
+              <div><div style={{color:MUTED,fontWeight:700,textTransform:"uppercase",fontSize:9}}>Emergencia</div><div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.emergencia||"—"}</div></div>
+              <div><div style={{color:MUTED,fontWeight:700,textTransform:"uppercase",fontSize:9}}>Tel. emergencia</div><div style={{fontFamily:MONO}}>{c.emergenciaTel||"—"}</div></div>
+            </div>
+            {c.codigoAcceso&&<div style={{padding:"8px 10px",background:VIOLET+"08",borderRadius:8,border:"1px dashed "+VIOLET+"30",marginBottom:10}}>
+              <div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Código de acceso app chofer</div>
+              <div style={{fontFamily:MONO,fontWeight:800,fontSize:16,color:VIOLET,letterSpacing:"0.1em"}}>{c.codigoAcceso}</div>
+            </div>}
+            <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+              <button onClick={()=>openEdit(c)} className="btn" style={{color:BLUE,padding:"5px 9px",border:"1px solid "+BLUE+"20",borderRadius:6,fontSize:11,fontWeight:600}}><Eye size={12}/></button>
+              <button onClick={()=>del(c.id)} className="btn" style={{color:ROSE,padding:"5px 9px",border:"1px solid "+ROSE+"20",borderRadius:6,fontSize:11,fontWeight:600}}><Trash2 size={12}/></button>
+            </div>
+          </div>
+        ))}
+      </div>}
+
+      {modal&&<Modal title={editItem?"Editar chofer":"Nuevo chofer"} onClose={()=>{setModal(false);setEditItem(null);}} icon={Users} iconColor={A} wide>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Inp label="Nombre completo *" value={form.nombre} onChange={e=>setForm({...form,nombre:e.target.value})} placeholder="Juan Pérez García"/>
+          <Inp label="Teléfono * (10 dígitos)" value={form.tel} onChange={e=>setForm({...form,tel:e.target.value})} placeholder="5512345678"/>
+          <Inp label="Email" type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="juan@ejemplo.com"/>
+          <Inp label="Licencia de conducir" value={form.licencia} onChange={e=>setForm({...form,licencia:e.target.value})} placeholder="Tipo B · Folio …"/>
+          <Inp label="Placa asignada" value={form.placa} onChange={e=>setForm({...form,placa:e.target.value})} placeholder="ABC-123-D"/>
+          <Sel label="Vehículo" value={form.vehiculo} onChange={e=>setForm({...form,vehiculo:e.target.value})} options={[{v:"eur",l:"Eurovan"},{v:"cam",l:"Camioneta 3.5T"},{v:"kra",l:"Krafter"}]}/>
+          <Inp label="Contacto de emergencia" value={form.emergencia} onChange={e=>setForm({...form,emergencia:e.target.value})} placeholder="Nombre del contacto"/>
+          <Inp label="Tel. emergencia" value={form.emergenciaTel} onChange={e=>setForm({...form,emergenciaTel:e.target.value})} placeholder="55…"/>
+          <Sel label="Estado" value={form.status} onChange={e=>setForm({...form,status:e.target.value})} options={statuses}/>
+          <Inp label="URL foto (opcional)" value={form.fotoURL} onChange={e=>setForm({...form,fotoURL:e.target.value})} placeholder="https://…"/>
+          <div style={{gridColumn:"1/-1"}}><Txt label="Notas" value={form.notas} onChange={e=>setForm({...form,notas:e.target.value})} placeholder="Observaciones, restricciones, etc."/></div>
+          {editItem?.codigoAcceso&&<div style={{gridColumn:"1/-1",padding:"12px 16px",background:VIOLET+"08",borderRadius:10,border:"1.5px solid "+VIOLET+"20"}}>
+            <div style={{fontSize:10,color:VIOLET,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Código de acceso app chofer</div>
+            <div style={{fontFamily:MONO,fontWeight:800,fontSize:22,color:VIOLET,letterSpacing:"0.12em"}}>{editItem.codigoAcceso}</div>
+            <div style={{fontSize:11,color:MUTED,marginTop:4}}>Comparte este código con el chofer para que inicie sesión en la app móvil</div>
+          </div>}
+          <button onClick={save} className="btn" style={{gridColumn:"1/-1",background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:15}}>
+            {editItem?"Guardar cambios":"Crear chofer"}
+          </button>
+        </div>
+      </Modal>}
+    </div>
+  );
+}
+
 /* ─── PROSPECCIÓN ────────────────────────────────────────────────────────── */
 function Prospeccion(){
   const [items,setItems]=useState([]);
@@ -3281,6 +3440,7 @@ export default function App(){
   const [viat,setViat]=useState([]);
   const [clientes,setClientes]=useState([]);
   const [prospectos,setProspectos]=useState([]);
+  const [choferes,setChoferes]=useState([]);
   const [fbOk,setFbOk]=useState(false);
   const [sidebarOpen,setSidebarOpen]=useState(true);
   const [searchOpen,setSearchOpen]=useState(false);
@@ -3293,7 +3453,8 @@ export default function App(){
     const u5=onSnapshot(collection(db,"viaticos"),s=>setViat(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u6=onSnapshot(collection(db,"cuentas"),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u7=onSnapshot(collection(db,"prospeccion"),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();u3();u4();u5();u6();u7();};
+    const u8=onSnapshot(collection(db,"choferes"),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();u3();u4();u5();u6();u7();u8();};
   },[]);
 
   // Cmd+K shortcut
@@ -3313,6 +3474,7 @@ export default function App(){
     cotizador:<Cotizador onSaved={()=>setView("dashboard")}/>,
     presupuestos:<Presupuestos/>,
     prospeccion:<Prospeccion/>,
+    choferes:<Choferes/>,
     rutas:<PlanificadorRutas/>,
     nacional:<PlanificadorNacional/>,
     facturas:<Facturas/>,
