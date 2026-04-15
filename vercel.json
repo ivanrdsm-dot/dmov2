@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/chofer/(.*)", "destination": "/" },
+    { "source": "/chofer", "destination": "/" }
+  ]
+}

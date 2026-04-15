@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
-  doc, onSnapshot, serverTimestamp,
+  doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc,
 } from "firebase/firestore";
 import {
   Truck, Package, FileText, LayoutDashboard, DollarSign, Plus,
@@ -13,7 +13,10 @@ import {
   Printer, ChevronRight, Navigation, Upload,
   Download, Eye, Target, Zap, FolderOpen, ClipboardList,
   Menu, Bell, ChevronLeft, Activity, Shield, Hash,
+  Phone, Camera, LogOut, Play, Square, Radio, Flag,
 } from "lucide-react";
+import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -29,6 +32,11 @@ const firebaseConfig = {
 };
 const fbApp = initializeApp(firebaseConfig);
 const db   = getFirestore(fbApp);
+
+/* ─── MAPBOX ─────────────────────────────────────────────────────────────── */
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "";
+if(MAPBOX_TOKEN) mapboxgl.accessToken = MAPBOX_TOKEN;
+const MX_CENTER = [-99.1332, 19.4326]; // CDMX default
 
 /* ─── DESIGN TOKENS ──────────────────────────────────────────────────────── */
 const A      = "#f97316";
@@ -1012,8 +1020,9 @@ const NAV_SECTIONS=[
     {id:"prospeccion",  label:"Prospección",   icon:Target, badge:"NEW"},
   ]},
   {section:"OPERACIONES",items:[
+    {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
     {id:"rutas",    label:"Planificador Rutas",    icon:Map},
-    {id:"choferes", label:"Choferes",              icon:Users, badge:"NEW"},
+    {id:"choferes", label:"Choferes",              icon:Users},
     {id:"nacional", label:"Proyectos Nacionales",  icon:Target},
     {id:"entregas", label:"Entregas",              icon:Package},
   ]},
@@ -3430,8 +3439,473 @@ function Prospeccion(){
   );
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIVE TRACKING + APP DE CHOFER
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Helper: crear un alerta en Firestore */
+async function postAlert(rutaId, choferId, choferNombre, type, msg, extra={}){
+  try{
+    await addDoc(collection(db,"alerts"),{rutaId,choferId,choferNombre,type,msg,read:false,createdAt:serverTimestamp(),...extra});
+  }catch(e){console.warn("alert fail",e);}
+}
+
+/* ─── LIVE TRACKING (ADMIN) ──────────────────────────────────────────────── */
+function LiveTracking(){
+  const [driverLocs,setDriverLocs]=useState([]);
+  const [rutas,setRutas]=useState([]);
+  const [alerts,setAlerts]=useState([]);
+  const [selected,setSelected]=useState(null);
+  const mapRef=useRef(null);
+  const mapCont=useRef(null);
+  const markers=useRef({});
+
+  useEffect(()=>{
+    const u1=onSnapshot(collection(db,"driverLocations"),s=>setDriverLocs(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status==="En curso"||r.status==="Programada")));
+    const u3=onSnapshot(collection(db,"alerts"),s=>setAlerts(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,50)));
+    return()=>{u1();u2();u3();};
+  },[]);
+
+  // Init mapbox
+  useEffect(()=>{
+    if(!MAPBOX_TOKEN){return;}
+    if(mapRef.current||!mapCont.current)return;
+    mapRef.current = new mapboxgl.Map({
+      container:mapCont.current,
+      style:"mapbox://styles/mapbox/streets-v12",
+      center:MX_CENTER,
+      zoom:10,
+    });
+    mapRef.current.addControl(new mapboxgl.NavigationControl(),"top-right");
+    return()=>{mapRef.current?.remove();mapRef.current=null;};
+  },[]);
+
+  // Render driver markers
+  useEffect(()=>{
+    if(!mapRef.current) return;
+    const activeIds = driverLocs.filter(d=>d.lat&&d.lng&&Date.now()/1000-(d.ts?.seconds||0)<300).map(d=>d.id);
+    // Remove stale markers
+    Object.keys(markers.current).forEach(id=>{if(!activeIds.includes(id)){markers.current[id].remove();delete markers.current[id];}});
+    // Add/update active
+    driverLocs.forEach(d=>{
+      if(!d.lat||!d.lng) return;
+      const stale = Date.now()/1000-(d.ts?.seconds||0)>300;
+      if(stale) return;
+      if(markers.current[d.id]){
+        markers.current[d.id].setLngLat([d.lng,d.lat]);
+      }else{
+        const el = document.createElement("div");
+        el.style.cssText=`width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,${A},#fb923c);border:3px solid #fff;box-shadow:0 4px 12px rgba(12,24,41,.3);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:11px;font-family:${DISP};cursor:pointer;`;
+        el.textContent=(d.choferNombre||"?").slice(0,2).toUpperCase();
+        const popup = new mapboxgl.Popup({offset:22,closeButton:false}).setHTML(`<div style="font-family:${SANS};padding:4px"><div style="font-weight:700;font-size:13px">${d.choferNombre||"Chofer"}</div><div style="font-size:11px;color:#607080">${d.rutaNombre||"—"}</div><div style="font-size:10px;color:#9db0c4;font-family:${MONO};margin-top:4px">${d.speed?Math.round(d.speed*3.6)+" km/h":""}</div></div>`);
+        markers.current[d.id] = new mapboxgl.Marker(el).setLngLat([d.lng,d.lat]).setPopup(popup).addTo(mapRef.current);
+        el.onclick=()=>setSelected(d);
+      }
+    });
+    // Fit bounds if markers exist and no selected
+    if(!selected && Object.keys(markers.current).length>0){
+      const bounds = new mapboxgl.LngLatBounds();
+      driverLocs.forEach(d=>{if(d.lat&&d.lng&&Date.now()/1000-(d.ts?.seconds||0)<300)bounds.extend([d.lng,d.lat]);});
+      if(!bounds.isEmpty())mapRef.current.fitBounds(bounds,{padding:80,maxZoom:13,duration:500});
+    }
+  },[driverLocs]);
+
+  const activos = driverLocs.filter(d=>d.lat&&d.lng&&Date.now()/1000-(d.ts?.seconds||0)<300);
+
+  return(
+    <div className="slide-in" style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:"#f1f4fb"}}>
+      <div className="au" style={{padding:"20px 28px 16px",borderBottom:"1px solid "+BORDER,background:"#fff"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:26,color:TEXT,letterSpacing:"-0.03em",display:"flex",alignItems:"center",gap:10}}>
+              <Radio size={22} color={GREEN} className={activos.length>0?"pulse":""}/>
+              Live Tracking
+            </h1>
+            <p style={{color:MUTED,fontSize:12,marginTop:3}}>Ubicación en tiempo real · {activos.length} chofer{activos.length===1?"":"es"} activo{activos.length===1?"":"s"} · {rutas.length} ruta{rutas.length===1?"":"s"} en curso</p>
+          </div>
+        </div>
+      </div>
+      {!MAPBOX_TOKEN?<div style={{padding:40,textAlign:"center",color:ROSE}}><AlertCircle size={32}/><div style={{fontSize:14,marginTop:10}}>Falta configurar VITE_MAPBOX_TOKEN en .env</div></div>
+      :<div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 340px",overflow:"hidden"}}>
+        <div ref={mapCont} style={{width:"100%",height:"100%",position:"relative"}}/>
+        <div style={{borderLeft:"1px solid "+BORDER,background:"#fff",overflowY:"auto",display:"flex",flexDirection:"column"}}>
+          <div style={{padding:"14px 18px",borderBottom:"1px solid "+BORDER}}>
+            <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8}}>Choferes activos ({activos.length})</div>
+            {activos.length===0?<div style={{fontSize:12,color:MUTED,padding:"14px 0",textAlign:"center"}}>Ningún chofer transmitiendo GPS</div>
+            :activos.map(d=>(
+              <button key={d.id} onClick={()=>{setSelected(d);mapRef.current?.flyTo({center:[d.lng,d.lat],zoom:14});}} className="btn fr" style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 4px",cursor:"pointer",background:"transparent",textAlign:"left",borderRadius:8}}>
+                <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,"+A+"22,"+VIOLET+"22)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:800,fontSize:11,color:A,flexShrink:0}}>{(d.choferNombre||"?").slice(0,2).toUpperCase()}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.choferNombre||"Chofer"}</div>
+                  <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.rutaNombre||"Sin ruta"}</div>
+                </div>
+                <div className="pulse" style={{width:8,height:8,borderRadius:"50%",background:GREEN,boxShadow:"0 0 6px "+GREEN,flexShrink:0}}/>
+              </button>
+            ))}
+          </div>
+          <div style={{padding:"14px 18px",borderBottom:"1px solid "+BORDER,flex:1}}>
+            <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}><Bell size={11}/>Alertas recientes</div>
+            {alerts.length===0?<div style={{fontSize:12,color:MUTED,padding:"14px 0",textAlign:"center"}}>Sin alertas</div>
+            :alerts.slice(0,15).map(a=>{
+              const c = a.type==="arrival"?GREEN:a.type==="delivered"?BLUE:a.type==="issue"?ROSE:MUTED;
+              const ic = a.type==="arrival"?MapPin:a.type==="delivered"?CheckCircle:a.type==="issue"?AlertCircle:Bell;
+              const I = ic;
+              return(
+                <div key={a.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 0",borderBottom:"1px solid "+BORDER+"60"}}>
+                  <div style={{width:26,height:26,borderRadius:7,background:c+"12",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><I size={11} color={c}/></div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:11,fontWeight:600,color:TEXT}}>{a.choferNombre}</div>
+                    <div style={{fontSize:11,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.msg}</div>
+                  </div>
+                  <span style={{fontSize:9,color:MUTED,fontFamily:MONO,flexShrink:0}}>{ago(a.createdAt?.seconds)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+/* ─── OPTIMIZACIÓN DE RUTAS (Mapbox Optimization API v1) ──────────────────── */
+async function optimizeStops(stopsLngLat){
+  // stopsLngLat: [[lng,lat], ...] — primero = origen
+  if(!MAPBOX_TOKEN||stopsLngLat.length<3) return null;
+  const coords = stopsLngLat.map(([lng,lat])=>`${lng},${lat}`).join(";");
+  const url = `https://api.mapbox.com/optimized-trips/v1/mapbox/driving/${coords}?source=first&roundtrip=false&destination=last&geometries=geojson&access_token=${MAPBOX_TOKEN}`;
+  try{
+    const res = await fetch(url);
+    const d = await res.json();
+    if(d.code!=="Ok") return null;
+    // trips[0].waypoints has the reordered stops
+    return {
+      order: d.waypoints.map(w=>w.waypoint_index),
+      distance: d.trips[0].distance, // metros
+      duration: d.trips[0].duration, // segundos
+      geometry: d.trips[0].geometry,
+    };
+  }catch(e){console.warn("optimize fail",e);return null;}
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   APP DEL CHOFER (PWA) — /chofer
+   ═══════════════════════════════════════════════════════════════════════════ */
+function ChoferApp(){
+  const [chofer,setChofer]=useState(()=>{
+    try{const s=localStorage.getItem("dmov_chofer");return s?JSON.parse(s):null;}catch(e){return null;}
+  });
+  const [toast,setToast]=useState(null);
+  const showT=(m,t="ok")=>setToast({msg:m,type:t});
+
+  const logout=()=>{localStorage.removeItem("dmov_chofer");setChofer(null);};
+
+  const login=async(tel,codigo)=>{
+    try{
+      const telNorm = tel.replace(/\D/g,"");
+      const q = query(collection(db,"choferes"),where("tel","==",telNorm));
+      const snap = await getDocs(q);
+      if(snap.empty){showT("Teléfono no registrado","err");return false;}
+      const match = snap.docs.find(d=>(d.data().codigoAcceso||"").toUpperCase()===codigo.toUpperCase().trim());
+      if(!match){showT("Código incorrecto","err");return false;}
+      const chof = {id:match.id,...match.data()};
+      localStorage.setItem("dmov_chofer",JSON.stringify(chof));
+      setChofer(chof);
+      showT("✓ Bienvenido "+chof.nombre);
+      return true;
+    }catch(e){showT(e.message,"err");return false;}
+  };
+
+  if(!chofer) return <ChoferLogin onLogin={login} toast={toast} setToast={setToast}/>;
+  return <ChoferDashboard chofer={chofer} onLogout={logout} showT={showT} toast={toast} setToast={setToast}/>;
+}
+
+function ChoferLogin({onLogin,toast,setToast}){
+  const [tel,setTel]=useState("");
+  const [codigo,setCodigo]=useState("");
+  const [loading,setLoading]=useState(false);
+
+  const handle=async()=>{
+    if(!tel||!codigo){return;}
+    setLoading(true);
+    await onLogin(tel,codigo);
+    setLoading(false);
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#1e293b)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:SANS}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      <div className="pi" style={{width:"100%",maxWidth:380,background:"#fff",borderRadius:24,padding:32,boxShadow:"0 32px 80px rgba(0,0,0,.4)"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{width:64,height:64,borderRadius:18,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:22,color:"#fff",margin:"0 auto 14px"}}>DM</div>
+          <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:26,color:TEXT,letterSpacing:"-0.02em"}}>DMvimiento</h1>
+          <div style={{fontSize:11,color:MUTED,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",marginTop:3}}>App Chofer</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Teléfono</div>
+            <div style={{position:"relative"}}>
+              <Phone size={15} color={MUTED} style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)"}}/>
+              <input type="tel" value={tel} onChange={e=>setTel(e.target.value)} placeholder="5512345678" style={{width:"100%",padding:"14px 14px 14px 40px",fontSize:15,border:"1.5px solid "+BD2,borderRadius:12,fontFamily:SANS}}/>
+            </div>
+          </div>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Código de acceso</div>
+            <div style={{position:"relative"}}>
+              <Hash size={15} color={MUTED} style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)"}}/>
+              <input value={codigo} onChange={e=>setCodigo(e.target.value.toUpperCase())} placeholder="ABC123" maxLength={6} style={{width:"100%",padding:"14px 14px 14px 40px",fontSize:16,fontFamily:MONO,fontWeight:800,letterSpacing:"0.15em",border:"1.5px solid "+BD2,borderRadius:12,textTransform:"uppercase"}}/>
+            </div>
+          </div>
+          <button onClick={handle} disabled={loading||!tel||!codigo} className="btn" style={{marginTop:6,background:loading||!tel||!codigo?"#e0e0e0":"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:15,boxShadow:"0 6px 20px "+A+"30"}}>
+            {loading?"Verificando…":"Ingresar"}
+          </button>
+          <div style={{fontSize:11,color:MUTED,textAlign:"center",marginTop:6,lineHeight:1.5}}>
+            Pide a tu administrador el código de acceso de 6 caracteres
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
+  const [misRutas,setMisRutas]=useState([]);
+  const [activeRuta,setActiveRuta]=useState(null);
+  const [tracking,setTracking]=useState(false);
+  const watchIdRef = useRef(null);
+
+  useEffect(()=>{
+    const q = query(collection(db,"rutas"),where("choferId","==",chofer.id));
+    return onSnapshot(q,s=>{
+      const items = s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      setMisRutas(items);
+      // auto-select active route if tracking
+      if(tracking&&activeRuta){
+        const upd = items.find(r=>r.id===activeRuta.id);
+        if(upd) setActiveRuta(upd);
+      }
+    });
+  },[chofer.id]);
+
+  // Start/stop GPS tracking
+  const startTracking = (ruta)=>{
+    if(!("geolocation" in navigator)){showT("GPS no disponible en este dispositivo","err");return;}
+    setActiveRuta(ruta);
+    setTracking(true);
+    // Update ruta status
+    updateDoc(doc(db,"rutas",ruta.id),{status:"En curso",iniciadaEn:serverTimestamp()}).catch(()=>{});
+    postAlert(ruta.id,chofer.id,chofer.nombre,"start","Inició la ruta: "+ruta.nombre);
+    // Start watch
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos)=>{
+        const {latitude:lat,longitude:lng,speed,heading,accuracy} = pos.coords;
+        setDoc(doc(db,"driverLocations",chofer.id),{
+          choferId:chofer.id,
+          choferNombre:chofer.nombre,
+          choferTel:chofer.tel,
+          rutaId:ruta.id,
+          rutaNombre:ruta.nombre,
+          lat,lng,speed:speed||0,heading:heading||0,accuracy:accuracy||0,
+          ts:serverTimestamp(),
+        },{merge:true}).catch(()=>{});
+      },
+      (err)=>{showT("Error GPS: "+err.message,"err");},
+      {enableHighAccuracy:true,maximumAge:10000,timeout:30000}
+    );
+  };
+
+  const stopTracking = async()=>{
+    if(watchIdRef.current!==null){navigator.geolocation.clearWatch(watchIdRef.current);watchIdRef.current=null;}
+    setTracking(false);
+    if(activeRuta){
+      await updateDoc(doc(db,"rutas",activeRuta.id),{status:"Completada",completadaEn:serverTimestamp(),progreso:100}).catch(()=>{});
+      await deleteDoc(doc(db,"driverLocations",chofer.id)).catch(()=>{});
+      postAlert(activeRuta.id,chofer.id,chofer.nombre,"complete","Completó la ruta: "+activeRuta.nombre);
+      setActiveRuta(null);
+    }
+  };
+
+  useEffect(()=>()=>{if(watchIdRef.current!==null)navigator.geolocation.clearWatch(watchIdRef.current);},[]);
+
+  const hoy = new Date().toISOString().slice(0,10);
+  const rutasActivas = misRutas.filter(r=>r.status!=="Completada"&&r.status!=="Cancelada");
+  const completadas = misRutas.filter(r=>r.status==="Completada").length;
+
+  return(
+    <div style={{minHeight:"100vh",background:"#f1f4fb",fontFamily:SANS}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      {/* Header */}
+      <div style={{background:"#0a1628",color:"#fff",padding:"18px 20px",position:"sticky",top:0,zIndex:50}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{width:42,height:42,borderRadius:14,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:15,flexShrink:0}}>{(chofer.nombre||"?").slice(0,2).toUpperCase()}</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:DISP,fontWeight:800,fontSize:16}}>{chofer.nombre}</div>
+            <div style={{fontSize:11,color:"#ffffff70",display:"flex",alignItems:"center",gap:8}}>
+              {tracking&&<span className="pulse" style={{display:"flex",alignItems:"center",gap:4,color:GREEN,fontWeight:700}}><Radio size={10}/>EN VIVO</span>}
+              <span>{chofer.placa||"Sin placa"}</span>
+            </div>
+          </div>
+          <button onClick={onLogout} className="btn" style={{color:"#fff",background:"rgba(255,255,255,.1)",borderRadius:10,padding:"8px 10px",display:"flex",alignItems:"center",gap:5,fontSize:11}}><LogOut size={13}/></button>
+        </div>
+      </div>
+
+      {/* Active route view */}
+      {activeRuta?<ChoferRutaActiva ruta={activeRuta} chofer={chofer} tracking={tracking} onStop={stopTracking} showT={showT}/>
+      :<div style={{padding:"18px 16px"}}>
+        {/* KPIs */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+          <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Pendientes</div>
+            <div style={{fontFamily:MONO,fontSize:28,fontWeight:800,color:A}}>{rutasActivas.length}</div>
+          </div>
+          <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Completadas</div>
+            <div style={{fontFamily:MONO,fontSize:28,fontWeight:800,color:GREEN}}>{completadas}</div>
+          </div>
+        </div>
+
+        <div style={{fontSize:11,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10,paddingLeft:4}}>Mis rutas</div>
+        {rutasActivas.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <Package size={32} color={BD2} style={{marginBottom:8}}/>
+          <div>No tienes rutas asignadas</div>
+          <div style={{fontSize:11,marginTop:4}}>Contacta a administración</div>
+        </div>
+        :rutasActivas.map(r=>{
+          const sc={Programada:VIOLET,"En curso":BLUE,Completada:GREEN};
+          const c = sc[r.status]||MUTED;
+          return(
+            <div key={r.id} className="ch" style={{background:"#fff",borderRadius:14,padding:16,marginBottom:10,boxShadow:"0 1px 4px rgba(12,24,41,.04)",border:"1px solid "+BORDER}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontWeight:700,fontSize:15}}>{r.nombre}</div>
+                <Tag color={c} sm>{r.status||"Programada"}</Tag>
+              </div>
+              {r.cliente&&<div style={{fontSize:12,color:MUTED,marginBottom:8}}>{r.cliente}</div>}
+              <div style={{display:"flex",gap:12,fontSize:11,color:MUTED,marginBottom:12}}>
+                <span><MapPin size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{(r.stops||[]).length} paradas</span>
+                <span><Package size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{(r.totalPDV||0).toLocaleString()} PDVs</span>
+                {r.totalKm>0&&<span><Globe size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{r.totalKm.toLocaleString()} km</span>}
+              </div>
+              <button onClick={()=>startTracking(r)} className="btn" style={{width:"100%",background:"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 16px "+GREEN+"30"}}>
+                <Play size={15}/>Iniciar ruta
+              </button>
+            </div>
+          );
+        })}
+      </div>}
+    </div>
+  );
+}
+
+function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
+  const [stops,setStops]=useState(()=>(ruta.stops||[]).map((s,i)=>({...s,idx:i,status:i===0?"origen":"pendiente"})));
+  const [modalStop,setModalStop]=useState(null);
+  const [comentario,setComentario]=useState("");
+  const [submitting,setSubmitting]=useState(false);
+
+  const updateStopStatus = async (stopIdx, newStatus, notas="")=>{
+    const nuevo = stops.map(s=>s.idx===stopIdx?{...s,status:newStatus,notas,ts:Date.now()}:s);
+    setStops(nuevo);
+    const done = nuevo.filter(s=>s.status==="entregado").length;
+    const prog = Math.round(done/nuevo.filter(s=>s.status!=="origen").length*100);
+    await updateDoc(doc(db,"rutas",ruta.id),{progreso:prog,stopsStatus:nuevo.map(s=>({idx:s.idx,status:s.status,notas:s.notas||"",ts:s.ts||0}))}).catch(()=>{});
+    const stop = nuevo.find(s=>s.idx===stopIdx);
+    if(newStatus==="llegue") postAlert(ruta.id,chofer.id,chofer.nombre,"arrival","Llegó a "+(stop.city||"parada "+(stopIdx+1)),{stopIdx});
+    if(newStatus==="entregado") postAlert(ruta.id,chofer.id,chofer.nombre,"delivered","Entregó en "+(stop.city||"parada "+(stopIdx+1))+(notas?" · "+notas:""),{stopIdx,notas});
+    if(newStatus==="problema") postAlert(ruta.id,chofer.id,chofer.nombre,"issue","Problema en "+(stop.city||"parada "+(stopIdx+1))+": "+notas,{stopIdx,notas});
+  };
+
+  const openNavigation = (stop)=>{
+    const q = encodeURIComponent(stop.city||"");
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${q}&travelmode=driving`;
+    window.open(url,"_blank");
+  };
+
+  const done = stops.filter(s=>s.status==="entregado").length;
+  const totalEntregas = stops.filter(s=>s.status!=="origen").length;
+  const allDone = done>0 && done===totalEntregas;
+
+  return(
+    <div style={{paddingBottom:80}}>
+      {/* Progress */}
+      <div style={{background:"#fff",padding:"14px 18px",borderBottom:"1px solid "+BORDER}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div>
+            <div style={{fontFamily:DISP,fontWeight:800,fontSize:16}}>{ruta.nombre}</div>
+            <div style={{fontSize:11,color:MUTED,marginTop:2}}>{ruta.cliente||"Sin cliente"}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontFamily:MONO,fontSize:20,fontWeight:800,color:A}}>{done}/{totalEntregas}</div>
+            <div style={{fontSize:10,color:MUTED}}>entregas</div>
+          </div>
+        </div>
+        <MiniBar pct={totalEntregas>0?done/totalEntregas*100:0} color={GREEN} h={6}/>
+      </div>
+
+      {/* Stops */}
+      <div style={{padding:"14px 14px"}}>
+        {stops.map((s,i)=>{
+          const isOrigen = s.status==="origen";
+          const sc = s.status==="entregado"?GREEN:s.status==="llegue"?BLUE:s.status==="problema"?ROSE:isOrigen?MUTED:VIOLET;
+          return(
+            <div key={i} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,border:"1.5px solid "+(s.status==="llegue"?BLUE+"50":BORDER),boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:isOrigen?0:10}}>
+                <div style={{width:32,height:32,borderRadius:"50%",background:sc+"14",border:"2px solid "+sc,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:800,fontSize:12,color:sc,flexShrink:0}}>{i+1}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.city}</div>
+                  {s.pdv>0&&<div style={{fontSize:11,color:MUTED}}>{s.pdv} PDVs</div>}
+                  {s.notas&&<div style={{fontSize:11,color:sc,marginTop:2}}>📝 {s.notas}</div>}
+                </div>
+                <Tag color={sc} sm>{isOrigen?"Origen":s.status==="entregado"?"✓ Entregado":s.status==="llegue"?"En sitio":s.status==="problema"?"⚠ Problema":"Pendiente"}</Tag>
+              </div>
+              {!isOrigen&&s.status!=="entregado"&&<div style={{display:"flex",gap:8,marginTop:8}}>
+                <button onClick={()=>openNavigation(s)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Navigation size={13}/>Navegar</button>
+                {s.status==="pendiente"&&<button onClick={()=>updateStopStatus(i,"llegue")} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><MapPin size={13}/>Llegué</button>}
+                {s.status==="llegue"&&<>
+                  <button onClick={()=>setModalStop({...s,action:"entregado"})} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:GREEN,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><CheckCircle size={13}/>Entregué</button>
+                  <button onClick={()=>setModalStop({...s,action:"problema"})} className="btn" style={{padding:"10px 14px",borderRadius:10,background:ROSE+"10",border:"1.5px solid "+ROSE+"30",color:ROSE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center"}}><AlertCircle size={13}/></button>
+                </>}
+              </div>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Sticky bottom controls */}
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1px solid "+BORDER,padding:"10px 14px",display:"flex",gap:8,boxShadow:"0 -4px 16px rgba(12,24,41,.08)"}}>
+        <button onClick={()=>{if(confirm("¿Terminar ruta y regresar al inicio?"))onStop();}} className="btn" style={{flex:1,padding:"12px 0",borderRadius:11,background:allDone?"linear-gradient(135deg,"+GREEN+",#10b981)":ROSE+"10",border:allDone?"none":"1.5px solid "+ROSE+"30",color:allDone?"#fff":ROSE,fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+          {allDone?<><Flag size={14}/>Finalizar ruta</>:<><Square size={13}/>Terminar</>}
+        </button>
+      </div>
+
+      {/* Confirmation modal */}
+      {modalStop&&<Modal title={modalStop.action==="entregado"?"Confirmar entrega":"Reportar problema"} onClose={()=>{setModalStop(null);setComentario("");}} icon={modalStop.action==="entregado"?CheckCircle:AlertCircle} iconColor={modalStop.action==="entregado"?GREEN:ROSE}>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:12,color:MUTED,marginBottom:4}}>Parada</div>
+          <div style={{fontWeight:700,fontSize:15}}>{modalStop.city}</div>
+        </div>
+        <Txt label={modalStop.action==="entregado"?"¿Quién recibió? / Comentarios":"Describe el problema"} value={comentario} onChange={e=>setComentario(e.target.value)} placeholder={modalStop.action==="entregado"?"Ej: Recibido por Juan P. sin observaciones":"Ej: Local cerrado, regreso en 1h"}/>
+        <button onClick={async()=>{setSubmitting(true);await updateStopStatus(modalStop.idx,modalStop.action,comentario);setSubmitting(false);setModalStop(null);setComentario("");}} disabled={submitting} className="btn" style={{width:"100%",marginTop:14,background:modalStop.action==="entregado"?"linear-gradient(135deg,"+GREEN+",#10b981)":"linear-gradient(135deg,"+ROSE+",#f43f5e)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14}}>
+          {submitting?"Enviando…":"Confirmar"}
+        </button>
+      </Modal>}
+    </div>
+  );
+}
+
 /* ─── ROOT APP ───────────────────────────────────────────────────────────── */
 export default function App(){
+  // Check if we're on /chofer route — render driver app
+  const isChoferRoute = typeof window!=="undefined" && window.location.pathname.startsWith("/chofer");
+  if(isChoferRoute){
+    return(
+      <>
+        <style>{CSS}</style>
+        <ChoferApp/>
+      </>
+    );
+  }
+
   const [view,setView]=useState("dashboard");
   const [cots,setCots]=useState([]);
   const [facts,setFacts]=useState([]);
@@ -3475,6 +3949,7 @@ export default function App(){
     presupuestos:<Presupuestos/>,
     prospeccion:<Prospeccion/>,
     choferes:<Choferes/>,
+    tracking:<LiveTracking/>,
     rutas:<PlanificadorRutas/>,
     nacional:<PlanificadorNacional/>,
     facturas:<Facturas/>,
