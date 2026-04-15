@@ -68,6 +68,93 @@ const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "";
 if(MAPBOX_TOKEN) mapboxgl.accessToken = MAPBOX_TOKEN;
 const MX_CENTER = [-99.1332, 19.4326]; // CDMX default
 
+/* Bboxes de ciudades mexicanas comunes [minLng,minLat,maxLng,maxLat] */
+const CITY_BBOX = {
+  "Ciudad de México":[-99.364,19.048,-98.940,19.593],
+  "CDMX":[-99.364,19.048,-98.940,19.593],
+  "Guadalajara":[-103.48,20.55,-103.22,20.77],
+  "Monterrey":[-100.48,25.55,-100.15,25.82],
+  "Acapulco":[-100.05,16.72,-99.72,16.98],
+  "Puebla":[-98.30,18.97,-98.10,19.12],
+  "Querétaro":[-100.48,20.50,-100.29,20.68],
+  "Toluca":[-99.75,19.20,-99.55,19.35],
+  "Tijuana":[-117.13,32.42,-116.85,32.60],
+  "Mérida":[-89.75,20.90,-89.50,21.10],
+  "Cancún":[-86.95,21.00,-86.70,21.25],
+  "Cuernavaca":[-99.30,18.85,-99.15,19.00],
+  "León":[-101.77,21.05,-101.55,21.22],
+  "Chihuahua":[-106.20,28.52,-105.95,28.78],
+  "Aguascalientes":[-102.35,21.78,-102.18,21.98],
+  "Hermosillo":[-111.10,28.93,-110.88,29.18],
+  "Culiacán":[-107.50,24.70,-107.30,24.90],
+  "Mazatlán":[-106.48,23.12,-106.35,23.32],
+  "Veracruz":[-96.20,19.05,-96.05,19.25],
+  "Villahermosa":[-93.03,17.95,-92.85,18.10],
+  "Mexicali":[-115.53,32.60,-115.38,32.72],
+  "Saltillo":[-101.05,25.35,-100.90,25.50],
+  "Pachuca":[-98.80,20.05,-98.68,20.18],
+  "Oaxaca":[-96.80,17.00,-96.65,17.12],
+  "Morelia":[-101.30,19.63,-101.10,19.80],
+  "Torreón":[-103.50,25.45,-103.32,25.62],
+  "Celaya":[-100.87,20.43,-100.75,20.58],
+  "San Luis Potosí":[-101.10,22.07,-100.90,22.22],
+  "Tampico":[-97.90,22.15,-97.80,22.32],
+  "Apizaco":[-98.20,19.38,-98.10,19.48],
+  "Campeche":[-90.60,19.75,-90.43,19.92],
+  "Cd. Juárez":[-106.60,31.58,-106.30,31.80],
+  "Chetumal":[-88.35,18.45,-88.20,18.60],
+  "Chiapas":[-93.20,16.68,-92.95,16.85],
+  "Chilpancingo":[-99.60,17.48,-99.45,17.62],
+  "Coatzacoalcos":[-94.50,18.10,-94.35,18.20],
+  "Colima":[-103.78,19.18,-103.65,19.30],
+  "Cozumel":[-87.10,20.45,-86.85,20.60],
+  "Durango":[-104.75,24.00,-104.55,24.10],
+  "Ensenada":[-116.70,31.78,-116.55,31.92],
+  "Guanajuato":[-101.30,21.00,-101.20,21.08],
+  "Irapuato":[-101.45,20.60,-101.30,20.75],
+  "Jalapa":[-96.98,19.48,-96.85,19.62],
+  "Los Cabos":[-110.10,22.85,-109.65,23.10],
+  "Manzanillo":[-104.40,19.00,-104.25,19.15],
+  "Matamoros":[-97.55,25.80,-97.40,25.92],
+  "Minatitlán":[-94.58,17.95,-94.45,18.05],
+  "Nogales":[-110.98,31.27,-110.90,31.35],
+  "Nuevo Laredo":[-99.58,27.42,-99.45,27.55],
+  "Orizaba":[-97.15,18.80,-97.00,18.92],
+  "Pálenque":[-92.10,17.48,-91.95,17.58],
+  "Parral":[-105.75,26.88,-105.65,26.98],
+  "Piedras Negras":[-100.58,28.65,-100.45,28.78],
+  "Playa del Carmen":[-87.15,20.58,-86.95,20.75],
+  "Poza Rica":[-97.55,20.48,-97.40,20.60],
+  "Puerto Vallarta":[-105.30,20.58,-105.18,20.75],
+  "Reynosa":[-98.35,26.02,-98.20,26.15],
+  "Rosarito":[-117.10,32.28,-116.95,32.42],
+  "Salina Cruz":[-95.28,16.12,-95.15,16.22],
+  "San Cristóbal":[-92.72,16.68,-92.58,16.80],
+  "Sta. Coatzacualcos":[-94.50,18.10,-94.35,18.20],
+  "Tapachula":[-92.35,14.85,-92.20,14.98],
+  "Taxco":[-99.70,18.52,-99.58,18.60],
+  "Tepic":[-104.95,21.45,-104.80,21.58],
+  "Tlaxcala":[-98.30,19.25,-98.20,19.38],
+  "Tuxtla":[-93.20,16.68,-93.00,16.82],
+  "Valladolid":[-88.25,20.65,-88.15,20.75],
+  "Zacatecas":[-102.60,22.72,-102.50,22.82],
+  "Zihuatanejo":[-101.60,17.58,-101.48,17.70],
+};
+// Geocodifica una ciudad vía Mapbox si no está en el hardcode
+async function geocodeCity(cityName){
+  const local = CITY_BBOX[cityName];
+  if(local) return {bbox:local,center:[(local[0]+local[2])/2,(local[1]+local[3])/2]};
+  if(!MAPBOX_TOKEN) return null;
+  try{
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(cityName+", México")}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=1&types=place,locality,region`;
+    const res = await fetch(url);
+    const d = await res.json();
+    const f = d.features?.[0];
+    if(!f) return null;
+    return {bbox:f.bbox||null,center:f.center};
+  }catch(e){return null;}
+}
+
 /* ─── DESIGN TOKENS ──────────────────────────────────────────────────────── */
 const A      = "#f97316";
 const BLUE   = "#2563eb";
@@ -1039,8 +1126,8 @@ function SearchPalette({cots=[],facts=[],rutas=[],clientes=[],entregas=[],onSele
   );
 }
 const ago=s=>{if(!s)return"";const d=Date.now()/1000-s;if(d<60)return"ahora";if(d<3600)return Math.floor(d/60)+"m";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d";};
-/* AddressSearch: búsqueda abierta de direcciones usando Mapbox Geocoding API */
-function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",proximity=null,compact=false}){
+/* AddressSearch: búsqueda de direcciones con Mapbox — bbox strict limita a una zona */
+function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",proximity=null,bbox=null,cityHint="",compact=false}){
   const [q,setQ]=useState("");
   const [results,setResults]=useState([]);
   const [loading,setLoading]=useState(false);
@@ -1048,14 +1135,17 @@ function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",
   const timerRef=useRef(null);
 
   useEffect(()=>{
-    if(!q||q.length<3){setResults([]);return;}
+    if(!q||q.length<2){setResults([]);return;}
     if(!MAPBOX_TOKEN)return;
     if(timerRef.current)clearTimeout(timerRef.current);
     timerRef.current=setTimeout(async()=>{
       setLoading(true);
       try{
         const prox = proximity?`&proximity=${proximity[0]},${proximity[1]}`:"";
-        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=8${prox}&types=poi,address,place,locality,neighborhood`;
+        const bboxStr = bbox?`&bbox=${bbox.join(",")}`:"";
+        // Agrega el nombre de la ciudad al query para mejorar relevancia cuando hay cityHint
+        const queryWithCity = cityHint&&!q.toLowerCase().includes(cityHint.toLowerCase())?`${q}, ${cityHint}`:q;
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(queryWithCity)}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=8${prox}${bboxStr}&types=poi,address,place,locality,neighborhood`;
         const res = await fetch(url);
         const d = await res.json();
         setResults(d.features||[]);
@@ -1063,7 +1153,7 @@ function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",
       setLoading(false);
     },300);
     return()=>{if(timerRef.current)clearTimeout(timerRef.current);};
-  },[q,proximity]);
+  },[q,proximity,bbox,cityHint]);
 
   return(
     <div style={{position:"relative"}}>
@@ -2241,8 +2331,9 @@ function PlanificadorRutas(){
   const total=sub+iva;
   const mapU=useMemo(()=>mapsURL(stops.map(s=>s.city)),[stops]);
 
-  const addStop=t=>{
-    setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:t[veh],isOrigin:false,puntos:[]}]);
+  const addStop=async t=>{
+    const geo = await geocodeCity(t.c);
+    setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:t[veh],isOrigin:false,puntos:[],cityBbox:geo?.bbox||null,cityCenter:geo?.center||null}]);
     setSearch("");
   };
   const rmStop=id=>setStops(p=>p.filter(s=>s.id!==id||s.isOrigin));
@@ -2337,11 +2428,14 @@ function PlanificadorRutas(){
                 <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                   <button onClick={()=>{
                     const cdmx = TAR.find(t=>t.c==="Ciudad de México");
-                    setStops([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:cdmx?cdmx[veh]:0,isOrigin:true,puntos:[]}]);
+                    const bbox = CITY_BBOX["Ciudad de México"];
+                    const center = [(bbox[0]+bbox[2])/2,(bbox[1]+bbox[3])/2];
+                    setStops([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:cdmx?cdmx[veh]:0,isOrigin:true,puntos:[],cityBbox:bbox,cityCenter:center}]);
                   }} className="btn" style={{background:"#fff",border:"1.5px solid "+BLUE+"30",borderRadius:9,padding:"7px 12px",fontSize:11,fontWeight:700,color:BLUE,display:"flex",alignItems:"center",gap:5}}>🏠 Servicio Local CDMX</button>
                   <button onClick={()=>{
-                    const cdmx = TAR.find(t=>t.c==="Ciudad de México");
-                    setStops([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true,puntos:[]}]);
+                    const bbox = CITY_BBOX["Ciudad de México"];
+                    const center = [(bbox[0]+bbox[2])/2,(bbox[1]+bbox[3])/2];
+                    setStops([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true,puntos:[],cityBbox:bbox,cityCenter:center}]);
                   }} className="btn" style={{background:"#fff",border:"1.5px solid "+GREEN+"30",borderRadius:9,padding:"7px 12px",fontSize:11,fontWeight:700,color:GREEN,display:"flex",alignItems:"center",gap:5}}>📤 Origen CDMX (foráneo)</button>
                   <span style={{fontSize:11,color:MUTED,alignSelf:"center"}}>o arma desde cero abajo</span>
                 </div>
@@ -2422,14 +2516,14 @@ function PlanificadorRutas(){
                     {/* Agregar punto específico */}
                     {!s.isOrigin&&MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:VIOLET+"04",border:"1.5px dashed "+VIOLET+"40",borderRadius:9,marginTop:6}}>
                       <div style={{fontSize:9,fontWeight:800,color:VIOLET,marginBottom:6,letterSpacing:"0.05em"}}>+ AGREGAR PUNTO ESPECÍFICO EN {s.city.toUpperCase()}</div>
-                      <AddressSearch compact placeholder={"Ej: Walmart "+s.city+", Chedraui, dirección…"} onSelect={(place)=>{
+                      <AddressSearch compact placeholder={"Ej: Walmart, Chedraui, dirección en "+s.city+"…"} bbox={s.cityBbox||CITY_BBOX[s.city]} proximity={s.cityCenter} cityHint={s.city} onSelect={(place)=>{
                         const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:""}];
                         updStop(s.id,"puntos",puntos);
                       }}/>
                     </div>}
                     {s.isOrigin&&MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:BLUE+"04",border:"1.5px dashed "+BLUE+"40",borderRadius:9}}>
-                      <div style={{fontSize:9,fontWeight:800,color:BLUE,marginBottom:6,letterSpacing:"0.05em"}}>+ PUNTO DE ORIGEN ESPECÍFICO (bodega)</div>
-                      <AddressSearch compact placeholder="Ej: Bodega MAP Iztapalapa, dirección origen…" onSelect={(place)=>{
+                      <div style={{fontSize:9,fontWeight:800,color:BLUE,marginBottom:6,letterSpacing:"0.05em"}}>+ PUNTO DE ORIGEN ESPECÍFICO (bodega) EN {s.city.toUpperCase()}</div>
+                      <AddressSearch compact placeholder={"Ej: Bodega, dirección en "+s.city+"…"} bbox={s.cityBbox||CITY_BBOX[s.city]} proximity={s.cityCenter} cityHint={s.city} onSelect={(place)=>{
                         const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:"",isOrigin:true}];
                         updStop(s.id,"puntos",puntos);
                       }}/>
@@ -2440,8 +2534,9 @@ function PlanificadorRutas(){
               {/* Botón agregar otro origen */}
               <div style={{padding:"10px 12px",background:GREEN+"06",border:"1.5px dashed "+GREEN+"40",borderRadius:11}}>
                 <div style={{fontSize:10,fontWeight:800,color:GREEN,marginBottom:6,letterSpacing:"0.05em"}}>{stops.filter(s=>s.isOrigin).length===0?"+ AGREGAR ORIGEN":"+ AGREGAR OTRO ORIGEN"}</div>
-                <CitySearch value={search} onChange={setSearch} onSelect={t=>{
-                  setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:0,isOrigin:true,puntos:[]}]);
+                <CitySearch value={search} onChange={setSearch} onSelect={async t=>{
+                  const geo = await geocodeCity(t.c);
+                  setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:0,isOrigin:true,puntos:[],cityBbox:geo?.bbox||null,cityCenter:geo?.center||null}]);
                   setSearch("");
                 }} veh={veh} exclude={stops.filter(s=>s.isOrigin).map(s=>s.city)}/>
                 <div style={{fontSize:10,color:MUTED,marginTop:6,lineHeight:1.5}}>💡 Busca "Ciudad de México" para servicio local · Después adentro puedes agregar la dirección exacta de la bodega</div>
@@ -2513,7 +2608,7 @@ function PlanificadorRutas(){
                     {/* Agregar punto en este destino */}
                     {MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:VIOLET+"04",border:"1.5px dashed "+VIOLET+"40",borderRadius:9,marginTop:6}}>
                       <div style={{fontSize:9,fontWeight:800,color:VIOLET,marginBottom:6,letterSpacing:"0.05em"}}>+ AGREGAR PUNTO ESPECÍFICO EN {s.city.toUpperCase()}</div>
-                      <AddressSearch compact placeholder={"Ej: Walmart "+s.city+", Chedraui, dirección…"} onSelect={(place)=>{
+                      <AddressSearch compact placeholder={"Ej: Walmart, Chedraui, dirección en "+s.city+"…"} bbox={s.cityBbox||CITY_BBOX[s.city]} proximity={s.cityCenter} cityHint={s.city} onSelect={(place)=>{
                         const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:""}];
                         updStop(s.id,"puntos",puntos);
                       }}/>
