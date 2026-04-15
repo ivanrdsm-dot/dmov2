@@ -557,73 +557,183 @@ function exportXLSX(rows, filename, sheetName="Datos"){
   XLSX.writeFile(wb, filename);
 }
 
-function exportFacturasXLSX(facts, mes){
-  const rows = facts.map(f=>({
-    Folio: f.folio||"",
-    "Mes": f.mesOp||"",
-    "Año": f.anio||"",
-    Empresa: f.empresa||f.cliente||"",
-    Solicitante: f.solicitante||"",
-    Plan: f.plan||"",
-    Servicio: f.servicio||"",
-    Subtotal: Number(f.subtotal||f.monto||0),
-    IVA: Number(f.ivaAmt||f.iva||0),
-    Total: Number(f.total||0),
-    Estado: f.status||"Pendiente",
-    Notas: f.notas||"",
-  }));
-  exportFacturasWithTotals(rows, `Facturacion_${mes||"Todos"}_${new Date().getFullYear()}.xlsx`);
+// ───── XLSX helpers: currency format + cell styling ─────
+const MONEY_FMT = '"$"#,##0.00';
+const INT_FMT = '#,##0';
+function setCurrency(ws, addr){
+  if(ws[addr]) ws[addr].z = MONEY_FMT;
+}
+function setRange(ws, cols, startRow, endRow, fmt){
+  for(let r=startRow;r<=endRow;r++){
+    for(const c of cols){
+      const addr = XLSX.utils.encode_cell({r,c});
+      if(ws[addr]) ws[addr].z = fmt;
+    }
+  }
+}
+// Build a 2D array sheet with totals rows, formatted money columns, proper widths
+function buildAOA(header, rows){
+  return [header, ...rows];
 }
 
-function exportFacturasWithTotals(rows, filename){
-  if(rows.length===0){ alert("No hay facturas para exportar"); return; }
-  const totalSub = rows.reduce((a,r)=>a+(r.Subtotal||0),0);
-  const totalIVA = rows.reduce((a,r)=>a+(r.IVA||0),0);
-  const totalTot = rows.reduce((a,r)=>a+(r.Total||0),0);
-  const withTotals = [...rows, {
-    Folio:"", Mes:"", "Año":"", Empresa:"", Solicitante:"", Plan:"",
-    Servicio:"TOTALES", Subtotal:totalSub, IVA:totalIVA, Total:totalTot, Estado:"", Notas:""
-  }];
-  const ws = XLSX.utils.json_to_sheet(withTotals);
-  ws["!cols"] = Object.keys(rows[0]).map(k=>({wch: Math.max(k.length+2, 14)}));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Facturación");
-  XLSX.writeFile(wb, filename);
-}
-
-function exportFinancierosXLSX(facts){
+// ═══════ REPORTE EJECUTIVO DE FACTURACIÓN ═══════
+// Genera un Excel con 5 hojas: Resumen, Por Mes, Por Cliente, Detalle Completo, Filtros
+function exportFacturasXLSX(facts, mesFiltro){
+  if(!facts || facts.length===0){alert("No hay facturas para exportar");return;}
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-  const porMes = MESES.map(m=>{
-    const its = facts.filter(f=>f.mesOp===m);
-    const fac = its.reduce((a,f)=>a+(f.total||0),0);
-    const cob = its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
-    const pen = its.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
-    const ven = its.filter(f=>f.status==="Vencida").reduce((a,f)=>a+(f.total||0),0);
-    return {Mes:m, Registros:its.length, Facturado:fac, Cobrado:cob, Pendiente:pen, Vencido:ven, "% Cobrado":fac>0?Math.round(cob/fac*100):0};
-  });
-  const tot = {
-    Mes:"TOTAL",
-    Registros: porMes.reduce((a,r)=>a+r.Registros,0),
-    Facturado: porMes.reduce((a,r)=>a+r.Facturado,0),
-    Cobrado:   porMes.reduce((a,r)=>a+r.Cobrado,0),
-    Pendiente: porMes.reduce((a,r)=>a+r.Pendiente,0),
-    Vencido:   porMes.reduce((a,r)=>a+r.Vencido,0),
-    "% Cobrado": "",
-  };
   const wb = XLSX.utils.book_new();
-  const ws1 = XLSX.utils.json_to_sheet([...porMes, tot]);
-  ws1["!cols"] = [{wch:8},{wch:11},{wch:15},{wch:15},{wch:15},{wch:15},{wch:12}];
-  XLSX.utils.book_append_sheet(wb, ws1, "Resumen Mensual");
-  const detalle = facts.map(f=>({
-    Folio:f.folio||"", Mes:f.mesOp||"", "Año":f.anio||"", Empresa:f.empresa||f.cliente||"",
-    Solicitante:f.solicitante||"", Plan:f.plan||"", Servicio:f.servicio||"",
-    Subtotal:Number(f.subtotal||f.monto||0), IVA:Number(f.ivaAmt||f.iva||0),
-    Total:Number(f.total||0), Estado:f.status||"Pendiente",
-  }));
-  const ws2 = XLSX.utils.json_to_sheet(detalle);
-  ws2["!cols"] = [{wch:14},{wch:6},{wch:6},{wch:24},{wch:20},{wch:14},{wch:28},{wch:14},{wch:12},{wch:14},{wch:10}];
-  XLSX.utils.book_append_sheet(wb, ws2, "Detalle");
-  XLSX.writeFile(wb, "Financieros_"+new Date().getFullYear()+".xlsx");
+  const fechaReporte = new Date().toLocaleDateString("es-MX",{year:"numeric",month:"long",day:"numeric"});
+  const anio = new Date().getFullYear();
+
+  // ──────── HOJA 1: RESUMEN EJECUTIVO ────────
+  const totalFact = facts.reduce((a,f)=>a+Number(f.total||0),0);
+  const totalSub  = facts.reduce((a,f)=>a+Number(f.subtotal||f.monto||0),0);
+  const totalIVA  = facts.reduce((a,f)=>a+Number(f.ivaAmt||f.iva||0),0);
+  const cobrado   = facts.filter(f=>f.status==="Pagada").reduce((a,f)=>a+Number(f.total||0),0);
+  const pendiente = facts.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+Number(f.total||0),0);
+  const vencido   = facts.filter(f=>f.status==="Vencida").reduce((a,f)=>a+Number(f.total||0),0);
+
+  const resumen = [
+    ["DMVIMIENTO — REPORTE EJECUTIVO DE FACTURACIÓN"],
+    ["Generado: "+fechaReporte+(mesFiltro?"  ·  Mes filtrado: "+mesFiltro:"")],
+    [],
+    ["INDICADORES GENERALES"],
+    ["Total de facturas",       facts.length],
+    ["Subtotal acumulado",      totalSub],
+    ["IVA acumulado (16%)",     totalIVA],
+    ["TOTAL FACTURADO",         totalFact],
+    [],
+    ["ESTADO DE PAGOS"],
+    ["Cobrado (pagadas)",       cobrado],
+    ["Por cobrar (pendientes)", pendiente],
+    ["Vencido",                 vencido],
+    ["% de cobranza",           totalFact>0?Math.round(cobrado/totalFact*100)/100:0],
+    [],
+    ["FACTURAS POR ESTADO"],
+    ["Pagadas",    facts.filter(f=>f.status==="Pagada").length],
+    ["Pendientes", facts.filter(f=>f.status==="Pendiente").length],
+    ["Vencidas",   facts.filter(f=>f.status==="Vencida").length],
+  ];
+  const ws1 = XLSX.utils.aoa_to_sheet(resumen);
+  ws1["!cols"] = [{wch:35},{wch:22}];
+  ws1["!merges"] = [{s:{r:0,c:0},e:{r:0,c:1}},{s:{r:1,c:0},e:{r:1,c:1}},{s:{r:3,c:0},e:{r:3,c:1}},{s:{r:9,c:0},e:{r:9,c:1}},{s:{r:15,c:0},e:{r:15,c:1}}];
+  // Format money cells
+  ["B6","B7","B8","B11","B12","B13"].forEach(a=>setCurrency(ws1,a));
+  if(ws1["B14"]) ws1["B14"].z = "0%";
+  XLSX.utils.book_append_sheet(wb, ws1, "Resumen");
+
+  // ──────── HOJA 2: POR MES ────────
+  const porMesData = [];
+  porMesData.push(["Mes","# Facturas","Subtotal","IVA 16%","Total","Cobrado","Pendiente","Vencido","% Cobrado"]);
+  let gFac=0,gSub=0,gIva=0,gCob=0,gPen=0,gVen=0,gCount=0;
+  MESES.forEach(m=>{
+    const its = facts.filter(f=>f.mesOp===m);
+    if(its.length===0) return;
+    const sub = its.reduce((a,f)=>a+Number(f.subtotal||f.monto||0),0);
+    const iva = its.reduce((a,f)=>a+Number(f.ivaAmt||f.iva||0),0);
+    const tot = its.reduce((a,f)=>a+Number(f.total||0),0);
+    const cob = its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+Number(f.total||0),0);
+    const pen = its.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+Number(f.total||0),0);
+    const ven = its.filter(f=>f.status==="Vencida").reduce((a,f)=>a+Number(f.total||0),0);
+    porMesData.push([m+" "+anio,its.length,sub,iva,tot,cob,pen,ven,tot>0?cob/tot:0]);
+    gFac+=tot;gSub+=sub;gIva+=iva;gCob+=cob;gPen+=pen;gVen+=ven;gCount+=its.length;
+  });
+  porMesData.push([]);
+  porMesData.push(["TOTAL ANUAL "+anio,gCount,gSub,gIva,gFac,gCob,gPen,gVen,gFac>0?gCob/gFac:0]);
+  const ws2 = XLSX.utils.aoa_to_sheet(porMesData);
+  ws2["!cols"] = [{wch:14},{wch:11},{wch:16},{wch:14},{wch:16},{wch:16},{wch:16},{wch:14},{wch:11}];
+  const lastRow2 = porMesData.length;
+  setRange(ws2,[2,3,4,5,6,7],1,lastRow2-1,MONEY_FMT);
+  for(let r=1;r<lastRow2;r++){
+    const a = XLSX.utils.encode_cell({r,c:8});
+    if(ws2[a]) ws2[a].z = "0.0%";
+  }
+  ws2["!freeze"] = {xSplit:0,ySplit:1};
+  XLSX.utils.book_append_sheet(wb, ws2, "Por Mes");
+
+  // ──────── HOJA 3: POR CLIENTE ────────
+  const byClient = {};
+  facts.forEach(f=>{
+    const k = (f.empresa||f.cliente||"—").trim();
+    if(!byClient[k]) byClient[k] = {count:0,sub:0,iva:0,tot:0,cob:0,pen:0};
+    byClient[k].count++;
+    byClient[k].sub += Number(f.subtotal||f.monto||0);
+    byClient[k].iva += Number(f.ivaAmt||f.iva||0);
+    byClient[k].tot += Number(f.total||0);
+    if(f.status==="Pagada") byClient[k].cob += Number(f.total||0);
+    if(f.status==="Pendiente") byClient[k].pen += Number(f.total||0);
+  });
+  const clientData = [["Cliente","# Facturas","Subtotal","IVA 16%","Total","Cobrado","Pendiente","% Part."]];
+  const ordered = Object.entries(byClient).sort((a,b)=>b[1].tot-a[1].tot);
+  ordered.forEach(([name,v])=>{
+    clientData.push([name,v.count,v.sub,v.iva,v.tot,v.cob,v.pen,gFac>0?v.tot/gFac:0]);
+  });
+  clientData.push([]);
+  clientData.push(["TOTAL GENERAL",gCount,gSub,gIva,gFac,gCob,gPen,1]);
+  const ws3 = XLSX.utils.aoa_to_sheet(clientData);
+  ws3["!cols"] = [{wch:32},{wch:11},{wch:16},{wch:14},{wch:16},{wch:16},{wch:16},{wch:10}];
+  setRange(ws3,[2,3,4,5,6],1,clientData.length-1,MONEY_FMT);
+  for(let r=1;r<clientData.length;r++){
+    const a = XLSX.utils.encode_cell({r,c:7});
+    if(ws3[a]) ws3[a].z = "0.00%";
+  }
+  ws3["!freeze"] = {xSplit:0,ySplit:1};
+  XLSX.utils.book_append_sheet(wb, ws3, "Por Cliente");
+
+  // ──────── HOJA 4: DETALLE POR MES (agrupado) ────────
+  const detailGrouped = [["#","Folio","Fecha","Cliente","Solicitante","Plan","Servicio","Subtotal","IVA","Total","Estado","Notas"]];
+  let idx = 1;
+  MESES.forEach(m=>{
+    const its = facts.filter(f=>f.mesOp===m).sort((a,b)=>(a.folio||"").localeCompare(b.folio||""));
+    if(its.length===0) return;
+    // Section header row
+    detailGrouped.push(["▼ "+m.toUpperCase()+" "+anio+" — "+its.length+" factura(s)","","","","","","","","","","",""]);
+    let mSub=0,mIva=0,mTot=0;
+    its.forEach(f=>{
+      const sub = Number(f.subtotal||f.monto||0);
+      const iva = Number(f.ivaAmt||f.iva||0);
+      const tot = Number(f.total||0);
+      mSub+=sub;mIva+=iva;mTot+=tot;
+      detailGrouped.push([idx++,f.folio||"",m+" "+(f.anio||anio),f.empresa||f.cliente||"",f.solicitante||"",f.plan||"",f.servicio||"",sub,iva,tot,f.status||"Pendiente",f.notas||""]);
+    });
+    // Subtotal row
+    detailGrouped.push(["","","","Subtotal "+m,"","","",mSub,mIva,mTot,"",""]);
+    detailGrouped.push([]);
+  });
+  // Grand total
+  detailGrouped.push(["","","","GRAN TOTAL","","","",gSub,gIva,gFac,"",""]);
+  const ws4 = XLSX.utils.aoa_to_sheet(detailGrouped);
+  ws4["!cols"] = [{wch:5},{wch:16},{wch:11},{wch:28},{wch:20},{wch:18},{wch:40},{wch:14},{wch:12},{wch:14},{wch:12},{wch:30}];
+  setRange(ws4,[7,8,9],1,detailGrouped.length,MONEY_FMT);
+  ws4["!freeze"] = {xSplit:0,ySplit:1};
+  XLSX.utils.book_append_sheet(wb, ws4, "Detalle por Mes");
+
+  // ──────── HOJA 5: DETALLE COMPLETO (plano, filtrable) ────────
+  const flatSorted = [...facts].sort((a,b)=>{
+    const mi = MESES.indexOf(a.mesOp||"")-MESES.indexOf(b.mesOp||"");
+    return mi!==0?mi:(a.folio||"").localeCompare(b.folio||"");
+  });
+  const detailFlat = [["Folio","Mes","Año","Cliente","Solicitante","Plan","Servicio","Subtotal","IVA 16%","Total","Estado","Notas"]];
+  flatSorted.forEach(f=>{
+    detailFlat.push([f.folio||"",f.mesOp||"",f.anio||anio,f.empresa||f.cliente||"",f.solicitante||"",f.plan||"",f.servicio||"",Number(f.subtotal||f.monto||0),Number(f.ivaAmt||f.iva||0),Number(f.total||0),f.status||"Pendiente",f.notas||""]);
+  });
+  detailFlat.push([]);
+  detailFlat.push(["TOTAL","","","","","","",gSub,gIva,gFac,"",""]);
+  const ws5 = XLSX.utils.aoa_to_sheet(detailFlat);
+  ws5["!cols"] = [{wch:16},{wch:6},{wch:7},{wch:28},{wch:20},{wch:18},{wch:40},{wch:14},{wch:12},{wch:14},{wch:12},{wch:30}];
+  setRange(ws5,[7,8,9],1,detailFlat.length,MONEY_FMT);
+  ws5["!freeze"] = {xSplit:0,ySplit:1};
+  ws5["!autofilter"] = {ref:"A1:L"+(flatSorted.length+1)};
+  XLSX.utils.book_append_sheet(wb, ws5, "Detalle Completo");
+
+  // Descargar
+  const mesTag = mesFiltro?"_"+mesFiltro:"";
+  XLSX.writeFile(wb, `DMOV_Facturacion${mesTag}_${anio}.xlsx`);
+}
+
+// Alias para mantener compatibilidad
+function exportFinancierosXLSX(facts){
+  exportFacturasXLSX(facts, null);
 }
 
 function exportRutasXLSX(rutas){
