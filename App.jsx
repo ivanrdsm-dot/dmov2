@@ -2761,7 +2761,7 @@ function PlanificadorRutas(){
             </div>
             <button onClick={async()=>{await updateDoc(doc(db,"rutas",viewR.id),{choferId:"",choferNombre:"",choferTel:"",choferPlaca:""});setViewR({...viewR,choferId:"",choferNombre:"",choferTel:"",choferPlaca:""});}} className="btn" style={{color:ROSE,fontSize:11,border:"1px solid "+ROSE+"28",borderRadius:6,padding:"4px 8px"}}>Quitar</button>
           </div>
-          :<select onChange={async e=>{const id=e.target.value;if(!id)return;const c=choferesList.find(x=>x.id===id);await updateDoc(doc(db,"rutas",viewR.id),{choferId:id,choferNombre:c?.nombre||"",choferTel:c?.tel||"",choferPlaca:c?.placa||""});setViewR({...viewR,choferId:id,choferNombre:c?.nombre,choferTel:c?.tel,choferPlaca:c?.placa});}} defaultValue="" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
+          :<select onChange={async e=>{const id=e.target.value;if(!id)return;const c=choferesList.find(x=>x.id===id);await updateDoc(doc(db,"rutas",viewR.id),{choferId:id,choferNombre:c?.nombre||"",choferTel:c?.tel||"",choferPlaca:c?.placa||""});if(c)await updateDoc(doc(db,"choferes",id),{rutaAsignadaId:viewR.id,rutaAsignadaNombre:viewR.nombre}).catch(()=>{});setViewR({...viewR,choferId:id,choferNombre:c?.nombre,choferTel:c?.tel,choferPlaca:c?.placa});}} defaultValue="" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
             <option value="">Seleccionar chofer…</option>
             {choferesList.map(c=><option key={c.id} value={c.id}>{c.nombre} · {c.tel} {c.placa?"· "+c.placa:""}</option>)}
           </select>}
@@ -4246,10 +4246,11 @@ function LiveTracking(){
   const mapRef=useRef(null);
   const mapCont=useRef(null);
   const markers=useRef({});
+  const stopMarkers=useRef([]);
 
   useEffect(()=>{
     const u1=onSnapshot(collection(db,"driverLocations"),s=>setDriverLocs(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u2=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status==="En curso"||r.status==="Programada")));
+    const u2=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status==="En curso")));
     const u3=onSnapshot(collection(db,"alerts"),s=>setAlerts(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,50)));
     return()=>{u1();u2();u3();};
   },[]);
@@ -4265,16 +4266,20 @@ function LiveTracking(){
       zoom:10,
     });
     mapRef.current.addControl(new mapboxgl.NavigationControl(),"top-right");
+    mapRef.current.on("load",()=>{
+      // Fuente y capa para la ruta (línea azul estilo Uber)
+      mapRef.current.addSource("route-line",{type:"geojson",data:{type:"Feature",geometry:{type:"LineString",coordinates:[]}}});
+      mapRef.current.addLayer({id:"route-line-casing",type:"line",source:"route-line",paint:{"line-color":"#fff","line-width":8,"line-opacity":.85}});
+      mapRef.current.addLayer({id:"route-line-layer",type:"line",source:"route-line",paint:{"line-color":BLUE,"line-width":5,"line-opacity":.95,"line-dasharray":[0.5,1.5]}});
+    });
     return()=>{mapRef.current?.remove();mapRef.current=null;};
   },[]);
 
-  // Render driver markers
+  // Render driver markers with rotation (heading)
   useEffect(()=>{
     if(!mapRef.current) return;
     const activeIds = driverLocs.filter(d=>d.lat&&d.lng&&Date.now()/1000-(d.ts?.seconds||0)<300).map(d=>d.id);
-    // Remove stale markers
     Object.keys(markers.current).forEach(id=>{if(!activeIds.includes(id)){markers.current[id].remove();delete markers.current[id];}});
-    // Add/update active
     driverLocs.forEach(d=>{
       if(!d.lat||!d.lng) return;
       const stale = Date.now()/1000-(d.ts?.seconds||0)>300;
@@ -4283,22 +4288,70 @@ function LiveTracking(){
         markers.current[d.id].setLngLat([d.lng,d.lat]);
       }else{
         const el = document.createElement("div");
-        el.style.cssText=`width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,${A},#fb923c);border:3px solid #fff;box-shadow:0 4px 12px rgba(12,24,41,.3);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:11px;font-family:${DISP};cursor:pointer;`;
+        el.style.cssText=`width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,${A},#fb923c);border:3px solid #fff;box-shadow:0 4px 14px rgba(249,115,22,.5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:12px;font-family:${DISP};cursor:pointer;animation:pulse 2s ease infinite;`;
         el.textContent=(d.choferNombre||"?").slice(0,2).toUpperCase();
-        const popup = new mapboxgl.Popup({offset:22,closeButton:false}).setHTML(`<div style="font-family:${SANS};padding:4px"><div style="font-weight:700;font-size:13px">${d.choferNombre||"Chofer"}</div><div style="font-size:11px;color:#607080">${d.rutaNombre||"—"}</div><div style="font-size:10px;color:#9db0c4;font-family:${MONO};margin-top:4px">${d.speed?Math.round(d.speed*3.6)+" km/h":""}</div></div>`);
+        const popup = new mapboxgl.Popup({offset:26,closeButton:false}).setHTML(`<div style="font-family:${SANS};padding:4px"><div style="font-weight:700;font-size:13px">${d.choferNombre||"Chofer"}</div><div style="font-size:11px;color:#607080">${d.rutaNombre||"—"}</div><div style="font-size:10px;color:#9db0c4;font-family:${MONO};margin-top:4px">${d.speed?Math.round(d.speed*3.6)+" km/h":"—"}</div></div>`);
         markers.current[d.id] = new mapboxgl.Marker(el).setLngLat([d.lng,d.lat]).setPopup(popup).addTo(mapRef.current);
         el.onclick=()=>setSelected(d);
       }
     });
-    // Fit bounds if markers exist and no selected
     if(!selected && Object.keys(markers.current).length>0){
       const bounds = new mapboxgl.LngLatBounds();
       driverLocs.forEach(d=>{if(d.lat&&d.lng&&Date.now()/1000-(d.ts?.seconds||0)<300)bounds.extend([d.lng,d.lat]);});
       if(!bounds.isEmpty())mapRef.current.fitBounds(bounds,{padding:80,maxZoom:13,duration:500});
     }
-  },[driverLocs]);
+  },[driverLocs,selected]);
+
+  // Cuando hay chofer seleccionado: dibujar stops y línea al siguiente punto
+  useEffect(()=>{
+    if(!mapRef.current||!mapRef.current.isStyleLoaded()) return;
+    // Limpia marcadores de stops previos
+    stopMarkers.current.forEach(m=>m.remove());
+    stopMarkers.current = [];
+    const source = mapRef.current.getSource("route-line");
+    if(!source) return;
+    if(!selected){
+      source.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
+      return;
+    }
+    const ruta = rutas.find(r=>r.id===selected.rutaId);
+    if(!ruta){source.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});return;}
+    const stopStates = (ruta.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+    const puntos=[];
+    (ruta.stops||[]).forEach((s,ci)=>{
+      (s.puntos||[]).forEach((p)=>{
+        if(p.lat&&p.lng){
+          const st=stopStates[ci];
+          puntos.push({lng:p.lng,lat:p.lat,name:p.name,city:s.city,status:st?.status,isOrigin:s.isOrigin||p.isOrigin});
+        }
+      });
+    });
+    // Pinta markers de stops
+    puntos.forEach((p,idx)=>{
+      const color = p.status==="entregado"?GREEN:p.status==="llegue"?BLUE:p.status==="problema"?ROSE:p.isOrigin?MUTED:A;
+      const el = document.createElement("div");
+      el.style.cssText=`width:30px;height:30px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:11px;font-family:${MONO};`;
+      el.textContent=String(idx+1);
+      const popup = new mapboxgl.Popup({offset:16,closeButton:false}).setHTML(`<div style="font-family:${SANS};padding:4px;max-width:200px"><div style="font-weight:700;font-size:12px">${p.name}</div><div style="font-size:10px;color:#607080">${p.city}</div></div>`);
+      const m = new mapboxgl.Marker(el).setLngLat([p.lng,p.lat]).setPopup(popup).addTo(mapRef.current);
+      stopMarkers.current.push(m);
+    });
+    // Línea del chofer al siguiente punto pendiente
+    const siguiente = puntos.find(p=>!p.isOrigin&&p.status!=="entregado");
+    if(siguiente&&selected.lat&&selected.lng){
+      source.setData({type:"Feature",geometry:{type:"LineString",coordinates:[[selected.lng,selected.lat],[siguiente.lng,siguiente.lat]]}});
+      // Fit bounds del chofer + siguiente punto
+      const b = new mapboxgl.LngLatBounds();
+      b.extend([selected.lng,selected.lat]);
+      b.extend([siguiente.lng,siguiente.lat]);
+      mapRef.current.fitBounds(b,{padding:140,maxZoom:15,duration:600});
+    }else{
+      source.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
+    }
+  },[selected,rutas,driverLocs]);
 
   const activos = driverLocs.filter(d=>d.lat&&d.lng&&Date.now()/1000-(d.ts?.seconds||0)<300);
+  const rutaSeleccionada = selected?rutas.find(r=>r.id===selected.rutaId):null;
 
   return(
     <div className="slide-in" style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:"#f1f4fb"}}>
@@ -4314,14 +4367,56 @@ function LiveTracking(){
         </div>
       </div>
       {!MAPBOX_TOKEN?<div style={{padding:40,textAlign:"center",color:ROSE}}><AlertCircle size={32}/><div style={{fontSize:14,marginTop:10}}>Falta configurar VITE_MAPBOX_TOKEN en .env</div></div>
-      :<div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 340px",overflow:"hidden"}}>
+      :<div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 360px",overflow:"hidden"}}>
         <div ref={mapCont} style={{width:"100%",height:"100%",position:"relative"}}/>
         <div style={{borderLeft:"1px solid "+BORDER,background:"#fff",overflowY:"auto",display:"flex",flexDirection:"column"}}>
+          {/* Detalle del chofer seleccionado (estilo Uber) */}
+          {selected&&<div style={{padding:"16px 18px",borderBottom:"2px solid "+BORDER,background:"linear-gradient(135deg,"+A+"08,#fff)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div style={{fontSize:10,fontWeight:800,color:A,textTransform:"uppercase",letterSpacing:"0.08em"}}>🔴 EN VIVO</div>
+              <button onClick={()=>setSelected(null)} className="btn" style={{color:MUTED,fontSize:10,fontWeight:700}}>✕ Cerrar</button>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+              <div style={{width:52,height:52,borderRadius:14,background:"linear-gradient(135deg,"+A+","+VIOLET+")",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:16,color:"#fff",flexShrink:0,boxShadow:"0 4px 14px "+A+"40"}}>{(selected.choferNombre||"?").slice(0,2).toUpperCase()}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:DISP,fontWeight:800,fontSize:16}}>{selected.choferNombre}</div>
+                <div style={{fontSize:11,color:MUTED,fontFamily:MONO}}>{selected.choferPlaca||"—"}</div>
+                {selected.choferTel&&<a href={"tel:"+selected.choferTel} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:GREEN,textDecoration:"none",fontWeight:700,marginTop:3}}><Phone size={11}/>{selected.choferTel}</a>}
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
+              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:9,padding:"7px 9px",textAlign:"center"}}>
+                <div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Velocidad</div>
+                <div style={{fontFamily:MONO,fontSize:14,fontWeight:800,color:A}}>{selected.speed?Math.round(selected.speed*3.6):0}<span style={{fontSize:9,color:MUTED}}> km/h</span></div>
+              </div>
+              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:9,padding:"7px 9px",textAlign:"center"}}>
+                <div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Precisión</div>
+                <div style={{fontFamily:MONO,fontSize:14,fontWeight:800,color:BLUE}}>{selected.accuracy?Math.round(selected.accuracy):0}<span style={{fontSize:9,color:MUTED}}> m</span></div>
+              </div>
+              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:9,padding:"7px 9px",textAlign:"center"}}>
+                <div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Última señal</div>
+                <div style={{fontFamily:MONO,fontSize:14,fontWeight:800,color:GREEN}}>{ago(selected.ts?.seconds)}</div>
+              </div>
+            </div>
+            {rutaSeleccionada&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:10,padding:"10px 12px"}}>
+              <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Ruta activa</div>
+              <div style={{fontSize:13,fontWeight:700}}>{rutaSeleccionada.nombre}</div>
+              {rutaSeleccionada.cliente&&<div style={{fontSize:11,color:MUTED,marginBottom:6}}>{rutaSeleccionada.cliente}</div>}
+              <MiniBar pct={rutaSeleccionada.progreso||0} color={GREEN} h={5}/>
+              <div style={{fontSize:10,color:MUTED,marginTop:4}}>{rutaSeleccionada.progreso||0}% completado</div>
+            </div>}
+          </div>}
           <div style={{padding:"14px 18px",borderBottom:"1px solid "+BORDER}}>
-            <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8}}>Choferes activos ({activos.length})</div>
-            {activos.length===0?<div style={{fontSize:12,color:MUTED,padding:"14px 0",textAlign:"center"}}>Ningún chofer transmitiendo GPS</div>
+            <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+              <Radio size={11} color={GREEN} className={activos.length>0?"pulse":""}/>
+              Choferes activos ({activos.length})
+            </div>
+            {activos.length===0?<div style={{fontSize:12,color:MUTED,padding:"14px 0",textAlign:"center"}}>
+              Ningún chofer transmitiendo GPS
+              <div style={{fontSize:10,marginTop:4}}>Los choferes aparecen aquí al pulsar "Iniciar ruta"</div>
+            </div>
             :activos.map(d=>(
-              <button key={d.id} onClick={()=>{setSelected(d);mapRef.current?.flyTo({center:[d.lng,d.lat],zoom:14});}} className="btn fr" style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 4px",cursor:"pointer",background:"transparent",textAlign:"left",borderRadius:8}}>
+              <button key={d.id} onClick={()=>{setSelected(d);mapRef.current?.flyTo({center:[d.lng,d.lat],zoom:14});}} className="btn fr" style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"9px 6px",cursor:"pointer",background:selected?.id===d.id?A+"08":"transparent",textAlign:"left",borderRadius:8,border:selected?.id===d.id?"1.5px solid "+A+"30":"1.5px solid transparent"}}>
                 <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,"+A+"22,"+VIOLET+"22)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:800,fontSize:11,color:A,flexShrink:0}}>{(d.choferNombre||"?").slice(0,2).toUpperCase()}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontSize:12,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.choferNombre||"Chofer"}</div>
@@ -4480,10 +4575,18 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
     if(!("geolocation" in navigator)){showT("GPS no disponible en este dispositivo","err");return;}
     setActiveRuta(ruta);
     setTracking(true);
-    // Update ruta status
+    // Update ruta status + chofer status = "En ruta"
     updateDoc(doc(db,"rutas",ruta.id),{status:"En curso",iniciadaEn:serverTimestamp()}).catch(()=>{});
+    updateDoc(doc(db,"choferes",chofer.id),{status:"En ruta",rutaActivaId:ruta.id,rutaActivaNombre:ruta.nombre}).catch(()=>{});
     postAlert(ruta.id,chofer.id,chofer.nombre,"start","Inició la ruta: "+ruta.nombre);
-    // Start watch
+    // Notifica al cliente que inició
+    if(ruta.clienteTel&&ruta.clienteTel.replace(/\D/g,"").length===10){
+      const trackUrl = `${window.location.origin}/track/${ruta.trackingId||ruta.id}`;
+      const msg = `🚚 DMvimiento: ${chofer.nombre} inició la ruta "${ruta.nombre}". Sigue el recorrido en tiempo real: ${trackUrl}`;
+      const waUrl = `https://wa.me/52${ruta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
+      setTimeout(()=>{if(confirm("¿Notificar al cliente que iniciaste la ruta por WhatsApp?"))window.open(waUrl,"_blank");},500);
+    }
+    // Start watch - sends GPS continuously
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos)=>{
         const {latitude:lat,longitude:lng,speed,heading,accuracy} = pos.coords;
@@ -4491,6 +4594,7 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           choferId:chofer.id,
           choferNombre:chofer.nombre,
           choferTel:chofer.tel,
+          choferPlaca:chofer.placa||"",
           rutaId:ruta.id,
           rutaNombre:ruta.nombre,
           lat,lng,speed:speed||0,heading:heading||0,accuracy:accuracy||0,
@@ -4498,7 +4602,7 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
         },{merge:true}).catch(()=>{});
       },
       (err)=>{showT("Error GPS: "+err.message,"err");},
-      {enableHighAccuracy:true,maximumAge:10000,timeout:30000}
+      {enableHighAccuracy:true,maximumAge:5000,timeout:30000}
     );
   };
 
@@ -4507,8 +4611,17 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
     setTracking(false);
     if(activeRuta){
       await updateDoc(doc(db,"rutas",activeRuta.id),{status:"Completada",completadaEn:serverTimestamp(),progreso:100}).catch(()=>{});
+      // Marcar chofer como Disponible de nuevo
+      await updateDoc(doc(db,"choferes",chofer.id),{status:"Disponible",rutaActivaId:"",rutaActivaNombre:""}).catch(()=>{});
       await deleteDoc(doc(db,"driverLocations",chofer.id)).catch(()=>{});
       postAlert(activeRuta.id,chofer.id,chofer.nombre,"complete","Completó la ruta: "+activeRuta.nombre);
+      // Notifica al cliente final
+      if(activeRuta.clienteTel&&activeRuta.clienteTel.replace(/\D/g,"").length===10){
+        const trackUrl = `${window.location.origin}/track/${activeRuta.trackingId||activeRuta.id}`;
+        const msg = `🏁 DMvimiento: Ruta "${activeRuta.nombre}" completada con éxito. Ver detalles y evidencias: ${trackUrl}`;
+        const waUrl = `https://wa.me/52${activeRuta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
+        setTimeout(()=>{if(confirm("¿Notificar al cliente que la ruta terminó?"))window.open(waUrl,"_blank");},500);
+      }
       setActiveRuta(null);
     }
   };
@@ -4851,6 +4964,12 @@ function ClientTracking({trackingId}){
       zoom:5,
     });
     mapRef.current.addControl(new mapboxgl.NavigationControl(),"top-right");
+    mapRef.current.on("load",()=>{
+      // Línea del chofer al próximo punto (estilo Uber)
+      mapRef.current.addSource("live-route",{type:"geojson",data:{type:"Feature",geometry:{type:"LineString",coordinates:[]}}});
+      mapRef.current.addLayer({id:"live-route-casing",type:"line",source:"live-route",paint:{"line-color":"#fff","line-width":8,"line-opacity":.9}});
+      mapRef.current.addLayer({id:"live-route-layer",type:"line",source:"live-route",paint:{"line-color":BLUE,"line-width":5,"line-opacity":1}});
+    });
     return()=>{mapRef.current?.remove();mapRef.current=null;};
   },[ruta]);
 
@@ -4878,20 +4997,57 @@ function ClientTracking({trackingId}){
     if(!bounds.isEmpty()) mapRef.current.fitBounds(bounds,{padding:60,maxZoom:14,duration:400});
   },[ruta]);
 
-  // Driver marker live
+  // Driver marker live + línea de ruta Uber-style
   useEffect(()=>{
-    if(!mapRef.current||!driverLoc?.lat||!driverLoc?.lng) return;
+    if(!mapRef.current) return;
+    if(!driverLoc?.lat||!driverLoc?.lng){
+      if(driverMarkerRef.current){driverMarkerRef.current.remove();driverMarkerRef.current=null;}
+      // Limpia línea
+      if(mapRef.current.isStyleLoaded()){
+        const s = mapRef.current.getSource("live-route");
+        if(s) s.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
+      }
+      return;
+    }
     const stale = Date.now()/1000-(driverLoc.ts?.seconds||0)>300;
-    if(stale){if(driverMarkerRef.current){driverMarkerRef.current.remove();driverMarkerRef.current=null;}return;}
+    if(stale){
+      if(driverMarkerRef.current){driverMarkerRef.current.remove();driverMarkerRef.current=null;}
+      if(mapRef.current.isStyleLoaded()){
+        const s = mapRef.current.getSource("live-route");
+        if(s) s.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
+      }
+      return;
+    }
     if(driverMarkerRef.current){
       driverMarkerRef.current.setLngLat([driverLoc.lng,driverLoc.lat]);
     }else{
       const el = document.createElement("div");
-      el.style.cssText = `width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,${VIOLET},#a855f7);border:4px solid #fff;box-shadow:0 6px 16px rgba(124,58,237,.5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:18px;cursor:pointer;animation:pulse 2s ease infinite;`;
+      el.style.cssText = `width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,${A},#fb923c);border:4px solid #fff;box-shadow:0 6px 20px ${A}80;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:22px;cursor:pointer;animation:pulse 2s ease infinite;z-index:100;`;
       el.textContent = "🚚";
       driverMarkerRef.current = new mapboxgl.Marker(el).setLngLat([driverLoc.lng,driverLoc.lat]).addTo(mapRef.current);
     }
-  },[driverLoc]);
+    // Calcula línea al próximo punto no entregado
+    if(ruta&&mapRef.current.isStyleLoaded()){
+      const stopStates = (ruta.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+      let siguiente = null;
+      (ruta.stops||[]).forEach((s,ci)=>{
+        if(siguiente||s.isOrigin) return;
+        const st=stopStates[ci];
+        if(st?.status==="entregado") return;
+        (s.puntos||[]).forEach(p=>{
+          if(!siguiente&&p.lat&&p.lng) siguiente = {lat:p.lat,lng:p.lng};
+        });
+      });
+      const src = mapRef.current.getSource("live-route");
+      if(src){
+        if(siguiente){
+          src.setData({type:"Feature",geometry:{type:"LineString",coordinates:[[driverLoc.lng,driverLoc.lat],[siguiente.lng,siguiente.lat]]}});
+        }else{
+          src.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
+        }
+      }
+    }
+  },[driverLoc,ruta]);
 
   if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f1f4fb"}}><Skeleton w={220} h={20}/></div>;
   if(notFound) return(
