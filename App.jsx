@@ -4,7 +4,6 @@ import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
   doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
 } from "firebase/firestore";
-import { getStorage, ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
   Truck, Package, FileText, LayoutDashboard, DollarSign, Plus,
   Search, X, Check, Minus, MapPin, Clock, CheckCircle, Send,
@@ -33,16 +32,35 @@ const firebaseConfig = {
 };
 const fbApp = initializeApp(firebaseConfig);
 const db   = getFirestore(fbApp);
-const storage = getStorage(fbApp);
 
-/* Helper: sube foto a Firebase Storage y retorna URL pública */
-async function uploadEvidencia(file, rutaId, stopIdx){
-  const ts = Date.now();
-  const ext = file.name?.split(".").pop()||"jpg";
-  const path = `evidencias/${rutaId}/${stopIdx}_${ts}.${ext}`;
-  const r = sRef(storage, path);
-  await uploadBytes(r, file);
-  return await getDownloadURL(r);
+/* Helper: Comprime imagen en cliente a JPEG pequeño y retorna base64.
+   No requiere Firebase Storage ni billing. Se guarda directo en Firestore. */
+async function compressImage(file, maxDim=1000, quality=0.75){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let {width,height} = img;
+        if(width>height && width>maxDim){height*=maxDim/width;width=maxDim;}
+        else if(height>=width && height>maxDim){width*=maxDim/height;height=maxDim;}
+        const canvas = document.createElement("canvas");
+        canvas.width=width;canvas.height=height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img,0,0,width,height);
+        const dataUrl = canvas.toDataURL("image/jpeg",quality);
+        resolve(dataUrl);
+      };
+      img.onerror=reject;
+      img.src = ev.target.result;
+    };
+    reader.onerror=reject;
+    reader.readAsDataURL(file);
+  });
+}
+// Alias legacy (las llamadas a uploadEvidencia ahora retornan base64)
+async function uploadEvidencia(file){
+  return await compressImage(file,1000,0.75);
 }
 
 /* ─── MAPBOX ─────────────────────────────────────────────────────────────── */
@@ -4095,7 +4113,7 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
     const emoji = tipo==="arrival"?"📍":tipo==="delivered"?"✅":tipo==="issue"?"⚠️":"🚚";
     let msg = "";
     if(tipo==="arrival") msg = `${emoji} DMvimiento: El chofer ${chofer.nombre} llegó a ${stop.city}. Puedes verlo en tiempo real: ${trackUrl}`;
-    else if(tipo==="delivered") msg = `${emoji} DMvimiento: Entrega completada en ${stop.city}${notas?" · "+notas:""}${fotoURL?"\n📸 Evidencia: "+fotoURL:""}\nTracking: ${trackUrl}`;
+    else if(tipo==="delivered") msg = `${emoji} DMvimiento: Entrega completada en ${stop.city}${notas?" · "+notas:""}${fotoURL?"\n📸 Con evidencia fotográfica.":""}\nVer todo: ${trackUrl}`;
     else if(tipo==="issue") msg = `${emoji} DMvimiento: Incidencia en ${stop.city}: ${notas}\nTracking: ${trackUrl}`;
     const waUrl = `https://wa.me/52${ruta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
     window.open(waUrl,"_blank");
@@ -4236,9 +4254,9 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
           try{
             let fotoURL = "";
             if(fotoFile){
-              try{fotoURL = await uploadEvidencia(fotoFile,ruta.id,modalStop.idx);}
+              try{fotoURL = await uploadEvidencia(fotoFile);}
               catch(e){
-                if(!confirm("No se pudo subir la foto. ¿Continuar sin foto?\n\nError: "+e.message)){
+                if(!confirm("No se pudo procesar la foto. ¿Continuar sin foto?\n\nError: "+e.message)){
                   setSubmitting(false);return;
                 }
               }
