@@ -151,6 +151,7 @@ const AYUD_EXTRA = 500;
 
 /* ─── TARIFARIO FORÁNEO 2026 ─────────────────────────────────────────────── */
 const TAR = [
+  {c:"Ciudad de México",km:0,eur:2500,cam:3200,kra:3600,local:true},
   {c:"Acapulco",km:395,eur:13310,cam:20086,kra:22082},
   {c:"Aguascalientes",km:513,eur:15178,cam:22215,kra:24437},
   {c:"Apizaco",km:145,eur:6899,cam:11540,kra:12858},
@@ -2195,7 +2196,7 @@ function PlanificadorRutas(){
   const [paradasIncluidas,setParadasIncluidas]=useState(1);
   const [choferesList,setChoferesList]=useState([]);
   useEffect(()=>onSnapshot(collection(db,"choferes"),s=>setChoferesList(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo"))),[]);
-  const [stops,setStops]=useState([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true,puntos:[]}]);
+  const [stops,setStops]=useState([]);
   const [search,setSearch]=useState("");
   const [maxDia,setMaxDia]=useState(20);
   const [plazo,setPlazo]=useState(5);
@@ -2251,8 +2252,9 @@ function PlanificadorRutas(){
 
   useEffect(()=>{
     setStops(p=>p.map(s=>{
-      if(s.isOrigin) return s;
       const t=TAR.find(t=>t.c===s.city);
+      // Los orígenes normalmente no cobran (base=0), salvo servicio local donde el origen genera tarifa
+      if(s.isOrigin) return s;
       return t?{...s,base:t[veh]}:s;
     }));
   },[veh]);
@@ -2321,7 +2323,7 @@ function PlanificadorRutas(){
 
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"visible"}}>
             <div style={{padding:"14px 20px",borderBottom:"1px solid "+BORDER}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:8}}>
                 <span style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Armado de ruta</span>
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                   <Tag color={GREEN} sm>{stops.filter(s=>s.isOrigin).length} orígenes</Tag>
@@ -2330,9 +2332,23 @@ function PlanificadorRutas(){
                   <Tag color={BLUE} sm>{totalPDV.toLocaleString()} PDVs</Tag>
                 </div>
               </div>
+              {stops.length===0&&<div style={{marginBottom:10,padding:"12px 14px",background:"linear-gradient(135deg,"+A+"08,"+VIOLET+"08)",borderRadius:11,border:"1.5px solid "+A+"25"}}>
+                <div style={{fontSize:12,fontWeight:700,color:A,marginBottom:6}}>🚀 ¿Empezamos? Elige un preset para armar más rápido:</div>
+                <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                  <button onClick={()=>{
+                    const cdmx = TAR.find(t=>t.c==="Ciudad de México");
+                    setStops([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:cdmx?cdmx[veh]:0,isOrigin:true,puntos:[]}]);
+                  }} className="btn" style={{background:"#fff",border:"1.5px solid "+BLUE+"30",borderRadius:9,padding:"7px 12px",fontSize:11,fontWeight:700,color:BLUE,display:"flex",alignItems:"center",gap:5}}>🏠 Servicio Local CDMX</button>
+                  <button onClick={()=>{
+                    const cdmx = TAR.find(t=>t.c==="Ciudad de México");
+                    setStops([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true,puntos:[]}]);
+                  }} className="btn" style={{background:"#fff",border:"1.5px solid "+GREEN+"30",borderRadius:9,padding:"7px 12px",fontSize:11,fontWeight:700,color:GREEN,display:"flex",alignItems:"center",gap:5}}>📤 Origen CDMX (foráneo)</button>
+                  <span style={{fontSize:11,color:MUTED,alignSelf:"center"}}>o arma desde cero abajo</span>
+                </div>
+              </div>}
               <div style={{fontSize:11,color:MUTED,lineHeight:1.5}}>
                 📤 <strong style={{color:GREEN}}>Orígenes</strong>: donde se carga la mercancía (bodegas, almacenes).<br/>
-                📥 <strong style={{color:A}}>Destinos</strong>: donde se entrega. Puedes agregar varios puntos por ciudad (ej: 10 Walmarts en Acapulco).
+                📥 <strong style={{color:A}}>Destinos</strong>: donde se entrega. Mismas o diferentes ciudades. Puedes agregar varios puntos por ciudad.
               </div>
             </div>
             <div style={{padding:14,display:"flex",flexDirection:"column",gap:10}}>
@@ -2344,6 +2360,9 @@ function PlanificadorRutas(){
                 <span style={{fontSize:11,fontWeight:800,color:GREEN,letterSpacing:"0.06em",textTransform:"uppercase"}}>Orígenes · Puntos de carga</span>
                 <div style={{flex:1,height:1,background:GREEN+"30"}}/>
               </div>
+              {stops.filter(s=>s.isOrigin).length===0&&<div style={{padding:"18px 14px",background:GREEN+"04",border:"1.5px dashed "+GREEN+"30",borderRadius:11,textAlign:"center",color:MUTED,fontSize:12}}>
+                Aún no hay punto de origen. Agrega la ciudad donde se carga la mercancía abajo.
+              </div>}
               {stops.filter(s=>s.isOrigin).map((s,originIdx)=>{
                 const i = stops.findIndex(x=>x.id===s.id);
                 return(
@@ -2420,11 +2439,12 @@ function PlanificadorRutas(){
               );})}
               {/* Botón agregar otro origen */}
               <div style={{padding:"10px 12px",background:GREEN+"06",border:"1.5px dashed "+GREEN+"40",borderRadius:11}}>
-                <div style={{fontSize:10,fontWeight:800,color:GREEN,marginBottom:6,letterSpacing:"0.05em"}}>+ AGREGAR OTRO ORIGEN (carga desde otra ciudad)</div>
+                <div style={{fontSize:10,fontWeight:800,color:GREEN,marginBottom:6,letterSpacing:"0.05em"}}>{stops.filter(s=>s.isOrigin).length===0?"+ AGREGAR ORIGEN":"+ AGREGAR OTRO ORIGEN"}</div>
                 <CitySearch value={search} onChange={setSearch} onSelect={t=>{
                   setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:0,isOrigin:true,puntos:[]}]);
                   setSearch("");
                 }} veh={veh} exclude={stops.filter(s=>s.isOrigin).map(s=>s.city)}/>
+                <div style={{fontSize:10,color:MUTED,marginTop:6,lineHeight:1.5}}>💡 Busca "Ciudad de México" para servicio local · Después adentro puedes agregar la dirección exacta de la bodega</div>
               </div>
 
               {/* SECCIÓN DESTINOS */}
@@ -2505,6 +2525,7 @@ function PlanificadorRutas(){
               <div style={{padding:"11px 13px",background:A+"06",border:"1.5px dashed "+A+"38",borderRadius:11}}>
                 <div style={{fontSize:10,fontWeight:800,color:A,marginBottom:8,letterSpacing:"0.05em"}}>+ AGREGAR CIUDAD DESTINO</div>
                 <CitySearch value={search} onChange={setSearch} onSelect={addStop} veh={veh} exclude={stops.filter(s=>!s.isOrigin).map(s=>s.city)}/>
+                <div style={{fontSize:10,color:MUTED,marginTop:6,lineHeight:1.5}}>💡 Puedes agregar "Ciudad de México" como destino si haces entregas locales · Y después agregar múltiples puntos específicos (Walmart, Chedraui, direcciones) dentro de la ciudad</div>
               </div>
             </div>
           </div>
