@@ -1008,6 +1008,69 @@ function SearchPalette({cots=[],facts=[],rutas=[],clientes=[],entregas=[],onSele
   );
 }
 const ago=s=>{if(!s)return"";const d=Date.now()/1000-s;if(d<60)return"ahora";if(d<3600)return Math.floor(d/60)+"m";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d";};
+/* AddressSearch: búsqueda abierta de direcciones usando Mapbox Geocoding API */
+function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",proximity=null,compact=false}){
+  const [q,setQ]=useState("");
+  const [results,setResults]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [open,setOpen]=useState(false);
+  const timerRef=useRef(null);
+
+  useEffect(()=>{
+    if(!q||q.length<3){setResults([]);return;}
+    if(!MAPBOX_TOKEN)return;
+    if(timerRef.current)clearTimeout(timerRef.current);
+    timerRef.current=setTimeout(async()=>{
+      setLoading(true);
+      try{
+        const prox = proximity?`&proximity=${proximity[0]},${proximity[1]}`:"";
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=8${prox}&types=poi,address,place,locality,neighborhood`;
+        const res = await fetch(url);
+        const d = await res.json();
+        setResults(d.features||[]);
+      }catch(e){console.warn("geocoding",e);}
+      setLoading(false);
+    },300);
+    return()=>{if(timerRef.current)clearTimeout(timerRef.current);};
+  },[q,proximity]);
+
+  return(
+    <div style={{position:"relative"}}>
+      <div style={{position:"relative"}}>
+        <Search size={13} color={MUTED} style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}/>
+        <input value={q} onChange={e=>{setQ(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} placeholder={placeholder}
+          style={{width:"100%",paddingLeft:32,paddingRight:32,paddingTop:compact?8:10,paddingBottom:compact?8:10,background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,fontSize:13}}/>
+        {loading&&<div className="spin" style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",width:12,height:12,border:"2px solid "+BD2,borderTop:"2px solid "+A,borderRadius:"50%"}}/>}
+        {q&&!loading&&<button onClick={()=>{setQ("");setResults([]);}} className="btn" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",color:MUTED,padding:3}}><X size={12}/></button>}
+      </div>
+      {open&&results.length>0&&(
+        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:280,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
+          {results.map(r=>{
+            const [lng,lat] = r.center;
+            const nombre = r.text;
+            const direccion = r.place_name;
+            return(
+              <button key={r.id} onClick={()=>{onSelect({name:nombre,address:direccion,lat,lng,category:r.properties?.category||"",id:r.id});setQ("");setResults([]);setOpen(false);}} className="btn fr"
+                style={{width:"100%",display:"flex",alignItems:"flex-start",gap:10,padding:"9px 14px",borderBottom:"1px solid "+BORDER,background:"transparent",cursor:"pointer",textAlign:"left"}}>
+                <MapPin size={13} color={A} style={{flexShrink:0,marginTop:2}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:12,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{nombre}</div>
+                  <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{direccion}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {open&&q.length>=3&&!loading&&results.length===0&&(
+        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,padding:14,fontSize:12,color:MUTED,textAlign:"center",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
+          Sin resultados para "{q}"
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MiniBar({pct,color=A,h=4}){
   return <div style={{background:BORDER,borderRadius:4,height:h,overflow:"hidden"}}><div style={{background:color,width:Math.min(100,pct)+"%",height:"100%",borderRadius:4,transition:"width .4s"}}/></div>;
 }
@@ -1759,7 +1822,7 @@ function PlanificadorRutas(){
   const [choferId,setChoferId]=useState("");
   const [choferesList,setChoferesList]=useState([]);
   useEffect(()=>onSnapshot(collection(db,"choferes"),s=>setChoferesList(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo"))),[]);
-  const [stops,setStops]=useState([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true}]);
+  const [stops,setStops]=useState([{id:uid(),city:"Ciudad de México",pdv:0,km:0,base:0,isOrigin:true,puntos:[]}]);
   const [search,setSearch]=useState("");
   const [maxDia,setMaxDia]=useState(20);
   const [plazo,setPlazo]=useState(5);
@@ -1801,7 +1864,7 @@ function PlanificadorRutas(){
   const mapU=useMemo(()=>mapsURL(stops.map(s=>s.city)),[stops]);
 
   const addStop=t=>{
-    setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:t[veh],isOrigin:false}]);
+    setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:t[veh],isOrigin:false,puntos:[]}]);
     setSearch("");
   };
   const rmStop=id=>setStops(p=>p.filter(s=>s.id!==id||s.isOrigin));
@@ -1822,7 +1885,7 @@ function PlanificadorRutas(){
     setSaving(true);
     try{
       const choferSel = choferesList.find(c=>c.id===choferId);
-      await addDoc(collection(db,"rutas"),{nombre,cliente,veh,vehiculoLabel:vehD?.label,stops:stops.map(s=>({city:s.city,pdv:s.pdv||0,km:s.km||0})),totalPDV,totalKm,vans,diasOp,capDia,crew,xViat,tarifaT,sub,iva,total,plazo,maxDia,mapURL:mapU,status:"Programada",progreso:0,choferId:choferId||"",choferNombre:choferSel?.nombre||"",choferTel:choferSel?.tel||"",choferPlaca:choferSel?.placa||"",createdAt:serverTimestamp()});
+      await addDoc(collection(db,"rutas"),{nombre,cliente,veh,vehiculoLabel:vehD?.label,stops:stops.map(s=>({city:s.city,pdv:s.pdv||0,km:s.km||0,addr:s.addr||"",isOrigin:!!s.isOrigin,puntos:(s.puntos||[]).map(p=>({id:p.id,name:p.name||"",address:p.address||"",lat:p.lat||0,lng:p.lng||0,notas:p.notas||"",isOrigin:!!p.isOrigin}))})),totalPDV,totalKm,vans,diasOp,capDia,crew,xViat,tarifaT,sub,iva,total,plazo,maxDia,mapURL:mapU,status:"Programada",progreso:0,choferId:choferId||"",choferNombre:choferSel?.nombre||"",choferTel:choferSel?.tel||"",choferPlaca:choferSel?.placa||"",createdAt:serverTimestamp()});
       showT("✓ Ruta guardada");
     }catch(e){showT(e.message,"err");}
     setSaving(false);
@@ -1859,48 +1922,88 @@ function PlanificadorRutas(){
 
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
             <div style={{padding:"14px 20px",borderBottom:"1px solid "+BORDER,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <span style={{fontFamily:DISP,fontWeight:700,fontSize:14}}>Paradas ({stops.length})</span>
-              <div style={{display:"flex",gap:7}}><Tag color={VIOLET}>{stops.filter(s=>!s.isOrigin).length} destinos</Tag><Tag color={A}>{totalPDV.toLocaleString()} PDVs</Tag></div>
+              <span style={{fontFamily:DISP,fontWeight:700,fontSize:14}}>Ciudades y puntos ({stops.length})</span>
+              <div style={{display:"flex",gap:7}}>
+                <Tag color={VIOLET}>{stops.filter(s=>!s.isOrigin).length} ciudades</Tag>
+                <Tag color={A}>{stops.reduce((a,s)=>a+(s.puntos?.length||0),0)} puntos</Tag>
+                <Tag color={BLUE}>{totalPDV.toLocaleString()} PDVs</Tag>
+              </div>
             </div>
-            <div style={{padding:14,display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{padding:14,display:"flex",flexDirection:"column",gap:10}}>
               {stops.map((s,i)=>(
-                <div key={s.id} style={{display:"flex",alignItems:"flex-start",gap:9,background:s.isOrigin?"#f8fafd":"#fff",border:"1.5px solid "+(s.isOrigin?BD2:A+"24"),borderRadius:11,padding:"11px 13px",transition:"all .13s"}}>
-                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:5}}>
-                    <div style={{width:11,height:11,borderRadius:"50%",background:s.isOrigin?BLUE:A,flexShrink:0}}/>
-                    {i<stops.length-1&&<div style={{width:2,height:18,background:BD2,marginTop:3}}/>}
-                  </div>
-                  <div style={{flex:1}}>
-                    <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:s.isOrigin?0:8}}>
-                      <span style={{fontWeight:700,fontSize:14,color:TEXT}}>{s.city}</span>
-                      {s.isOrigin&&<Tag color={BLUE} sm>ORIGEN</Tag>}
-                      {!s.isOrigin&&s.km>0&&<span style={{fontFamily:MONO,fontSize:10,color:MUTED}}>{s.km.toLocaleString()} km</span>}
+                <div key={s.id} style={{background:s.isOrigin?"#f8fafd":"#fff",border:"1.5px solid "+(s.isOrigin?BD2:A+"30"),borderRadius:12,overflow:"hidden",transition:"all .13s"}}>
+                  {/* Header de la ciudad */}
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:s.isOrigin?"#f8fafd":A+"06",borderBottom:s.isOrigin?"none":"1px solid "+A+"15"}}>
+                    <div style={{width:24,height:24,borderRadius:"50%",background:s.isOrigin?BLUE:A,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                        <span style={{fontWeight:700,fontSize:14,color:TEXT}}>{s.city}</span>
+                        {s.isOrigin&&<Tag color={BLUE} sm>ORIGEN</Tag>}
+                        {!s.isOrigin&&s.km>0&&<span style={{fontFamily:MONO,fontSize:10,color:MUTED}}>{s.km.toLocaleString()} km</span>}
+                        {!s.isOrigin&&s.puntos?.length>0&&<Tag color={VIOLET} sm>{s.puntos.length} puntos</Tag>}
+                      </div>
                     </div>
                     {!s.isOrigin&&(
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                        <div>
-                          <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>PDVs en esta parada</div>
-                          <input type="number" value={s.pdv||""} onChange={e=>updStop(s.id,"pdv",parseInt(e.target.value)||0)} placeholder="0"
-                            style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontFamily:MONO,fontSize:15,fontWeight:700,color:A}}/>
-                        </div>
-                        <div>
-                          <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Zona / Referencia</div>
-                          <input type="text" value={s.addr||""} onChange={e=>updStop(s.id,"addr",e.target.value)} placeholder="Opcional"
-                            style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontSize:13}}/>
-                        </div>
+                      <div style={{display:"flex",gap:3}}>
+                        <button onClick={()=>mvUp(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronUp size={10}/></button>
+                        <button onClick={()=>mvDn(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronDown size={10}/></button>
+                        <button onClick={()=>rmStop(s.id)} className="btn" style={{border:"1px solid "+ROSE+"28",background:ROSE+"08",borderRadius:6,padding:"3px 5px",color:ROSE}}><X size={10}/></button>
                       </div>
                     )}
                   </div>
-                  {!s.isOrigin&&(
-                    <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                      <button onClick={()=>mvUp(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronUp size={10}/></button>
-                      <button onClick={()=>mvDn(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronDown size={10}/></button>
-                      <button onClick={()=>rmStop(s.id)} className="btn" style={{border:"1px solid "+ROSE+"28",background:ROSE+"08",borderRadius:6,padding:"3px 5px",color:ROSE}}><X size={10}/></button>
-                    </div>
-                  )}
+                  {/* Puntos específicos de la ciudad */}
+                  <div style={{padding:"10px 14px"}}>
+                    {!s.isOrigin&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Total PDVs ciudad</div>
+                        <input type="number" value={s.pdv||""} onChange={e=>updStop(s.id,"pdv",parseInt(e.target.value)||0)} placeholder="0"
+                          style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontFamily:MONO,fontSize:15,fontWeight:700,color:A}}/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,fontWeight:700,color:MUTED,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>Zona general</div>
+                        <input type="text" value={s.addr||""} onChange={e=>updStop(s.id,"addr",e.target.value)} placeholder="Opcional"
+                          style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"7px 10px",fontSize:13}}/>
+                      </div>
+                    </div>}
+                    {/* Lista de puntos */}
+                    {(s.puntos||[]).map((p,pi)=>(
+                      <div key={p.id} style={{display:"flex",alignItems:"flex-start",gap:9,padding:"8px 10px",background:VIOLET+"06",border:"1px solid "+VIOLET+"20",borderRadius:9,marginBottom:6}}>
+                        <div style={{width:20,height:20,borderRadius:"50%",background:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#fff",flexShrink:0,marginTop:2}}>{pi+1}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:700,fontSize:12,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                          <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.address}</div>
+                          {p.notas&&<div style={{fontSize:10,color:BLUE,marginTop:2}}>📝 {p.notas}</div>}
+                          <input value={p.notas||""} onChange={e=>{
+                            const puntos = s.puntos.map(x=>x.id===p.id?{...x,notas:e.target.value}:x);
+                            updStop(s.id,"puntos",puntos);
+                          }} placeholder="Agregar nota/referencia…" style={{width:"100%",marginTop:5,background:"#fff",border:"1px solid "+BD2,borderRadius:6,padding:"4px 8px",fontSize:11}}/>
+                        </div>
+                        <button onClick={()=>{
+                          const puntos = s.puntos.filter(x=>x.id!==p.id);
+                          updStop(s.id,"puntos",puntos);
+                        }} className="btn" style={{color:ROSE,padding:4}}><X size={11}/></button>
+                      </div>
+                    ))}
+                    {/* Agregar punto específico */}
+                    {!s.isOrigin&&MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:VIOLET+"04",border:"1.5px dashed "+VIOLET+"40",borderRadius:9,marginTop:6}}>
+                      <div style={{fontSize:9,fontWeight:800,color:VIOLET,marginBottom:6,letterSpacing:"0.05em"}}>+ AGREGAR PUNTO ESPECÍFICO EN {s.city.toUpperCase()}</div>
+                      <AddressSearch compact placeholder={"Ej: Walmart "+s.city+", Chedraui, dirección…"} onSelect={(place)=>{
+                        const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:""}];
+                        updStop(s.id,"puntos",puntos);
+                      }}/>
+                    </div>}
+                    {s.isOrigin&&MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:BLUE+"04",border:"1.5px dashed "+BLUE+"40",borderRadius:9}}>
+                      <div style={{fontSize:9,fontWeight:800,color:BLUE,marginBottom:6,letterSpacing:"0.05em"}}>+ PUNTO DE ORIGEN ESPECÍFICO (bodega)</div>
+                      <AddressSearch compact placeholder="Ej: Bodega MAP Iztapalapa, dirección origen…" onSelect={(place)=>{
+                        const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:"",isOrigin:true}];
+                        updStop(s.id,"puntos",puntos);
+                      }}/>
+                    </div>}
+                  </div>
                 </div>
               ))}
               <div style={{padding:"11px 13px",background:A+"06",border:"1.5px dashed "+A+"38",borderRadius:11}}>
-                <div style={{fontSize:10,fontWeight:800,color:A,marginBottom:8,letterSpacing:"0.05em"}}>+ AGREGAR PARADA</div>
+                <div style={{fontSize:10,fontWeight:800,color:A,marginBottom:8,letterSpacing:"0.05em"}}>+ AGREGAR CIUDAD A LA RUTA</div>
                 <CitySearch value={search} onChange={setSearch} onSelect={addStop} veh={veh} exclude={stops.map(s=>s.city)}/>
               </div>
             </div>
@@ -2040,10 +2143,22 @@ function PlanificadorRutas(){
         </div>
         <div style={{marginBottom:14}}>
           {(viewR.stops||[]).map((s,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid "+BORDER}}>
-              <div style={{width:20,height:20,borderRadius:"50%",background:A+"14",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:A,flexShrink:0}}>{i+1}</div>
-              <div style={{flex:1,fontWeight:600,fontSize:13}}>{s.city}</div>
-              {s.pdv>0&&<Tag color={A} sm>{s.pdv} PDVs</Tag>}
+            <div key={i} style={{padding:"8px 0",borderBottom:"1px solid "+BORDER}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:20,height:20,borderRadius:"50%",background:A+"14",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:A,flexShrink:0}}>{i+1}</div>
+                <div style={{flex:1,fontWeight:600,fontSize:13}}>{s.city}</div>
+                {s.pdv>0&&<Tag color={A} sm>{s.pdv} PDVs</Tag>}
+                {s.puntos?.length>0&&<Tag color={VIOLET} sm>{s.puntos.length} puntos</Tag>}
+              </div>
+              {s.puntos?.length>0&&<div style={{marginTop:6,marginLeft:28}}>
+                {s.puntos.map((p,pi)=>(
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:7,padding:"5px 0",fontSize:11,color:MUTED}}>
+                    <MapPin size={10} color={VIOLET}/>
+                    <span style={{fontWeight:600,color:TEXT}}>{p.name}</span>
+                    <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.address}</span>
+                  </div>
+                ))}
+              </div>}
             </div>
           ))}
         </div>
@@ -3815,7 +3930,19 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
     if(newStatus==="problema") postAlert(ruta.id,chofer.id,chofer.nombre,"issue","Problema en "+(stop.city||"parada "+(stopIdx+1))+": "+notas,{stopIdx,notas});
   };
 
-  const openNavigation = (stop)=>{
+  const openNavigation = (stop, punto=null)=>{
+    // Si hay punto específico con coordenadas, usar esas
+    if(punto&&punto.lat&&punto.lng){
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${punto.lat},${punto.lng}&travelmode=driving`;
+      window.open(url,"_blank");
+      return;
+    }
+    if(punto&&punto.address){
+      const q = encodeURIComponent(punto.address);
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${q}&travelmode=driving`;
+      window.open(url,"_blank");
+      return;
+    }
     const q = encodeURIComponent(stop.city||"");
     const url = `https://www.google.com/maps/dir/?api=1&destination=${q}&travelmode=driving`;
     window.open(url,"_blank");
@@ -3847,19 +3974,34 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
         {stops.map((s,i)=>{
           const isOrigen = s.status==="origen";
           const sc = s.status==="entregado"?GREEN:s.status==="llegue"?BLUE:s.status==="problema"?ROSE:isOrigen?MUTED:VIOLET;
+          const tienePuntos = (s.puntos||[]).length>0;
           return(
             <div key={i} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,border:"1.5px solid "+(s.status==="llegue"?BLUE+"50":BORDER),boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:isOrigen?0:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:isOrigen?(tienePuntos?10:0):10}}>
                 <div style={{width:32,height:32,borderRadius:"50%",background:sc+"14",border:"2px solid "+sc,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:800,fontSize:12,color:sc,flexShrink:0}}>{i+1}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.city}</div>
-                  {s.pdv>0&&<div style={{fontSize:11,color:MUTED}}>{s.pdv} PDVs</div>}
+                  {s.pdv>0&&<div style={{fontSize:11,color:MUTED}}>{s.pdv} PDVs {tienePuntos?"· "+s.puntos.length+" puntos":""}</div>}
                   {s.notas&&<div style={{fontSize:11,color:sc,marginTop:2}}>📝 {s.notas}</div>}
                 </div>
                 <Tag color={sc} sm>{isOrigen?"Origen":s.status==="entregado"?"✓ Entregado":s.status==="llegue"?"En sitio":s.status==="problema"?"⚠ Problema":"Pendiente"}</Tag>
               </div>
+              {/* Puntos específicos dentro de la ciudad */}
+              {tienePuntos&&<div style={{marginBottom:s.status!=="entregado"?10:0}}>
+                {s.puntos.map((p,pi)=>(
+                  <div key={p.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 10px",background:VIOLET+"06",border:"1px solid "+VIOLET+"20",borderRadius:9,marginBottom:6}}>
+                    <div style={{width:22,height:22,borderRadius:"50%",background:VIOLET,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#fff",flexShrink:0,marginTop:2}}>{pi+1}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:700,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                      <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.address}</div>
+                      {p.notas&&<div style={{fontSize:10,color:BLUE,marginTop:2}}>📝 {p.notas}</div>}
+                    </div>
+                    {!isOrigen&&<button onClick={()=>openNavigation(s,p)} className="btn" style={{color:"#fff",background:BLUE,borderRadius:7,padding:"6px 10px",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:4,flexShrink:0}}><Navigation size={10}/>Ir</button>}
+                  </div>
+                ))}
+              </div>}
               {!isOrigen&&s.status!=="entregado"&&<div style={{display:"flex",gap:8,marginTop:8}}>
-                <button onClick={()=>openNavigation(s)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Navigation size={13}/>Navegar</button>
+                <button onClick={()=>openNavigation(s)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Navigation size={13}/>Navegar ciudad</button>
                 {s.status==="pendiente"&&<button onClick={()=>updateStopStatus(i,"llegue")} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><MapPin size={13}/>Llegué</button>}
                 {s.status==="llegue"&&<>
                   <button onClick={()=>setModalStop({...s,action:"entregado"})} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:GREEN,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><CheckCircle size={13}/>Entregué</button>
