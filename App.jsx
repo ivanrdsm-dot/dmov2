@@ -2440,6 +2440,7 @@ function PlanificadorRutas(){
   useEffect(()=>onSnapshot(collection(db,"choferes"),s=>setChoferesList(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo"))),[]);
   const [stops,setStops]=useState([]);
   const [search,setSearch]=useState("");
+  const [searchOrigen,setSearchOrigen]=useState("");
   const [maxDia,setMaxDia]=useState(20);
   const [plazo,setPlazo]=useState(5);
   const [comida,setComida]=useState(COMIDA);
@@ -2488,9 +2489,9 @@ function PlanificadorRutas(){
     setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:t[veh],isOrigin:false,puntos:[],cityBbox:geo?.bbox||null,cityCenter:geo?.center||null}]);
     setSearch("");
   };
-  const rmStop=id=>setStops(p=>p.filter(s=>s.id!==id||s.isOrigin));
+  const rmStop=id=>setStops(p=>p.filter(s=>s.id!==id));
   const updStop=(id,k,v)=>setStops(p=>p.map(s=>s.id===id?{...s,[k]:v}:s));
-  const mvUp=i=>{if(i<=1)return;setStops(p=>{const a=[...p];[a[i-1],a[i]]=[a[i],a[i-1]];return a;});};
+  const mvUp=i=>{if(i<=0)return;setStops(p=>{const a=[...p];[a[i-1],a[i]]=[a[i],a[i-1]];return a;});};
   const mvDn=i=>{if(i>=stops.length-1)return;setStops(p=>{const a=[...p];[a[i],a[i+1]]=[a[i+1],a[i]];return a;});};
 
   useEffect(()=>{
@@ -2503,7 +2504,8 @@ function PlanificadorRutas(){
   },[veh]);
 
   const handleSave=async()=>{
-    if(!nombre.trim()||stops.length<2){showT("Agrega nombre y al menos un destino","err");return;}
+    if(!nombre.trim()){showT("Agrega un nombre a la ruta","err");return;}
+    if(stops.filter(s=>!s.isOrigin).length===0){showT("Agrega al menos un destino","err");return;}
     setSaving(true);
     try{
       const choferSel = choferesList.find(c=>c.id===choferId);
@@ -2624,13 +2626,11 @@ function PlanificadorRutas(){
                         {!s.isOrigin&&s.puntos?.length>0&&<Tag color={VIOLET} sm>{s.puntos.length} puntos</Tag>}
                       </div>
                     </div>
-                    {!s.isOrigin&&(
-                      <div style={{display:"flex",gap:3}}>
-                        <button onClick={()=>mvUp(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronUp size={10}/></button>
-                        <button onClick={()=>mvDn(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronDown size={10}/></button>
-                        <button onClick={()=>rmStop(s.id)} className="btn" style={{border:"1px solid "+ROSE+"28",background:ROSE+"08",borderRadius:6,padding:"3px 5px",color:ROSE}}><X size={10}/></button>
-                      </div>
-                    )}
+                    <div style={{display:"flex",gap:3}}>
+                      {!s.isOrigin&&<button onClick={()=>mvUp(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronUp size={10}/></button>}
+                      {!s.isOrigin&&<button onClick={()=>mvDn(i)} className="btn" style={{border:"1px solid "+BD2,borderRadius:6,padding:"3px 5px",color:MUTED}}><ChevronDown size={10}/></button>}
+                      <button onClick={()=>rmStop(s.id)} className="btn" style={{border:"1px solid "+ROSE+"28",background:ROSE+"08",borderRadius:6,padding:"3px 5px",color:ROSE}}><X size={10}/></button>
+                    </div>
                   </div>
                   {/* Puntos específicos de la ciudad */}
                   <div style={{padding:"10px 14px"}}>
@@ -2686,10 +2686,10 @@ function PlanificadorRutas(){
               {/* Botón agregar otro origen */}
               <div style={{padding:"10px 12px",background:GREEN+"06",border:"1.5px dashed "+GREEN+"40",borderRadius:11}}>
                 <div style={{fontSize:10,fontWeight:800,color:GREEN,marginBottom:6,letterSpacing:"0.05em"}}>{stops.filter(s=>s.isOrigin).length===0?"+ AGREGAR ORIGEN":"+ AGREGAR OTRO ORIGEN"}</div>
-                <CitySearch value={search} onChange={setSearch} onSelect={async t=>{
+                <CitySearch value={searchOrigen} onChange={setSearchOrigen} onSelect={async t=>{
                   const geo = await geocodeCity(t.c);
                   setStops(p=>[...p,{id:uid(),city:t.c,pdv:0,km:t.km,base:0,isOrigin:true,puntos:[],cityBbox:geo?.bbox||null,cityCenter:geo?.center||null}]);
-                  setSearch("");
+                  setSearchOrigen("");
                 }} veh={veh} exclude={stops.filter(s=>s.isOrigin).map(s=>s.city)}/>
                 <div style={{fontSize:10,color:MUTED,marginTop:6,lineHeight:1.5}}>💡 Busca "Ciudad de México" para servicio local · Después adentro puedes agregar la dirección exacta de la bodega</div>
               </div>
