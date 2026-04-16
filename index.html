@@ -9,15 +9,23 @@
     <meta name="apple-mobile-web-app-title" content="DMvimiento" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="description" content="DMvimiento Logistics OS - Sistema de gestión logística en tiempo real con tracking GPS, rutas optimizadas con IA y facturación integrada." />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>DMvimiento · Logistics OS</title>
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <script>
+      // Desinstalar cualquier Service Worker viejo y limpiar caches
+      // Esto garantiza que el usuario siempre reciba el código más reciente
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(()=>{});
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          regs.forEach(r => r.unregister());
         });
+        if ('caches' in window) {
+          caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+        }
       }
     </script>
   </head>
