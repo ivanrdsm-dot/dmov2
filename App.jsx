@@ -68,77 +68,97 @@ const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "";
 if(MAPBOX_TOKEN) mapboxgl.accessToken = MAPBOX_TOKEN;
 const MX_CENTER = [-99.1332, 19.4326]; // CDMX default
 
-/* Bboxes de ciudades mexicanas comunes [minLng,minLat,maxLng,maxLat] */
+/* Bboxes de zonas metropolitanas mexicanas [minLng,minLat,maxLng,maxLat]
+   Incluyen área metropolitana completa, no solo el municipio central.
+   Esto es crítico para CDMX+EdoMex ya que la zona conurbada incluye
+   Naucalpan, Ecatepec, Tlalnepantla, Nezahualcóyotl, etc. */
 const CITY_BBOX = {
-  "Ciudad de México":[-99.364,19.048,-98.940,19.593],
-  "CDMX":[-99.364,19.048,-98.940,19.593],
-  "Guadalajara":[-103.48,20.55,-103.22,20.77],
-  "Monterrey":[-100.48,25.55,-100.15,25.82],
-  "Acapulco":[-100.05,16.72,-99.72,16.98],
-  "Puebla":[-98.30,18.97,-98.10,19.12],
-  "Querétaro":[-100.48,20.50,-100.29,20.68],
-  "Toluca":[-99.75,19.20,-99.55,19.35],
-  "Tijuana":[-117.13,32.42,-116.85,32.60],
-  "Mérida":[-89.75,20.90,-89.50,21.10],
-  "Cancún":[-86.95,21.00,-86.70,21.25],
-  "Cuernavaca":[-99.30,18.85,-99.15,19.00],
-  "León":[-101.77,21.05,-101.55,21.22],
-  "Chihuahua":[-106.20,28.52,-105.95,28.78],
-  "Aguascalientes":[-102.35,21.78,-102.18,21.98],
-  "Hermosillo":[-111.10,28.93,-110.88,29.18],
-  "Culiacán":[-107.50,24.70,-107.30,24.90],
-  "Mazatlán":[-106.48,23.12,-106.35,23.32],
-  "Veracruz":[-96.20,19.05,-96.05,19.25],
-  "Villahermosa":[-93.03,17.95,-92.85,18.10],
-  "Mexicali":[-115.53,32.60,-115.38,32.72],
-  "Saltillo":[-101.05,25.35,-100.90,25.50],
-  "Pachuca":[-98.80,20.05,-98.68,20.18],
-  "Oaxaca":[-96.80,17.00,-96.65,17.12],
-  "Morelia":[-101.30,19.63,-101.10,19.80],
-  "Torreón":[-103.50,25.45,-103.32,25.62],
-  "Celaya":[-100.87,20.43,-100.75,20.58],
-  "San Luis Potosí":[-101.10,22.07,-100.90,22.22],
-  "Tampico":[-97.90,22.15,-97.80,22.32],
-  "Apizaco":[-98.20,19.38,-98.10,19.48],
-  "Campeche":[-90.60,19.75,-90.43,19.92],
-  "Cd. Juárez":[-106.60,31.58,-106.30,31.80],
-  "Chetumal":[-88.35,18.45,-88.20,18.60],
-  "Chiapas":[-93.20,16.68,-92.95,16.85],
-  "Chilpancingo":[-99.60,17.48,-99.45,17.62],
-  "Coatzacoalcos":[-94.50,18.10,-94.35,18.20],
-  "Colima":[-103.78,19.18,-103.65,19.30],
-  "Cozumel":[-87.10,20.45,-86.85,20.60],
-  "Durango":[-104.75,24.00,-104.55,24.10],
-  "Ensenada":[-116.70,31.78,-116.55,31.92],
-  "Guanajuato":[-101.30,21.00,-101.20,21.08],
-  "Irapuato":[-101.45,20.60,-101.30,20.75],
-  "Jalapa":[-96.98,19.48,-96.85,19.62],
-  "Los Cabos":[-110.10,22.85,-109.65,23.10],
-  "Manzanillo":[-104.40,19.00,-104.25,19.15],
-  "Matamoros":[-97.55,25.80,-97.40,25.92],
-  "Minatitlán":[-94.58,17.95,-94.45,18.05],
-  "Nogales":[-110.98,31.27,-110.90,31.35],
-  "Nuevo Laredo":[-99.58,27.42,-99.45,27.55],
-  "Orizaba":[-97.15,18.80,-97.00,18.92],
-  "Pálenque":[-92.10,17.48,-91.95,17.58],
-  "Parral":[-105.75,26.88,-105.65,26.98],
-  "Piedras Negras":[-100.58,28.65,-100.45,28.78],
-  "Playa del Carmen":[-87.15,20.58,-86.95,20.75],
-  "Poza Rica":[-97.55,20.48,-97.40,20.60],
-  "Puerto Vallarta":[-105.30,20.58,-105.18,20.75],
-  "Reynosa":[-98.35,26.02,-98.20,26.15],
-  "Rosarito":[-117.10,32.28,-116.95,32.42],
-  "Salina Cruz":[-95.28,16.12,-95.15,16.22],
-  "San Cristóbal":[-92.72,16.68,-92.58,16.80],
-  "Sta. Coatzacualcos":[-94.50,18.10,-94.35,18.20],
-  "Tapachula":[-92.35,14.85,-92.20,14.98],
-  "Taxco":[-99.70,18.52,-99.58,18.60],
-  "Tepic":[-104.95,21.45,-104.80,21.58],
-  "Tlaxcala":[-98.30,19.25,-98.20,19.38],
-  "Tuxtla":[-93.20,16.68,-93.00,16.82],
-  "Valladolid":[-88.25,20.65,-88.15,20.75],
-  "Zacatecas":[-102.60,22.72,-102.50,22.82],
-  "Zihuatanejo":[-101.60,17.58,-101.48,17.70],
+  // ZMVM (Zona Metropolitana del Valle de México) - CDMX + municipios conurbados de Edo Mex
+  "Ciudad de México":[-99.55,19.00,-98.75,19.90],
+  "CDMX":[-99.55,19.00,-98.75,19.90],
+  "Estado de México":[-100.60,18.35,-98.50,20.30],
+  "Edo de México":[-100.60,18.35,-98.50,20.30],
+  // Zona Metropolitana de Guadalajara (incluye Zapopan, Tlaquepaque, Tonalá, Tlajomulco)
+  "Guadalajara":[-103.60,20.45,-103.15,20.85],
+  // Zona Metropolitana de Monterrey (incluye San Pedro, San Nicolás, Guadalupe, Apodaca, Escobedo, Santa Catarina)
+  "Monterrey":[-100.55,25.50,-100.05,25.90],
+  // Zona Metropolitana de Puebla (incluye Cholula, Coronango)
+  "Puebla":[-98.40,18.90,-98.05,19.20],
+  // Zona Metropolitana de Querétaro (incluye El Marqués, Corregidora)
+  "Querétaro":[-100.60,20.45,-100.20,20.75],
+  // Zona Metropolitana de Toluca (incluye Metepec, Zinacantepec, Lerma)
+  "Toluca":[-99.90,19.10,-99.45,19.45],
+  // Zona Metropolitana de Tijuana-Rosarito
+  "Tijuana":[-117.20,32.35,-116.65,32.65],
+  // Zona Metropolitana de Mérida (incluye Kanasín, Umán)
+  "Mérida":[-89.85,20.80,-89.40,21.15],
+  // Cancún (amplía a zona hotelera + Puerto Morelos cerca)
+  "Cancún":[-87.05,20.95,-86.70,21.30],
+  // Zona Metropolitana de Cuernavaca
+  "Cuernavaca":[-99.35,18.80,-99.10,19.05],
+  // Zona Metropolitana de León-Silao
+  "León":[-101.85,20.95,-101.45,21.25],
+  "Chihuahua":[-106.30,28.45,-105.85,28.85],
+  // Zona Metropolitana de Aguascalientes (incluye Jesús María)
+  "Aguascalientes":[-102.45,21.70,-102.10,22.05],
+  "Hermosillo":[-111.20,28.85,-110.75,29.25],
+  "Culiacán":[-107.60,24.60,-107.20,25.00],
+  "Mazatlán":[-106.55,23.05,-106.25,23.40],
+  // Zona Metropolitana de Veracruz-Boca del Río
+  "Veracruz":[-96.30,19.00,-96.00,19.35],
+  "Villahermosa":[-93.10,17.85,-92.75,18.15],
+  "Mexicali":[-115.60,32.55,-115.30,32.78],
+  // Zona Metropolitana de Saltillo
+  "Saltillo":[-101.15,25.25,-100.85,25.55],
+  "Pachuca":[-98.90,19.95,-98.55,20.25],
+  "Oaxaca":[-96.90,16.95,-96.55,17.20],
+  "Morelia":[-101.40,19.55,-101.00,19.85],
+  // Zona Metropolitana La Laguna (Torreón, Gómez Palacio, Lerdo)
+  "Torreón":[-103.60,25.35,-103.20,25.75],
+  "Celaya":[-100.95,20.35,-100.65,20.65],
+  "San Luis Potosí":[-101.20,21.95,-100.80,22.30],
+  "Tampico":[-98.00,22.05,-97.65,22.45],
+  "Apizaco":[-98.30,19.30,-98.05,19.55],
+  "Campeche":[-90.70,19.65,-90.35,20.00],
+  "Cd. Juárez":[-106.70,31.50,-106.25,31.85],
+  "Chetumal":[-88.45,18.35,-88.10,18.65],
+  "Chiapas":[-93.40,16.55,-92.80,16.95],
+  "Chilpancingo":[-99.70,17.40,-99.40,17.70],
+  "Coatzacoalcos":[-94.60,18.05,-94.25,18.30],
+  "Colima":[-103.85,19.10,-103.55,19.35],
+  "Cozumel":[-87.15,20.35,-86.75,20.70],
+  "Durango":[-104.85,23.90,-104.45,24.20],
+  "Ensenada":[-116.85,31.70,-116.45,32.00],
+  "Guanajuato":[-101.40,20.95,-101.15,21.15],
+  "Irapuato":[-101.55,20.55,-101.25,20.80],
+  "Jalapa":[-97.05,19.40,-96.80,19.70],
+  "Los Cabos":[-110.30,22.75,-109.55,23.20],
+  "Manzanillo":[-104.50,18.95,-104.15,19.20],
+  "Matamoros":[-97.65,25.75,-97.35,26.00],
+  "Minatitlán":[-94.65,17.90,-94.40,18.10],
+  "Nogales":[-111.05,31.20,-110.85,31.45],
+  "Nuevo Laredo":[-99.65,27.35,-99.35,27.65],
+  "Orizaba":[-97.20,18.75,-96.90,19.00],
+  "Palenque":[-92.15,17.45,-91.85,17.65],
+  "Parral":[-105.85,26.80,-105.55,27.05],
+  "Piedras Negras":[-100.65,28.60,-100.40,28.85],
+  "Playa del Carmen":[-87.20,20.50,-86.90,20.80],
+  "Poza Rica":[-97.65,20.40,-97.30,20.70],
+  "Puerto Vallarta":[-105.40,20.50,-105.10,20.85],
+  // Zona Metropolitana de Reynosa-Río Bravo
+  "Reynosa":[-98.45,25.95,-98.10,26.25],
+  "Rosarito":[-117.15,32.20,-116.85,32.50],
+  "Salina Cruz":[-95.35,16.05,-95.10,16.30],
+  "San Cristóbal":[-92.80,16.60,-92.50,16.85],
+  "Tapachula":[-92.45,14.75,-92.10,15.05],
+  "Taxco":[-99.80,18.45,-99.50,18.65],
+  "Tepic":[-105.05,21.35,-104.70,21.65],
+  "Tlaxcala":[-98.40,19.20,-98.10,19.45],
+  // Tuxtla Gutiérrez + Chiapa de Corzo
+  "Tuxtla":[-93.30,16.60,-92.85,16.90],
+  "Valladolid":[-88.35,20.55,-88.05,20.80],
+  "Zacatecas":[-102.70,22.65,-102.40,22.95],
+  "Zihuatanejo":[-101.70,17.50,-101.40,17.80],
 };
 /* Geofencing: verifica si punto (lng,lat) está dentro de bbox [minLng,minLat,maxLng,maxLat] */
 function dentroBbox(lng,lat,bbox){
@@ -1160,32 +1180,54 @@ function SearchPalette({cots=[],facts=[],rutas=[],clientes=[],entregas=[],onSele
   );
 }
 const ago=s=>{if(!s)return"";const d=Date.now()/1000-s;if(d<60)return"ahora";if(d<3600)return Math.floor(d/60)+"m";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d";};
-/* AddressSearch: búsqueda de direcciones con Mapbox — bbox strict limita a una zona */
+/* AddressSearch: búsqueda de direcciones con Mapbox — bbox + proximity + fallback */
 function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",proximity=null,bbox=null,cityHint="",compact=false}){
   const [q,setQ]=useState("");
   const [results,setResults]=useState([]);
   const [loading,setLoading]=useState(false);
   const [open,setOpen]=useState(false);
+  const [usedFallback,setUsedFallback]=useState(false);
   const timerRef=useRef(null);
 
   useEffect(()=>{
-    if(!q||q.length<2){setResults([]);return;}
+    if(!q||q.length<2){setResults([]);setUsedFallback(false);return;}
     if(!MAPBOX_TOKEN)return;
     if(timerRef.current)clearTimeout(timerRef.current);
     timerRef.current=setTimeout(async()=>{
-      setLoading(true);
+      setLoading(true);setUsedFallback(false);
+      const prox = proximity?`&proximity=${proximity[0]},${proximity[1]}`:"";
+      const bboxStr = bbox?`&bbox=${bbox.join(",")}`:"";
+      const typesBase = "poi,address,place,locality,neighborhood,postcode";
       try{
-        const prox = proximity?`&proximity=${proximity[0]},${proximity[1]}`:"";
-        const bboxStr = bbox?`&bbox=${bbox.join(",")}`:"";
-        // Agrega el nombre de la ciudad al query para mejorar relevancia cuando hay cityHint
-        const queryWithCity = cityHint&&!q.toLowerCase().includes(cityHint.toLowerCase())?`${q}, ${cityHint}`:q;
-        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(queryWithCity)}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=8${prox}${bboxStr}&types=poi,address,place,locality,neighborhood`;
-        const res = await fetch(url);
-        const d = await res.json();
-        setResults(d.features||[]);
+        // ETAPA 1: Búsqueda con bbox estricto (si existe)
+        let features = [];
+        if(bbox){
+          const url1 = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=10${prox}${bboxStr}&types=${typesBase}`;
+          const r1 = await fetch(url1);
+          const d1 = await r1.json();
+          features = d1.features||[];
+        }
+        // ETAPA 2: Si no hay resultados con bbox, fallback a búsqueda más amplia con proximity
+        if(features.length===0){
+          const queryWithCity = cityHint&&!q.toLowerCase().includes(cityHint.toLowerCase())?`${q} ${cityHint}`:q;
+          const url2 = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(queryWithCity)}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=10${prox}&types=${typesBase}`;
+          const r2 = await fetch(url2);
+          const d2 = await r2.json();
+          features = d2.features||[];
+          // Filtra por distancia si hay proximity (máx 80km del centro)
+          if(proximity&&features.length>0){
+            features = features.filter(f=>{
+              const [flng,flat] = f.center;
+              const d = distKm(proximity[1],proximity[0],flat,flng);
+              return d<80;
+            });
+          }
+          if(features.length>0) setUsedFallback(true);
+        }
+        setResults(features);
       }catch(e){console.warn("geocoding",e);}
       setLoading(false);
-    },300);
+    },250);
     return()=>{if(timerRef.current)clearTimeout(timerRef.current);};
   },[q,proximity,bbox,cityHint]);
 
@@ -1199,7 +1241,10 @@ function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",
         {q&&!loading&&<button onClick={()=>{setQ("");setResults([]);}} className="btn" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",color:MUTED,padding:3}}><X size={12}/></button>}
       </div>
       {open&&results.length>0&&(
-        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:280,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
+        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:320,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
+          {usedFallback&&<div style={{padding:"6px 12px",background:AMBER+"10",borderBottom:"1px solid "+AMBER+"30",fontSize:10,color:AMBER,fontWeight:700}}>
+            💡 Búsqueda expandida (sin restricción de ciudad)
+          </div>}
           {results.map(r=>{
             const [lng,lat] = r.center;
             const nombre = r.text;
