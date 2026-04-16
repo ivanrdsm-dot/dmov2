@@ -140,6 +140,40 @@ const CITY_BBOX = {
   "Zacatecas":[-102.60,22.72,-102.50,22.82],
   "Zihuatanejo":[-101.60,17.58,-101.48,17.70],
 };
+/* Geofencing: verifica si punto (lng,lat) está dentro de bbox [minLng,minLat,maxLng,maxLat] */
+function dentroBbox(lng,lat,bbox){
+  if(!bbox||bbox.length<4) return true;
+  return lng>=bbox[0]&&lng<=bbox[2]&&lat>=bbox[1]&&lat<=bbox[3];
+}
+/* Distancia entre dos puntos (km) - Haversine */
+function distKm(lat1,lng1,lat2,lng2){
+  const R=6371;
+  const dLat=(lat2-lat1)*Math.PI/180;
+  const dLng=(lng2-lng1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+/* Construye un bbox de tolerancia alrededor de todos los puntos de una ruta, con buffer de N km */
+function buildRutaGeofence(ruta, bufferKm=15){
+  const puntos=[];
+  (ruta.stops||[]).forEach(s=>{
+    (s.puntos||[]).forEach(p=>{if(p.lat&&p.lng) puntos.push([p.lng,p.lat]);});
+    if(s.cityBbox) puntos.push([s.cityBbox[0],s.cityBbox[1]],[s.cityBbox[2],s.cityBbox[3]]);
+  });
+  if(puntos.length===0) return null;
+  let minLng=180,minLat=90,maxLng=-180,maxLat=-90;
+  puntos.forEach(([lng,lat])=>{
+    if(lng<minLng) minLng=lng;
+    if(lng>maxLng) maxLng=lng;
+    if(lat<minLat) minLat=lat;
+    if(lat>maxLat) maxLat=lat;
+  });
+  // Buffer de N km: ~0.009 lat = 1km, ~0.01 lng (aprox Mx)
+  const bufLat = bufferKm*0.009;
+  const bufLng = bufferKm*0.01;
+  return [minLng-bufLng, minLat-bufLat, maxLng+bufLng, maxLat+bufLat];
+}
+
 // Geocodifica una ciudad vía Mapbox si no está en el hardcode
 async function geocodeCity(cityName){
   const local = CITY_BBOX[cityName];
@@ -1431,6 +1465,79 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           </div>
         </div>
       </div>
+
+      {/* Analytics Predictivo */}
+      {facts.length>=2&&(()=>{
+        // Calcula predicción basado en los últimos 3 meses
+        const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+        const mesIdx = new Date().getMonth();
+        const mesActual = MESES[mesIdx];
+        const mesAnterior = MESES[mesIdx>0?mesIdx-1:11];
+        const mesSiguiente = MESES[mesIdx<11?mesIdx+1:0];
+        const totalMesActual = facts.filter(f=>f.mesOp===mesActual).reduce((a,f)=>a+(f.total||0),0);
+        const totalMesAnterior = facts.filter(f=>f.mesOp===mesAnterior).reduce((a,f)=>a+(f.total||0),0);
+        // Promedio de los 3 meses anteriores
+        const ultimos3 = [];
+        for(let i=1;i<=3;i++){
+          const m = MESES[(mesIdx-i+12)%12];
+          const tot = facts.filter(f=>f.mesOp===m).reduce((a,f)=>a+(f.total||0),0);
+          if(tot>0) ultimos3.push(tot);
+        }
+        const promedio3m = ultimos3.length>0?ultimos3.reduce((a,b)=>a+b,0)/ultimos3.length:0;
+        const crecimiento = totalMesAnterior>0?((totalMesActual-totalMesAnterior)/totalMesAnterior*100):0;
+        const proyNextMes = Math.round(promedio3m*(1+crecimiento/100));
+        // Capacidad de choferes
+        const rutasHistoricas = rutas.length;
+        const rutasPromPorMes = rutasHistoricas>0&&ultimos3.length>0?Math.round(rutasHistoricas/Math.max(ultimos3.length,1)):0;
+        const capDiariaChofer = 20;
+        const choferesActuales = clientes.length>0?clientes.length:0; // fallback
+        const choferesNecesarios = Math.ceil(rutasPromPorMes/22); // ~22 días laborables
+        return(
+          <div style={{background:"linear-gradient(135deg,#fff,"+VIOLET+"06)",border:"1.5px solid "+VIOLET+"20",borderRadius:16,padding:22,marginTop:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:40,height:40,borderRadius:12,background:VIOLET+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Zap size={18} color={VIOLET}/></div>
+                <div>
+                  <div style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Analytics Predictivo</div>
+                  <div style={{fontSize:11,color:MUTED,marginTop:2}}>Proyecciones basadas en tu histórico de facturación y rutas</div>
+                </div>
+              </div>
+              <Tag color={VIOLET}>IA</Tag>
+            </div>
+            <div className="g4">
+              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
+                <div style={{fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>Proyección {mesSiguiente}</div>
+                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:VIOLET,marginTop:4}}>{fmtK(proyNextMes)}</div>
+                <div style={{fontSize:10,color:MUTED,marginTop:2}}>basado en promedio 3m</div>
+              </div>
+              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
+                <div style={{fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>Crecimiento MoM</div>
+                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:crecimiento>=0?GREEN:ROSE,marginTop:4}}>{crecimiento>=0?"+":""}{crecimiento.toFixed(1)}%</div>
+                <div style={{fontSize:10,color:MUTED,marginTop:2}}>{mesAnterior} → {mesActual}</div>
+              </div>
+              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
+                <div style={{fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>Rutas estimadas</div>
+                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:A,marginTop:4}}>{rutasPromPorMes}</div>
+                <div style={{fontSize:10,color:MUTED,marginTop:2}}>promedio mensual</div>
+              </div>
+              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
+                <div style={{fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>Choferes ideales</div>
+                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:BLUE,marginTop:4}}>{choferesNecesarios}</div>
+                <div style={{fontSize:10,color:MUTED,marginTop:2}}>para ese volumen</div>
+              </div>
+            </div>
+            {/* Recomendaciones */}
+            <div style={{marginTop:14,padding:"12px 14px",background:"#fff",borderRadius:11,border:"1px solid "+BORDER}}>
+              <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>🎯 Recomendaciones IA</div>
+              {crecimiento>20&&<div style={{fontSize:12,color:GREEN,marginBottom:5,display:"flex",alignItems:"center",gap:6}}>📈 <strong>Crecimiento fuerte ({crecimiento.toFixed(0)}%)</strong> — Considera expandir flota o subir tarifas.</div>}
+              {crecimiento<-20&&<div style={{fontSize:12,color:ROSE,marginBottom:5,display:"flex",alignItems:"center",gap:6}}>📉 <strong>Caída ({crecimiento.toFixed(0)}%)</strong> — Revisa cuentas perdidas, contacta prospectos.</div>}
+              {crecimiento>=-20&&crecimiento<=20&&<div style={{fontSize:12,color:BLUE,marginBottom:5,display:"flex",alignItems:"center",gap:6}}>📊 Facturación estable. Mantén foco en retención y upsell.</div>}
+              {proyNextMes>totalMesActual*1.5&&<div style={{fontSize:12,color:AMBER,marginBottom:5,display:"flex",alignItems:"center",gap:6}}>⚠️ Proyección {fmtK(proyNextMes)} vs {fmtK(totalMesActual)} actual — Prepara capacidad extra.</div>}
+              {prospectos.filter(p=>p.status==="En negociación").length>0&&<div style={{fontSize:12,color:VIOLET,display:"flex",alignItems:"center",gap:6}}>🎯 {prospectos.filter(p=>p.status==="En negociación").length} prospecto(s) en negociación — valor ponderado: {fmtK(prospectos.filter(p=>p.status!=="Perdido"&&p.status!=="Ganado").reduce((a,p)=>a+((p.total||0)*(p.probabilidad||0)/100),0))}</div>}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Prospección */}
       {prospectos.length>0&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:22,marginTop:16}}>
@@ -3394,11 +3501,22 @@ function Facturas(){
                     <button onClick={()=>downloadFacturaPDF(f)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}>
                       <Download size={12}/>PDF
                     </button>
+                    <button onClick={()=>{
+                      downloadFacturaPDF(f); // primero descarga el PDF
+                      const emailCliente = prompt("Email del cliente para enviar la factura:",f.emailCliente||"");
+                      if(!emailCliente) return;
+                      const subject = `Factura ${f.folio||""} - DMvimiento`;
+                      const body = `Hola,\n\nAdjunto la factura ${f.folio||""} por el servicio: ${f.servicio||""}\n\nTotal: ${fmt(f.total||0)}\n\nSaludos,\nDMvimiento Logística`;
+                      const mailto = `mailto:${emailCliente}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                      window.location.href = mailto;
+                    }} className="btn" title="Enviar por email (PDF se descarga para adjuntar)" style={{color:VIOLET,padding:"4px 6px",border:"1px solid "+VIOLET+"20",borderRadius:6,display:"flex",alignItems:"center",fontSize:11,fontWeight:600}}>
+                      <Send size={12}/>
+                    </button>
                     <button onClick={()=>printFactura(f)} className="btn" title="Imprimir" style={{color:MUTED,padding:"4px 6px",border:"1px solid "+BD2,borderRadius:6,display:"flex",alignItems:"center",fontSize:11}}>
                       <Printer size={12}/>
                     </button>
                     <button onClick={()=>openEdit(f)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
-                    <button onClick={()=>del(f.id)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
+                    <button onClick={()=>{if(!confirm("¿Eliminar esta factura?"))return;del(f.id);}} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
                   </div>
                 </td>
               </tr>
@@ -4712,6 +4830,9 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
       setTimeout(()=>{if(confirm("¿Notificar al cliente que iniciaste la ruta por WhatsApp?"))window.open(waUrl,"_blank");},500);
     }
     // Start watch - sends GPS continuously
+    // Geofence: construye bbox de tolerancia con buffer de 15km
+    const geofence = buildRutaGeofence(ruta, 15);
+    let lastGeofenceAlert = 0;
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos)=>{
         const {latitude:lat,longitude:lng,speed,heading,accuracy} = pos.coords;
@@ -4725,6 +4846,15 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           lat,lng,speed:speed||0,heading:heading||0,accuracy:accuracy||0,
           ts:serverTimestamp(),
         },{merge:true}).catch(()=>{});
+        // Geofencing: si el chofer se sale de la zona autorizada, genera alerta
+        // (máximo una alerta cada 5 minutos para no saturar)
+        if(geofence&&!dentroBbox(lng,lat,geofence)){
+          const now = Date.now();
+          if(now-lastGeofenceAlert > 5*60*1000){
+            lastGeofenceAlert = now;
+            postAlert(ruta.id,chofer.id,chofer.nombre,"geofence","⚠️ Fuera de zona autorizada de ruta",{lat,lng}).catch(()=>{});
+          }
+        }
       },
       (err)=>{showT("Error GPS: "+err.message,"err");},
       {enableHighAccuracy:true,maximumAge:5000,timeout:30000}
@@ -5328,6 +5458,17 @@ export default function App(){
   const [fbOk,setFbOk]=useState(false);
   const [sidebarOpen,setSidebarOpen]=useState(true);
   const [searchOpen,setSearchOpen]=useState(false);
+  const [installPrompt,setInstallPrompt]=useState(null);
+  const [showInstallBanner,setShowInstallBanner]=useState(false);
+
+  // PWA install prompt
+  useEffect(()=>{
+    const h=(e)=>{e.preventDefault();setInstallPrompt(e);
+      if(!localStorage.getItem("dmov_install_dismissed")) setShowInstallBanner(true);
+    };
+    window.addEventListener("beforeinstallprompt",h);
+    return()=>window.removeEventListener("beforeinstallprompt",h);
+  },[]);
 
   useEffect(()=>{
     const u1=onSnapshot(collection(db,"cotizaciones"),s=>{setCots(s.docs.map(d=>({id:d.id,...d.data()})));setFbOk(true);});
@@ -5381,6 +5522,15 @@ export default function App(){
         </div>
       </div>
       {searchOpen&&<SearchPalette cots={cots} facts={facts} rutas={rutas} clientes={clientes} entregas={entregas} onSelect={v=>setView(v)} onClose={()=>setSearchOpen(false)}/>}
+      {showInstallBanner&&installPrompt&&<div style={{position:"fixed",bottom:16,right:16,zIndex:200,background:"#fff",borderRadius:14,padding:"14px 18px",boxShadow:"0 16px 50px rgba(12,24,41,.2)",border:"1.5px solid "+A+"30",display:"flex",alignItems:"center",gap:12,maxWidth:380}}>
+        <div style={{width:40,height:40,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:14,color:"#fff",flexShrink:0}}>DM</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700,fontSize:13}}>Instalar app DMvimiento</div>
+          <div style={{fontSize:11,color:MUTED}}>Acceso rápido desde tu home screen</div>
+        </div>
+        <button onClick={async()=>{installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){localStorage.setItem("dmov_install_dismissed","1");}setShowInstallBanner(false);setInstallPrompt(null);}} className="btn" style={{background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:9,padding:"8px 14px",fontSize:12,fontWeight:700}}>Instalar</button>
+        <button onClick={()=>{localStorage.setItem("dmov_install_dismissed","1");setShowInstallBanner(false);}} className="btn" style={{color:MUTED,fontSize:10}}>✕</button>
+      </div>}
     </>
   );
 }

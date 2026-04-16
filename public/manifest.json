@@ -1,0 +1,35 @@
+{
+  "name": "DMvimiento Logistics OS",
+  "short_name": "DMvimiento",
+  "description": "Sistema de gestión logística con tracking GPS en tiempo real",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a1628",
+  "theme_color": "#f97316",
+  "scope": "/",
+  "lang": "es",
+  "categories": ["business", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Panel Admin",
+      "short_name": "Admin",
+      "url": "/",
+      "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
+    },
+    {
+      "name": "App Chofer",
+      "short_name": "Chofer",
+      "url": "/chofer",
+      "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
+    }
+  ]
+}
