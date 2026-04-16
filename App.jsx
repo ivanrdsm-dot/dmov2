@@ -5297,12 +5297,11 @@ function ClientTracking({trackingId}){
     if(!bounds.isEmpty()) mapRef.current.fitBounds(bounds,{padding:60,maxZoom:14,duration:400});
   },[ruta]);
 
-  // Driver marker live + línea de ruta Uber-style
+  // Driver marker live + línea + AUTO-FOLLOW tipo Uber/Rappi
   useEffect(()=>{
     if(!mapRef.current) return;
     if(!driverLoc?.lat||!driverLoc?.lng){
       if(driverMarkerRef.current){driverMarkerRef.current.remove();driverMarkerRef.current=null;}
-      // Limpia línea
       if(mapRef.current.isStyleLoaded()){
         const s = mapRef.current.getSource("live-route");
         if(s) s.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
@@ -5322,11 +5321,13 @@ function ClientTracking({trackingId}){
       driverMarkerRef.current.setLngLat([driverLoc.lng,driverLoc.lat]);
     }else{
       const el = document.createElement("div");
-      el.style.cssText = `width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,${A},#fb923c);border:4px solid #fff;box-shadow:0 6px 20px ${A}80;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:22px;cursor:pointer;animation:pulse 2s ease infinite;z-index:100;`;
+      el.style.cssText = `width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,${A},#fb923c);border:4px solid #fff;box-shadow:0 8px 24px ${A}90;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:26px;cursor:pointer;animation:pulse 2s ease infinite;z-index:100;`;
       el.textContent = "🚚";
       driverMarkerRef.current = new mapboxgl.Marker(el).setLngLat([driverLoc.lng,driverLoc.lat]).addTo(mapRef.current);
     }
-    // Calcula línea al próximo punto no entregado
+    // AUTO-FOLLOW: centra en el chofer con transición suave
+    mapRef.current.easeTo({center:[driverLoc.lng,driverLoc.lat],zoom:Math.max(mapRef.current.getZoom(),13),duration:800});
+    // Línea azul al próximo punto
     if(ruta&&mapRef.current.isStyleLoaded()){
       const stopStates = (ruta.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
       let siguiente = null;
@@ -5399,6 +5400,26 @@ function ClientTracking({trackingId}){
         </div>
       </div>
 
+      {/* MAPA PRINCIPAL — LO PRIMERO QUE VE EL CLIENTE (estilo Uber/Rappi) */}
+      {MAPBOX_TOKEN&&<div style={{position:"relative"}}>
+        <div ref={mapCont} style={{width:"100%",height:"45vh",minHeight:300}}/>
+        {/* Badge EN VIVO sobre el mapa */}
+        {driverLoc&&!!(Date.now()/1000-(driverLoc.ts?.seconds||0)<300)&&<div style={{position:"absolute",top:14,left:14,zIndex:10,background:"rgba(12,24,41,.85)",backdropFilter:"blur(8px)",borderRadius:12,padding:"8px 14px",display:"flex",alignItems:"center",gap:8}}>
+          <div className="pulse" style={{width:10,height:10,borderRadius:"50%",background:GREEN,boxShadow:"0 0 10px "+GREEN}}/>
+          <div>
+            <div style={{fontSize:11,fontWeight:800,color:"#fff"}}>{ruta.choferNombre||"Chofer"} EN VIVO</div>
+            {driverLoc.speed>0&&<div style={{fontSize:10,color:"#ffffff80",fontFamily:MONO}}>{Math.round(driverLoc.speed*3.6)} km/h</div>}
+          </div>
+        </div>}
+        {/* Leyenda de colores */}
+        <div style={{position:"absolute",bottom:10,left:14,right:14,zIndex:10,background:"rgba(255,255,255,.92)",backdropFilter:"blur(6px)",borderRadius:10,padding:"6px 12px",display:"flex",gap:12,fontSize:10,justifyContent:"center"}}>
+          <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:A}}/>🚚 Chofer</span>
+          <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:GREEN}}/>Entregado</span>
+          <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:BLUE}}/>En sitio</span>
+          <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:A}}/>Pendiente</span>
+        </div>
+      </div>}
+
       <div style={{maxWidth:800,margin:"0 auto",padding:"16px 16px"}}>
         {/* Chofer info */}
         {ruta.choferNombre&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:14,marginBottom:14,display:"flex",alignItems:"center",gap:12}}>
@@ -5414,18 +5435,7 @@ function ClientTracking({trackingId}){
           {ruta.choferTel&&<a href={"tel:"+ruta.choferTel} className="btn" style={{background:GREEN,color:"#fff",borderRadius:10,padding:"8px 12px",textDecoration:"none",display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:700}}><Phone size={13}/>Llamar</a>}
         </div>}
 
-        {/* Live map */}
-        {MAPBOX_TOKEN&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,overflow:"hidden",marginBottom:14}}>
-          <div style={{padding:"10px 14px",borderBottom:"1px solid "+BORDER,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em"}}>Mapa en vivo</span>
-            <div style={{display:"flex",gap:8,fontSize:10}}>
-              <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:GREEN}}/>Entregado</span>
-              <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:BLUE}}/>En sitio</span>
-              <span style={{display:"flex",alignItems:"center",gap:4}}><div style={{width:8,height:8,borderRadius:"50%",background:A}}/>Pendiente</span>
-            </div>
-          </div>
-          <div ref={mapCont} style={{width:"100%",height:320}}/>
-        </div>}
+        {/* Mapa principal ahora está arriba en full-width */}
 
         {/* Stops with evidence */}
         <div style={{fontSize:11,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10,paddingLeft:4}}>Seguimiento de entregas</div>
