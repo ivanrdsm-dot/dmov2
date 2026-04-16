@@ -1072,19 +1072,24 @@ function InfoBox({icon:Icon,color,title,value,sub}){
 }
 function CitySearch({value,onChange,onSelect,veh,exclude=[]}){
   const [open,setOpen]=useState(false);
-  const filt=TAR.filter(t=>t.c.toLowerCase().includes(value.toLowerCase())&&!exclude.includes(t.c));
+  // Cities that match the query (without exclude filter)
+  const allMatches = TAR.filter(t=>t.c.toLowerCase().includes(value.toLowerCase()));
+  const filt = allMatches.filter(t=>!exclude.includes(t.c));
+  // Cities that match but are excluded (shown with greyed-out state + hint)
+  const excludedMatches = allMatches.filter(t=>exclude.includes(t.c));
+  const showDropdown = open && value && (filt.length>0 || excludedMatches.length>0);
   return(
     <div style={{position:"relative"}}>
       <div style={{position:"relative"}}>
         <Search size={13} color={MUTED} style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}/>
-        <input value={value} onChange={e=>{onChange(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)}
+        <input value={value} onChange={e=>{onChange(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),200)}
           placeholder={"Busca entre "+TAR.length+" destinos…"}
           style={{width:"100%",paddingLeft:32,paddingRight:12,paddingTop:10,paddingBottom:10,background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,fontSize:14}}/>
       </div>
-      {open&&value&&filt.length>0&&(
-        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:240,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
+      {showDropdown&&(
+        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:260,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
           {filt.slice(0,12).map(t=>(
-            <button key={t.c} onClick={()=>{onSelect(t);setOpen(false);onChange("");}} className="btn fr"
+            <button key={t.c} onMouseDown={()=>{onSelect(t);setOpen(false);onChange("");}} className="btn fr"
               style={{width:"100%",display:"flex",alignItems:"center",gap:11,padding:"9px 14px",borderBottom:"1px solid "+BORDER,background:"transparent",cursor:"pointer"}}>
               <MapPin size={11} color={A}/>
               <div style={{flex:1,textAlign:"left"}}>
@@ -1094,6 +1099,12 @@ function CitySearch({value,onChange,onSelect,veh,exclude=[]}){
               {veh&&<span style={{fontFamily:MONO,fontSize:12,color:A,fontWeight:700}}>{fmt(t[veh])}</span>}
             </button>
           ))}
+          {excludedMatches.length>0&&<div style={{padding:"10px 14px",background:AMBER+"08",borderTop:filt.length>0?"1px solid "+AMBER+"30":"none"}}>
+            <div style={{fontSize:10,fontWeight:700,color:AMBER,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>⚠ Ya agregada en esta lista</div>
+            {excludedMatches.slice(0,3).map(t=>(
+              <div key={t.c} style={{fontSize:12,color:MUTED,padding:"3px 0"}}>📍 {t.c} <span style={{color:AMBER,fontSize:10,fontWeight:600}}>· Búscala en la otra sección (destino/origen) para agregarla ahí también</span></div>
+            ))}
+          </div>}
         </div>
       )}
     </div>
@@ -2704,8 +2715,14 @@ function PlanificadorRutas(){
                 <span style={{fontSize:11,fontWeight:800,color:A,letterSpacing:"0.06em",textTransform:"uppercase"}}>Destinos · Puntos de entrega</span>
                 <div style={{flex:1,height:1,background:A+"30"}}/>
               </div>
-              {stops.filter(s=>!s.isOrigin).length===0&&<div style={{padding:"14px 14px",background:A+"04",border:"1.5px dashed "+A+"30",borderRadius:11,textAlign:"center",color:MUTED,fontSize:12}}>
-                Aún no agregas destinos. Usa el buscador de abajo para agregar la primera ciudad donde vas a entregar.
+              {stops.filter(s=>!s.isOrigin).length===0&&<div style={{padding:"20px 18px",background:"linear-gradient(135deg,"+A+"08,"+A+"12)",border:"2px dashed "+A+"50",borderRadius:14,textAlign:"center"}}>
+                <div style={{fontSize:28,marginBottom:8}}>📥</div>
+                <div style={{fontSize:13,fontWeight:700,color:A,marginBottom:4}}>Ahora agrega tu primer destino</div>
+                <div style={{fontSize:11,color:MUTED,marginBottom:10,lineHeight:1.5}}>
+                  ¿Servicio local CDMX→CDMX? Escribe "Ciudad de México" en el buscador naranja ↓<br/>
+                  ¿Foráneo? Busca otra ciudad como Acapulco, Guadalajara, Monterrey…
+                </div>
+                <div className="pulse" style={{fontSize:24,color:A,fontWeight:900}}>↓</div>
               </div>}
               {stops.filter(s=>!s.isOrigin).map((s)=>{
                 const i = stops.findIndex(x=>x.id===s.id);
