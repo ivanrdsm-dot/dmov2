@@ -1802,6 +1802,7 @@ const NAV_SECTIONS=[
     {id:"viaticos",    label:"Viáticos & Gastos", icon:Zap},
     {id:"gastosAdmin", label:"Gastos Choferes",   icon:DollarSign, badge:"NEW"},
     {id:"jornadas",    label:"Jornadas & Horas",  icon:Clock, badge:"NEW"},
+    {id:"chat",        label:"Chat interno",      icon:Send, badge:"NEW"},
     {id:"alertas",     label:"Centro de Alertas", icon:Bell, badge:"NEW"},
     {id:"clientes",    label:"Clientes",          icon:Building2},
   ]},
@@ -2184,7 +2185,16 @@ function Cotizador({onSaved}){
   const [notas,setNotas]=useState("");
   const [plazo,setPlazo]=useState(3);
   const [toast,setToast]=useState(null);
+  const [recurrente,setRecurrente]=useState(false);
+  const [recurrenciaFrec,setRecurrenciaFrec]=useState("mensual"); // semanal/quincenal/mensual
+  const [plantillas,setPlantillas]=useState([]);
+  const [showPlantillas,setShowPlantillas]=useState(false);
+  const [showComparador,setShowComparador]=useState(false);
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
+
+  useEffect(()=>onSnapshot(collection(db,"plantillasCotizador"),s=>{
+    setPlantillas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
+  }),[]);
 
   // ── LOCAL
   const [lVeh,setLVeh]=useState("cam");
@@ -2317,11 +2327,101 @@ function Cotizador({onSaved}){
     if(!canSave){showT("Agrega al menos un destino","err");return;}
     try{
       const q=buildQ();
-      await addDoc(collection(db,"cotizaciones"),{...q,createdAt:serverTimestamp()});
-      showT("✓ Cotización guardada — "+q.folio);
+      const vencimiento = new Date(Date.now()+15*86400000).toISOString().slice(0,10);
+      await addDoc(collection(db,"cotizaciones"),{
+        ...q,
+        recurrente: !!recurrente,
+        recurrenciaFrec: recurrente?recurrenciaFrec:"",
+        vigenciaHasta: vencimiento,
+        status: "Pendiente",
+        createdAt:serverTimestamp(),
+      });
+      showT("✓ Cotización guardada — "+q.folio+(recurrente?" (recurrente "+recurrenciaFrec+")":""));
       onSaved&&onSaved();
     }catch(e){showT(e.message,"err");}
   };
+
+  // Guardar config actual como plantilla
+  const guardarPlantilla = async()=>{
+    const nombre = prompt("Nombre de la plantilla (ej: 'Ruta CDMX-Monterrey semanal'):");
+    if(!nombre||!nombre.trim()) return;
+    const snapshot = {
+      nombre: nombre.trim(),
+      modo,
+      plazo,
+      local:{veh:lVeh,urg:lUrg,ayud:lAyud,res:lRes,puntos:lPuntos},
+      foraneo:{veh:fVeh,ciudades:fCiudades,urg:fUrg,mani:fMani,numAyud:fNumAyud,res:fRes,extra:fExtra},
+      masivo:{veh:mVeh,maxDia:mMaxDia,personas:mPersonas,ayud:mAyud,urg:mUrg,ciudades:mCiudades},
+      createdAt: serverTimestamp(),
+    };
+    try{
+      await addDoc(collection(db,"plantillasCotizador"),snapshot);
+      showT("✓ Plantilla guardada");
+    }catch(e){showT(e.message,"err");}
+  };
+
+  // Cargar plantilla
+  const cargarPlantilla = (p)=>{
+    setModo(p.modo||"local");
+    setPlazo(p.plazo||3);
+    if(p.local){
+      setLVeh(p.local.veh||"cam");
+      setLUrg(!!p.local.urg);setLAyud(!!p.local.ayud);setLRes(!!p.local.res);
+      setLPuntos(p.local.puntos||[{id:uid(),dir:"",ref:""}]);
+    }
+    if(p.foraneo){
+      setFVeh(p.foraneo.veh||"cam");
+      setFCiudades(p.foraneo.ciudades||[]);
+      setFUrg(!!p.foraneo.urg);setFMani(!!p.foraneo.mani);
+      setFNumAyud(p.foraneo.numAyud||1);setFRes(!!p.foraneo.res);setFExtra(p.foraneo.extra||0);
+    }
+    if(p.masivo){
+      setMVeh(p.masivo.veh||"cam");
+      setMMaxDia(p.masivo.maxDia||20);
+      setMPersonas(p.masivo.personas||1);
+      setMAyud(!!p.masivo.ayud);setMUrg(!!p.masivo.urg);
+      setMCiudades(p.masivo.ciudades||[]);
+    }
+    setShowPlantillas(false);
+    showT("✓ Plantilla cargada: "+p.nombre);
+  };
+
+  const eliminarPlantilla = async(id)=>{
+    if(!confirm("¿Eliminar esta plantilla?")) return;
+    await deleteDoc(doc(db,"plantillasCotizador",id));
+    showT("Plantilla eliminada");
+  };
+
+  // Comparador — calcula el total con cada tipo de vehículo
+  const compararVehiculos = useMemo(()=>{
+    if(modo==="local"){
+      return Object.keys(LOC).map(k=>{
+        const d = LOC[k];
+        let base = d.normal;
+        if(lUrg&&lAyud) base = d.urgente_ay;
+        else if(lAyud) base = d.ayudante;
+        else if(lUrg) base = d.urgente;
+        const pe = Math.max(0,lPuntos.filter(p=>p.dir.trim()).length-1);
+        const xp = pe*ADIC;
+        const xr = lRes?(d.resguardo||0):0;
+        const sub = base+xp+xr;
+        return {veh:k,label:VEHK.find(v=>v.k===k)?.label||k,total:sub*1.16,subtotal:sub};
+      }).sort((a,b)=>a.total-b.total);
+    }else if(modo==="foraneo"&&fCiudades.length>0){
+      return Object.keys(LOC).map(k=>{
+        const vd = VEHK.find(v=>v.k===k);
+        const crew = (vd?.crew||1)+fExtra;
+        const baseTotal = fCiudades.reduce((a,c)=>a+(c[k]||0),0);
+        const {total:xv} = calcViaticos(fMaxKm,crew,fComida,fHotel);
+        const xu = fUrg?baseTotal*.35:0;
+        const xm = fMani?AYUD*fNumAyud:0;
+        const xr = fRes&&fCiudades.length>0?(LOC[k]?.resguardo||0):0;
+        const sub = baseTotal+xu+xm+xr+xv;
+        return {veh:k,label:vd?.label||k,total:sub*1.16,subtotal:sub};
+      }).sort((a,b)=>a.total-b.total);
+    }
+    return [];
+  },[modo,lVeh,lUrg,lAyud,lRes,lPuntos,fCiudades,fUrg,fMani,fNumAyud,fRes,fExtra,fComida,fHotel,fMaxKm]);
 
   return(
     <div style={{flex:1,overflowY:"auto",background:"#f1f4fb"}}>
@@ -2332,6 +2432,17 @@ function Cotizador({onSaved}){
           <div>
             <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:26,color:TEXT,letterSpacing:"-0.03em"}}>Cotizador Pro</h1>
             <p style={{color:MUTED,fontSize:12,marginTop:2}}>Tarifas 2026 · Viáticos automáticos · PDF profesional</p>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={()=>setShowPlantillas(true)} className="btn" style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:11,fontWeight:700,fontSize:12}}>
+              <FolderOpen size={12}/>Plantillas ({plantillas.length})
+            </button>
+            <button onClick={guardarPlantilla} className="btn" style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:11,fontWeight:700,fontSize:12}}>
+              <Plus size={12}/>Guardar plantilla
+            </button>
+            <button onClick={()=>setShowComparador(!showComparador)} className="btn" style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",background:showComparador?A:"#fff",border:"1.5px solid "+A+"40",color:showComparador?"#fff":A,borderRadius:11,fontWeight:700,fontSize:12}}>
+              <BarChart2 size={12}/>{showComparador?"Ocultar":"Comparar"} vehículos
+            </button>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 13px",background:"#fff8f3",borderRadius:20,border:"1px solid "+A+"22"}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:GREEN,boxShadow:"0 0 6px "+GREEN}}/>
@@ -2628,14 +2739,92 @@ function Cotizador({onSaved}){
             </div>}
           </div>
 
+          {/* Comparador de vehículos */}
+          {showComparador&&compararVehiculos.length>0&&<div style={{background:"linear-gradient(135deg,"+A+"08,"+VIOLET+"08)",border:"1.5px solid "+A+"30",borderRadius:12,padding:14,marginBottom:12}}>
+            <div style={{fontSize:10,fontWeight:800,color:A,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>📊 Comparador de vehículos — misma configuración</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {compararVehiculos.map((c,i)=>{
+                const maxT = compararVehiculos[compararVehiculos.length-1].total;
+                const pct = maxT>0?c.total/maxT*100:0;
+                const ahorro = maxT>0?maxT-c.total:0;
+                const isActive = (modo==="local"?lVeh:fVeh)===c.veh;
+                return(
+                  <div key={c.veh} onClick={()=>{if(modo==="local")setLVeh(c.veh);else if(modo==="foraneo")setFVeh(c.veh);}} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 11px",borderRadius:9,background:isActive?A+"15":"#fff",border:"1.5px solid "+(isActive?A:BD2),cursor:"pointer"}}>
+                    <div style={{width:22,height:22,borderRadius:"50%",background:i===0?GREEN:i===compararVehiculos.length-1?ROSE:AMBER,color:"#fff",fontSize:10,fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{i+1}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,fontSize:12}}>{c.label} {isActive&&<span style={{color:A,fontSize:10,marginLeft:4}}>← seleccionado</span>}</div>
+                      <div style={{background:BORDER,borderRadius:4,height:4,marginTop:4,overflow:"hidden"}}>
+                        <div style={{background:i===0?GREEN:i===compararVehiculos.length-1?ROSE:AMBER,height:"100%",width:pct+"%",transition:"width .3s"}}/>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontFamily:MONO,fontSize:13,fontWeight:900,color:isActive?A:TEXT}}>{fmt(c.total)}</div>
+                      {i===0&&ahorro>0&&<div style={{fontSize:10,color:GREEN,fontWeight:700}}>Ahorra {fmt(ahorro)}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{fontSize:10,color:MUTED,marginTop:8,fontStyle:"italic"}}>💡 Click en cualquier opción para seleccionarla</div>
+          </div>}
+          {/* Toggle recurrente */}
+          <div style={{background:"#fff",border:"1.5px solid "+BD2,borderRadius:11,padding:"10px 12px",marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:14}}>🔁</span>
+                <div>
+                  <div style={{fontSize:12,fontWeight:700,color:TEXT}}>Cotización recurrente</div>
+                  <div style={{fontSize:10,color:MUTED}}>El cliente paga este servicio periódicamente</div>
+                </div>
+              </div>
+              <label style={{position:"relative",display:"inline-block",width:36,height:20,cursor:"pointer"}}>
+                <input type="checkbox" checked={recurrente} onChange={e=>setRecurrente(e.target.checked)} style={{opacity:0,width:0,height:0}}/>
+                <span style={{position:"absolute",cursor:"pointer",top:0,left:0,right:0,bottom:0,background:recurrente?VIOLET:BD2,borderRadius:20,transition:".2s"}}>
+                  <span style={{position:"absolute",height:16,width:16,left:recurrente?18:2,top:2,background:"#fff",borderRadius:"50%",transition:".2s"}}/>
+                </span>
+              </label>
+            </div>
+            {recurrente&&<select value={recurrenciaFrec} onChange={e=>setRecurrenciaFrec(e.target.value)} style={{width:"100%",marginTop:8,padding:"7px 10px",border:"1.5px solid "+BD2,borderRadius:8,fontSize:12,background:"#fff"}}>
+              <option value="semanal">📅 Semanal</option>
+              <option value="quincenal">📅 Quincenal</option>
+              <option value="mensual">📅 Mensual</option>
+              <option value="bimestral">📅 Bimestral</option>
+              <option value="trimestral">📅 Trimestral</option>
+            </select>}
+          </div>
           <button onClick={guardar} disabled={!canSave||!cliente.trim()} className="btn" style={{background:canSave&&cliente.trim()?"linear-gradient(135deg,"+A+",#fb923c)":"#e0e0e0",color:canSave&&cliente.trim()?"#fff":"#aaa",borderRadius:13,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:canSave&&cliente.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSave&&cliente.trim()?"0 6px 20px "+A+"40":"none"}}>
-            <Send size={15}/>Guardar cotización
+            <Send size={15}/>Guardar cotización{recurrente?" (recurrente)":""}
           </button>
           <button onClick={()=>downloadCotizacionPDF(buildQ())} className="btn" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,padding:"11px 0",border:"1.5px solid "+BLUE+"30",borderRadius:13,fontSize:13,fontWeight:700,color:BLUE,background:"#fff"}}>
             <Download size={14}/>Descargar PDF
           </button>
         </div>
       </div>
+      {/* Modal de plantillas */}
+      {showPlantillas&&<Modal title="Plantillas de cotización" onClose={()=>setShowPlantillas(false)} icon={FolderOpen} iconColor={VIOLET} wide>
+        {plantillas.length===0?<div style={{padding:"30px 20px",textAlign:"center",color:MUTED,fontSize:13}}>
+          <FolderOpen size={32} color={BD2} style={{marginBottom:10}}/>
+          <div style={{fontWeight:700,color:TEXT,fontSize:14,marginBottom:4}}>Sin plantillas guardadas</div>
+          <div>Configura una cotización y usa "Guardar plantilla" para reutilizarla después.</div>
+        </div>
+        :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {plantillas.map(p=>{
+            const d = p.createdAt?.seconds?new Date(p.createdAt.seconds*1000).toLocaleDateString("es-MX"):"";
+            const modoLabel = p.modo==="local"?"🏢 Local":p.modo==="foraneo"?"🚛 Foráneo":"📦 Masivo";
+            return(
+              <div key={p.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"#fff",border:"1.5px solid "+BORDER,borderRadius:11}}>
+                <div style={{width:38,height:38,borderRadius:10,background:VIOLET+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><FolderOpen size={16} color={VIOLET}/></div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.nombre}</div>
+                  <div style={{fontSize:11,color:MUTED}}>{modoLabel} · Creada {d}</div>
+                </div>
+                <button onClick={()=>cargarPlantilla(p)} className="btn" style={{padding:"7px 14px",borderRadius:9,background:"linear-gradient(135deg,"+VIOLET+",#9d5cff)",color:"#fff",fontWeight:700,fontSize:12}}>Cargar</button>
+                <button onClick={()=>eliminarPlantilla(p.id)} className="btn" style={{color:ROSE,padding:6}}><Trash2 size={13}/></button>
+              </div>
+            );
+          })}
+        </div>}
+      </Modal>}
     </div>
   );
 }
@@ -4715,6 +4904,47 @@ function Presupuestos(){
   const del=async id=>{if(!confirm("¿Eliminar este presupuesto?"))return;await deleteDoc(doc(db,"presupuestos",id));showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"presupuestos",id),{status});
 
+  // Conversión 1-click a factura: crea un registro en facturas con los datos del presupuesto
+  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const toFactura = async(p)=>{
+    if(p.convertidoAFacturaId){
+      if(!confirm("Este presupuesto ya fue convertido a factura. ¿Crear otra factura de todas formas?")) return;
+    }
+    const today = new Date();
+    const venc = new Date(Date.now()+30*86400000).toISOString().slice(0,10); // vencimiento +30 días
+    const serviciosDesc = (p.conceptos||[]).map(c=>`${c.cant}× ${c.desc}`).filter(Boolean).join(" · ")||p.folio;
+    try{
+      const ref = await addDoc(collection(db,"facturas"),{
+        mesOp: MESES[today.getMonth()],
+        anio: today.getFullYear(),
+        empresa: p.cliente||"",
+        solicitante: p.contacto||"",
+        plan: "",
+        servicio: serviciosDesc,
+        subtotal: p.subtotal||0,
+        ivaAmt: p.ivaAmt||0,
+        total: p.total||0,
+        iva: (p.ivaAmt||0)>0,
+        status: "Pendiente",
+        notas: `Generada desde presupuesto ${p.folio||""}`,
+        fechaEmision: today.toISOString().slice(0,10),
+        fechaVenc: venc,
+        emailCliente: p.emailCliente||"",
+        presupuestoOrigenId: p.id,
+        presupuestoOrigenFolio: p.folio||"",
+        folio: "FAC-"+uid(),
+        createdAt: serverTimestamp(),
+      });
+      // Marca el presupuesto como convertido + Aprobado
+      await updateDoc(doc(db,"presupuestos",p.id),{
+        convertidoAFacturaId: ref.id,
+        convertidoEn: serverTimestamp(),
+        status: "Aprobado",
+      });
+      showT("✓ Factura creada desde presupuesto");
+    }catch(e){showT(e.message,"err");}
+  };
+
   const sc={Borrador:MUTED,Enviado:BLUE,Aprobado:GREEN,Rechazado:ROSE};
   const statuses=["Borrador","Enviado","Aprobado","Rechazado"];
   const filt=items.filter(p=>
@@ -4784,6 +5014,9 @@ function Presupuestos(){
                 <td style={{padding:"10px 12px"}}>
                   <div style={{display:"flex",gap:5,alignItems:"center"}}>
                     <button onClick={()=>downloadPresupuestoPDF(p)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}><Download size={12}/>PDF</button>
+                    <button onClick={()=>toFactura(p)} className="btn" title="Convertir a factura" style={{color:GREEN,padding:"4px 8px",border:"1px solid "+GREEN+"30",background:GREEN+"08",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>
+                      {p.convertidoAFacturaId?<><Check size={12}/>Facturado</>:<><FileText size={12}/>→ Factura</>}
+                    </button>
                     <button onClick={()=>openEdit(p)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
                     <button onClick={()=>del(p.id)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
                   </div>
@@ -5505,7 +5738,14 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   const [activeRuta,setActiveRuta]=useState(null);
   const [tracking,setTracking]=useState(false);
   const [justFinished,setJustFinished]=useState(null); // muestra celebración post-completar
+  const [chatUnread,setChatUnread]=useState(0);
   const watchIdRef = useRef(null);
+
+  // Suscripción a mensajes no leídos del admin (para badge)
+  useEffect(()=>{
+    const q = query(collection(db,"mensajes"),where("to","==",chofer.id),where("read","==",false));
+    return onSnapshot(q,s=>setChatUnread(s.docs.length));
+  },[chofer.id]);
 
   const prevRutaIdsRef = useRef(null);
   useEffect(()=>{
@@ -5706,8 +5946,11 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           <button onClick={()=>setTabChofer("gastos")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="gastos"?AMBER:"transparent",color:tabChofer==="gastos"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
             <DollarSign size={10}/>Gastos
           </button>
+          <button onClick={()=>setTabChofer("chat")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="chat"?BLUE:"transparent",color:tabChofer==="chat"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap",position:"relative"}}>
+            <Send size={10}/>Chat{chatUnread>0&&<span style={{background:ROSE,color:"#fff",borderRadius:10,padding:"1px 5px",fontSize:8,fontWeight:900,marginLeft:2}}>{chatUnread}</span>}
+          </button>
           <button onClick={()=>setTabChofer("historial")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="historial"?GREEN:"transparent",color:tabChofer==="historial"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
-            <CheckCircle size={10}/>Historial ({rutasCompletadas.length})
+            <CheckCircle size={10}/>Hist. ({rutasCompletadas.length})
           </button>
           <button onClick={()=>setTabChofer("perfil")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="perfil"?VIOLET:"transparent",color:tabChofer==="perfil"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
             <Shield size={10}/>Perfil
@@ -5842,9 +6085,81 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
         {/* TAB: GASTOS — combustible/casetas con foto ticket */}
         {tabChofer==="gastos"&&<ChoferGastos chofer={chofer} showT={showT}/>}
 
+        {/* TAB: CHAT — mensajería con admin */}
+        {tabChofer==="chat"&&<ChoferChat chofer={chofer}/>}
+
         {/* TAB: PERFIL — stats históricas del chofer */}
         {tabChofer==="perfil"&&<ChoferPerfil chofer={chofer} misRutas={misRutas} rutasCompletadas={rutasCompletadas} onLogout={onLogout}/>}
       </div>}
+    </div>
+  );
+}
+
+/* ChoferChat — mensajería con admin desde el celular del chofer */
+function ChoferChat({chofer}){
+  const [msgs,setMsgs]=useState([]);
+  const [draft,setDraft]=useState("");
+  const bottomRef=useRef(null);
+
+  useEffect(()=>{
+    const q = query(collection(db,"mensajes"),where("from","in",["admin",chofer.id]));
+    return onSnapshot(q,s=>{
+      const items = s.docs.map(d=>({id:d.id,...d.data()}))
+        .filter(m=>(m.from==="admin"&&m.to===chofer.id)||(m.from===chofer.id&&m.to==="admin"))
+        .sort((a,b)=>(a.ts?.seconds||0)-(b.ts?.seconds||0));
+      setMsgs(items);
+      // Marca como leídos los entrantes del admin
+      items.forEach(m=>{
+        if(m.from==="admin"&&!m.read){
+          updateDoc(doc(db,"mensajes",m.id),{read:true}).catch(()=>{});
+        }
+      });
+    });
+  },[chofer.id]);
+
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[msgs]);
+
+  const enviar = async()=>{
+    if(!draft.trim()) return;
+    await sendMessage({from:chofer.id,fromName:chofer.nombre,to:"admin",toName:"Administración",text:draft.trim()});
+    setDraft("");
+  };
+
+  return(
+    <div style={{background:"#fff",borderRadius:14,boxShadow:"0 1px 4px rgba(12,24,41,.04)",overflow:"hidden",display:"flex",flexDirection:"column",height:"calc(100vh - 240px)",minHeight:400}}>
+      {/* Header admin */}
+      <div style={{padding:"14px 16px",borderBottom:"1px solid "+BORDER,display:"flex",alignItems:"center",gap:10,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff"}}>
+        <div style={{width:38,height:38,borderRadius:11,background:"rgba(255,255,255,.22)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:13}}>DM</div>
+        <div style={{flex:1}}>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:15}}>Administración</div>
+          <div style={{fontSize:11,opacity:.9}}>Mensajería interna · DMvimiento</div>
+        </div>
+      </div>
+      {/* Mensajes */}
+      <div style={{flex:1,overflowY:"auto",padding:"14px 14px",background:"#f6f9ff"}}>
+        {msgs.length===0?<div style={{textAlign:"center",color:MUTED,fontSize:12,padding:40}}>
+          <Send size={28} color={BD2} style={{marginBottom:10}}/>
+          <div style={{fontWeight:700,color:TEXT,fontSize:14,marginBottom:3}}>Sin mensajes</div>
+          <div>Envía el primer mensaje a administración</div>
+        </div>
+        :msgs.map(m=>{
+          const mine = m.from===chofer.id;
+          return(
+            <div key={m.id} style={{display:"flex",justifyContent:mine?"flex-end":"flex-start",marginBottom:6}}>
+              <div style={{maxWidth:"80%",background:mine?"linear-gradient(135deg,"+A+",#fb923c)":"#fff",color:mine?"#fff":TEXT,padding:"9px 13px",borderRadius:mine?"14px 14px 4px 14px":"14px 14px 14px 4px",boxShadow:"0 1px 3px rgba(12,24,41,.08)",fontSize:13,lineHeight:1.4,wordWrap:"break-word"}}>
+                {m.text}
+                <div style={{fontSize:9,opacity:.65,marginTop:4,textAlign:"right"}}>{m.ts?.seconds?new Date(m.ts.seconds*1000).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}):""}</div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={bottomRef}/>
+      </div>
+      {/* Input */}
+      <div style={{padding:"10px 12px",borderTop:"1px solid "+BORDER,display:"flex",gap:7,background:"#fafbfd"}}>
+        <input value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")enviar();}} placeholder="Escribe un mensaje…" style={{flex:1,padding:"10px 13px",border:"1.5px solid "+BD2,borderRadius:10,fontSize:13,background:"#fff"}}/>
+        <button onClick={enviar} disabled={!draft.trim()} className="btn" style={{padding:"0 14px",borderRadius:10,background:draft.trim()?"linear-gradient(135deg,"+A+",#fb923c)":"#e0e0e0",color:"#fff",fontWeight:700,fontSize:13,display:"flex",alignItems:"center"}}><Send size={14}/></button>
+      </div>
     </div>
   );
 }
@@ -7318,6 +7633,150 @@ function AlertasCentro({setView}){
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   CHAT INTERNO — mensajeria admin <-> chofer
+   ═══════════════════════════════════════════════════════════════════════════ */
+async function sendMessage({from,fromName,to,toName,text,rutaId=null,rutaNombre=null}){
+  return await addDoc(collection(db,"mensajes"),{
+    from,           // "admin" | choferId
+    fromName,
+    to,             // "admin" | choferId
+    toName,
+    text,
+    rutaId,
+    rutaNombre,
+    read:false,
+    ts:serverTimestamp(),
+  });
+}
+
+// Lista de conversaciones con choferes (admin) + ventana de chat
+function ChatCentro(){
+  const [mensajes,setMensajes]=useState([]);
+  const [choferes,setChoferes]=useState([]);
+  const [selected,setSelected]=useState(null); // {id,nombre,tel}
+  const [draft,setDraft]=useState("");
+  const bottomRef=useRef(null);
+
+  useEffect(()=>{
+    const u1=onSnapshot(collection(db,"mensajes"),s=>setMensajes(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.ts?.seconds||0)-(b.ts?.seconds||0))));
+    const u2=onSnapshot(collection(db,"choferes"),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo")));
+    return()=>{u1();u2();};
+  },[]);
+
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[selected,mensajes]);
+
+  // Marca como leídos los mensajes entrantes del chofer seleccionado
+  useEffect(()=>{
+    if(!selected) return;
+    mensajes.forEach(m=>{
+      if(m.from===selected.id&&m.to==="admin"&&!m.read){
+        updateDoc(doc(db,"mensajes",m.id),{read:true}).catch(()=>{});
+      }
+    });
+  },[selected,mensajes]);
+
+  const conv = selected?mensajes.filter(m=>(m.from===selected.id&&m.to==="admin")||(m.from==="admin"&&m.to===selected.id)):[];
+  // Conteo unread por chofer
+  const unreadByChofer = {};
+  mensajes.filter(m=>m.to==="admin"&&!m.read).forEach(m=>{unreadByChofer[m.from]=(unreadByChofer[m.from]||0)+1;});
+  // Último mensaje por chofer
+  const lastByChofer = {};
+  mensajes.forEach(m=>{
+    const other = m.from==="admin"?m.to:m.from;
+    if(other==="admin") return;
+    if(!lastByChofer[other]||(m.ts?.seconds||0)>(lastByChofer[other].ts?.seconds||0)) lastByChofer[other] = m;
+  });
+  const conOrdenados = [...choferes].sort((a,b)=>{
+    const ua = unreadByChofer[a.id]||0, ub = unreadByChofer[b.id]||0;
+    if(ua!==ub) return ub-ua;
+    const ta = lastByChofer[a.id]?.ts?.seconds||0, tb = lastByChofer[b.id]?.ts?.seconds||0;
+    return tb-ta;
+  });
+
+  const enviar = async()=>{
+    if(!draft.trim()||!selected) return;
+    await sendMessage({from:"admin",fromName:"Administración",to:selected.id,toName:selected.nombre,text:draft.trim()});
+    setDraft("");
+  };
+
+  return(
+    <div style={{flex:1,display:"flex",flexDirection:"column",padding:"24px 28px",background:"#f1f4fb",minHeight:0}}>
+      <div className="au" style={{marginBottom:16}}>
+        <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Chat interno</h1>
+        <p style={{color:MUTED,fontSize:13,marginTop:3}}>Mensajería directa con choferes · Tiempo real · Sin WhatsApp</p>
+      </div>
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"320px 1fr",gap:14,background:"#fff",borderRadius:15,overflow:"hidden",border:"1px solid "+BORDER,minHeight:0}}>
+        {/* Lista choferes */}
+        <div style={{borderRight:"1px solid "+BORDER,overflowY:"auto",minHeight:0}}>
+          <div style={{padding:"14px 16px",borderBottom:"1px solid "+BORDER,fontFamily:DISP,fontWeight:700,fontSize:13,color:TEXT,background:"#fafbfd"}}>Choferes ({choferes.length})</div>
+          {conOrdenados.length===0?<div style={{padding:24,textAlign:"center",color:MUTED,fontSize:12}}>No hay choferes registrados</div>
+          :conOrdenados.map(c=>{
+            const last = lastByChofer[c.id];
+            const unread = unreadByChofer[c.id]||0;
+            return(
+              <button key={c.id} onClick={()=>setSelected(c)} className="btn fr" style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid "+BORDER,background:selected?.id===c.id?A+"08":"transparent",textAlign:"left",cursor:"pointer"}}>
+                <div style={{width:36,height:36,borderRadius:11,background:"linear-gradient(135deg,"+VIOLET+",#9d5cff)",color:"#fff",fontFamily:DISP,fontWeight:900,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{(c.nombre||"?").slice(0,2).toUpperCase()}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6}}>
+                    <div style={{fontWeight:700,fontSize:13,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.nombre}</div>
+                    {last?.ts?.seconds&&<span style={{fontSize:9,color:MUTED,flexShrink:0}}>{ago(last.ts.seconds)}</span>}
+                  </div>
+                  <div style={{fontSize:11,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2}}>{last?(last.from==="admin"?"Tú: ":"")+last.text:"Sin mensajes"}</div>
+                </div>
+                {unread>0&&<span style={{background:ROSE,color:"#fff",borderRadius:20,padding:"2px 7px",fontSize:10,fontWeight:800,flexShrink:0}}>{unread}</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Ventana de conversación */}
+        <div style={{display:"flex",flexDirection:"column",minHeight:0}}>
+          {selected?<>
+            <div style={{padding:"12px 18px",borderBottom:"1px solid "+BORDER,display:"flex",alignItems:"center",gap:12,background:"#fafbfd"}}>
+              <div style={{width:38,height:38,borderRadius:11,background:"linear-gradient(135deg,"+VIOLET+",#9d5cff)",color:"#fff",fontFamily:DISP,fontWeight:900,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>{(selected.nombre||"?").slice(0,2).toUpperCase()}</div>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:DISP,fontWeight:800,fontSize:15}}>{selected.nombre}</div>
+                <div style={{fontSize:11,color:MUTED}}>{selected.tel||"Sin teléfono"}{selected.status?" · "+selected.status:""}</div>
+              </div>
+              {selected.tel&&<a href={"tel:+52"+selected.tel.replace(/\D/g,"")} className="btn" style={{padding:"7px 11px",borderRadius:9,background:BLUE+"10",border:"1px solid "+BLUE+"30",color:BLUE,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",gap:4,textDecoration:"none"}}><Phone size={11}/>Llamar</a>}
+            </div>
+            <div style={{flex:1,overflowY:"auto",padding:"14px 18px",background:"#f6f9ff",minHeight:0}}>
+              {conv.length===0?<div style={{textAlign:"center",color:MUTED,fontSize:12,padding:40}}>
+                <Send size={24} color={BD2} style={{marginBottom:8}}/>
+                <div>Envía el primer mensaje a {selected.nombre}</div>
+              </div>
+              :conv.map(m=>{
+                const mine = m.from==="admin";
+                return(
+                  <div key={m.id} style={{display:"flex",justifyContent:mine?"flex-end":"flex-start",marginBottom:6}}>
+                    <div style={{maxWidth:"70%",background:mine?"linear-gradient(135deg,"+A+",#fb923c)":"#fff",color:mine?"#fff":TEXT,padding:"9px 13px",borderRadius:mine?"14px 14px 4px 14px":"14px 14px 14px 4px",boxShadow:"0 1px 3px rgba(12,24,41,.08)",fontSize:13,lineHeight:1.4,wordWrap:"break-word"}}>
+                      {m.rutaNombre&&<div style={{fontSize:9,fontWeight:800,opacity:.75,marginBottom:3,letterSpacing:"0.05em",textTransform:"uppercase"}}>📍 {m.rutaNombre}</div>}
+                      {m.text}
+                      <div style={{fontSize:9,opacity:.65,marginTop:4,textAlign:"right"}}>{m.ts?.seconds?new Date(m.ts.seconds*1000).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}):""}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={bottomRef}/>
+            </div>
+            <div style={{padding:"10px 14px",borderTop:"1px solid "+BORDER,display:"flex",gap:8,background:"#fafbfd"}}>
+              <input value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")enviar();}} placeholder="Escribe un mensaje…" style={{flex:1,padding:"10px 14px",border:"1.5px solid "+BD2,borderRadius:10,fontSize:13,background:"#fff"}}/>
+              <button onClick={enviar} disabled={!draft.trim()} className="btn" style={{padding:"0 18px",borderRadius:10,background:draft.trim()?"linear-gradient(135deg,"+A+",#fb923c)":"#e0e0e0",color:"#fff",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",gap:6}}><Send size={14}/>Enviar</button>
+            </div>
+          </>:<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:MUTED,fontSize:13,textAlign:"center",padding:40}}>
+            <div>
+              <Send size={36} color={BD2} style={{marginBottom:10}}/>
+              <div style={{fontWeight:700,color:TEXT,fontSize:15,marginBottom:3}}>Selecciona un chofer</div>
+              <div style={{fontSize:12}}>para iniciar o continuar una conversación</div>
+            </div>
+          </div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    BANNER GLOBAL SOS — alerta flotante cuando entra un SOS nuevo
    ═══════════════════════════════════════════════════════════════════════════ */
 function SOSGlobalBanner({onGo}){
@@ -7369,7 +7828,15 @@ export default function App(){
     return(<><style>{CSS}</style><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></>);
   }
 
-  const [view,setView]=useState("dashboard");
+  const [view,setView]=useState(()=>{
+    // Deep-link via ?v=<id> (para shortcuts PWA)
+    try{
+      const qs = new URLSearchParams(window.location.search);
+      const v = qs.get("v");
+      if(v) return v;
+    }catch(e){}
+    return "dashboard";
+  });
   const [cots,setCots]=useState([]);
   const [facts,setFacts]=useState([]);
   const [rutas,setRutas]=useState([]);
@@ -7430,6 +7897,7 @@ export default function App(){
     viaticos:<Viaticos/>,
     gastosAdmin:<GastosAdmin/>,
     jornadas:<JornadasAdmin/>,
+    chat:<ChatCentro/>,
     alertas:<AlertasCentro setView={setView}/>,
     clientes:<Clientes/>,
     entregas:<Entregas/>,

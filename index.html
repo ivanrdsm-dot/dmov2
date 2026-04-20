@@ -17,15 +17,12 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <script>
-      // Desinstalar cualquier Service Worker viejo y limpiar caches
-      // Esto garantiza que el usuario siempre reciba el código más reciente
+      // Registra Service Worker para PWA (installable + offline support)
+      // Si falla el registro no bloquea la app
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(regs => {
-          regs.forEach(r => r.unregister());
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
         });
-        if ('caches' in window) {
-          caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
-        }
       }
     </script>
   </head>

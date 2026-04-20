@@ -1,5 +1,5 @@
 // Service Worker para DMvimiento — cache básico y offline fallback
-const CACHE_NAME = 'dmov-v2';
+const CACHE_NAME = 'dmov-v3';
 const CORE_ASSETS = ['/', '/index.html', '/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {

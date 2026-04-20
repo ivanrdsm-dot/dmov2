@@ -1,35 +1,60 @@
 {
   "name": "DMvimiento Logistics OS",
   "short_name": "DMvimiento",
-  "description": "Sistema de gestión logística con tracking GPS en tiempo real",
+  "description": "Sistema de gestión logística con tracking GPS, rutas optimizadas, facturación, mensajería chofer y control de gastos.",
   "start_url": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#0a1628",
   "theme_color": "#f97316",
   "scope": "/",
   "lang": "es",
-  "categories": ["business", "productivity", "utilities"],
+  "dir": "ltr",
+  "categories": ["business", "productivity", "utilities", "navigation"],
   "icons": [
     {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ],
   "shortcuts": [
     {
       "name": "Panel Admin",
       "short_name": "Admin",
+      "description": "Dashboard, facturación y alertas",
       "url": "/",
       "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
     },
     {
       "name": "App Chofer",
       "short_name": "Chofer",
+      "description": "Rutas, entregas y GPS",
       "url": "/chofer",
       "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
+    },
+    {
+      "name": "Centro de Alertas",
+      "short_name": "Alertas",
+      "description": "SOS y eventos críticos",
+      "url": "/?v=alertas",
+      "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
+    },
+    {
+      "name": "Live Tracking",
+      "short_name": "Tracking",
+      "description": "Ubicación en vivo de choferes",
+      "url": "/?v=tracking",
+      "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
     }
-  ]
+  ],
+  "prefer_related_applications": false
 }
