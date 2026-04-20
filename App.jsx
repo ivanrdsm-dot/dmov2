@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import * as XLSX from "xlsx";
+import XLSX from "xlsx-js-style";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -760,6 +760,68 @@ function exportXLSX(rows, filename, sheetName="Datos"){
 // ───── XLSX helpers: currency format + cell styling ─────
 const MONEY_FMT = '"$"#,##0.00';
 const INT_FMT = '#,##0';
+const NUM_FMT = '#,##0.00;\\(#,##0.00\\);\\-';
+const PCT_FMT = '0.0%;\\(0.0%\\);\\-';
+// Paleta oficial — replica formato Botmate (oficina)
+const XC = {
+  // Fondos
+  TITLE_BG:   "1F3864", // azul marino header
+  SUBTITLE_BG:"F2F2F2", // gris claro leyenda
+  HEADER_BG:  "2E75B6", // azul medio headers columnas
+  MONTH_BG:   "D9E1F2", // azul claro separador mes
+  SUBTOTAL_BG:"D6E4F0", // azul muy claro subtotal
+  ROW_ALT:    "F5F5F5", // zebra gris
+  ROW_WHITE:  "FFFFFF",
+  // Status chips
+  OK_BG:      "C6EFCE", // verde claro PAGADO
+  OK_TX:      "276221",
+  WARN_BG:    "FFEB9C", // amarillo claro PENDIENTE
+  WARN_TX:    "9C5700",
+  BAD_BG:     "FFC7CE", // rojo claro VENCIDO / POR COBRAR
+  BAD_TX:     "9C0006",
+  // Texto categorías P&L
+  INCOME_TX:  "276221", // verde ingresos
+  COST_TX:    "185FA5", // azul costos
+  TOTAL_TX:   "1F3864", // marino totales
+  MUTED_TX:   "888888",
+  WHITE:      "FFFFFF",
+  // Costos categorizados
+  SUELDOS_BG: "D6E8F7", SUELDOS_TX:"185FA5",
+  REDES_BG:   "D8F0E8", REDES_TX:  "0F6E56",
+  PROG_BG:    "FCE8CC", PROG_TX:   "854F0B",
+};
+// Estilos base reutilizables
+const BORDER_THIN = {top:{style:"thin",color:{rgb:"CCCCCC"}},bottom:{style:"thin",color:{rgb:"CCCCCC"}},left:{style:"thin",color:{rgb:"CCCCCC"}},right:{style:"thin",color:{rgb:"CCCCCC"}}};
+const styleTitle = {font:{name:"Arial",sz:14,bold:true,color:{rgb:XC.WHITE}},fill:{patternType:"solid",fgColor:{rgb:XC.TITLE_BG}},alignment:{horizontal:"center",vertical:"center"}};
+const styleSubtitle = {font:{name:"Arial",sz:8,color:{rgb:"444444"}},fill:{patternType:"solid",fgColor:{rgb:XC.SUBTITLE_BG}},alignment:{horizontal:"left",vertical:"center"}};
+const styleColHeader = {font:{name:"Arial",sz:9,bold:true,color:{rgb:XC.WHITE}},fill:{patternType:"solid",fgColor:{rgb:XC.HEADER_BG}},alignment:{horizontal:"center",vertical:"center",wrapText:true},border:BORDER_THIN};
+const styleMonthRow = {font:{name:"Arial",sz:10,bold:true,color:{rgb:XC.TITLE_BG}},fill:{patternType:"solid",fgColor:{rgb:XC.MONTH_BG}},alignment:{horizontal:"left",vertical:"center"},border:BORDER_THIN};
+const styleSubtotalRow = {font:{name:"Arial",sz:9,bold:true,color:{rgb:XC.TITLE_BG}},fill:{patternType:"solid",fgColor:{rgb:XC.SUBTOTAL_BG}},alignment:{horizontal:"right",vertical:"center"},border:BORDER_THIN};
+const styleSubtotalLabel = {...styleSubtotalRow,alignment:{horizontal:"left",vertical:"center"}};
+const styleGrandTotal = {font:{name:"Arial",sz:11,bold:true,color:{rgb:XC.WHITE}},fill:{patternType:"solid",fgColor:{rgb:XC.TITLE_BG}},alignment:{horizontal:"right",vertical:"center"},border:BORDER_THIN};
+const styleGrandTotalLabel = {...styleGrandTotal,alignment:{horizontal:"left",vertical:"center"}};
+const styleCell = (row,opts={})=>({
+  font:{name:"Arial",sz:9,color:{rgb:opts.color||"222222"},bold:!!opts.bold},
+  fill:{patternType:"solid",fgColor:{rgb:opts.bg||(row%2===0?XC.ROW_WHITE:XC.ROW_ALT)}},
+  alignment:{horizontal:opts.align||"left",vertical:"center",wrapText:!!opts.wrap},
+  border:BORDER_THIN,
+  ...(opts.nf?{numFmt:opts.nf}:{}),
+});
+const styleStatusChip = (status)=>{
+  const s = (status||"").toUpperCase();
+  if(s==="PAGADO"||s==="PAGADA") return {bg:XC.OK_BG,color:XC.OK_TX,text:"PAGADO"};
+  if(s==="PENDIENTE") return {bg:XC.WARN_BG,color:XC.WARN_TX,text:"PENDIENTE"};
+  if(s==="VENCIDA"||s==="VENCIDO"||s==="POR COBRAR"||s==="CANCELADA") return {bg:XC.BAD_BG,color:XC.BAD_TX,text:s==="CANCELADA"?"CANCELADA":(s==="VENCIDA"||s==="VENCIDO"?"VENCIDA":"POR COBRAR")};
+  return {bg:"E0E0E0",color:"555555",text:s||"—"};
+};
+// Aplica un estilo a una celda concreta, creando la celda si no existe
+function setCell(ws, addr, value, style, numFmt){
+  if(value===undefined||value===null||value==="") value="";
+  const isNum = typeof value==="number";
+  ws[addr] = {t: isNum?"n":"s", v: value};
+  if(numFmt) ws[addr].z = numFmt;
+  if(style) ws[addr].s = {...style, ...(numFmt?{numFmt}:{})};
+}
 function setCurrency(ws, addr){
   if(ws[addr]) ws[addr].z = MONEY_FMT;
 }
@@ -771,19 +833,371 @@ function setRange(ws, cols, startRow, endRow, fmt){
     }
   }
 }
-// Build a 2D array sheet with totals rows, formatted money columns, proper widths
-function buildAOA(header, rows){
-  return [header, ...rows];
+function buildAOA(header, rows){ return [header, ...rows]; }
+
+/* ═══════ HELPER: construye una hoja "Relación de Facturas" con formato Botmate
+   Genera secciones por mes, subtotales, chips de estatus, grand totals.
+   Retorna la hoja (ws) lista para appendear al workbook. */
+function buildRelacionFacturasSheet(facts, brand, year){
+  const MESES_FULL=["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO","JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"];
+  const MESES_ABBR=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const ws = {};
+  const merges = [];
+  const rowHeights = [];
+  let r = 0;
+
+  // ROW 1: Título (merged A:J)
+  setCell(ws,"A"+(r+1),`REPORTE DE FACTURACIÓN  —  ${brand}  |  ${year}`,styleTitle);
+  merges.push({s:{r,c:0},e:{r,c:9}});
+  rowHeights[r]=32; r++;
+
+  // ROW 2: Leyenda (merged A:J)
+  setCell(ws,"A"+(r+1),"  LEYENDA:   ■ PAGADO   ■ PENDIENTE   ■ POR COBRAR (operación cerrada, depósito en proceso)",styleSubtitle);
+  merges.push({s:{r,c:0},e:{r,c:9}});
+  rowHeights[r]=16; r++;
+
+  // ROW 3: Headers columnas
+  const headers = ["#","CLIENTE / EMPRESA","DESCRIPCIÓN / PLAN","# FACTURA","FECHA FACTURA","PERIODO / DEPÓSITO","SUBTOTAL (s/IVA)","IVA (16%)","TOTAL (c/IVA)","ESTATUS"];
+  headers.forEach((h,i)=>setCell(ws,XLSX.utils.encode_cell({r,c:i}),h,styleColHeader));
+  rowHeights[r]=28; r++;
+
+  // Agrupa facturas por mes+año
+  const grouped = {};
+  facts.forEach(f=>{
+    const m = f.mesOp||"";
+    const a = f.anio||year;
+    const idx = MESES_ABBR.indexOf(m);
+    if(idx<0) return;
+    const key = a+"-"+String(idx).padStart(2,"0");
+    if(!grouped[key]) grouped[key]={anio:a,mes:MESES_FULL[idx],mesIdx:idx,items:[]};
+    grouped[key].items.push(f);
+  });
+  const orderedKeys = Object.keys(grouped).sort();
+
+  let gSub=0,gIva=0,gTot=0,rowNumber=0;
+  orderedKeys.forEach(key=>{
+    const grp = grouped[key];
+    // Fila de mes (merged A:J)
+    setCell(ws,"A"+(r+1),`${grp.mes} ${grp.anio}`,styleMonthRow);
+    for(let c=1;c<10;c++) setCell(ws,XLSX.utils.encode_cell({r,c}),"",styleMonthRow);
+    merges.push({s:{r,c:0},e:{r,c:9}});
+    rowHeights[r]=20; r++;
+    let mSub=0,mIva=0,mTot=0;
+    const startR = r;
+    grp.items.forEach(f=>{
+      rowNumber++;
+      const sub = Number(f.subtotal||f.monto||0);
+      const iva = Number(f.ivaAmt||f.iva||0);
+      const tot = Number(f.total||0);
+      mSub+=sub; mIva+=iva; mTot+=tot;
+      const zebra = r%2===0?XC.ROW_WHITE:XC.ROW_ALT;
+      const cellBase = {bg:zebra};
+      // Fecha legible
+      let fechaStr = f.fechaEmision||"";
+      if(!fechaStr&&f.createdAt?.seconds){
+        const d = new Date(f.createdAt.seconds*1000);
+        fechaStr = String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear();
+      }
+      setCell(ws,XLSX.utils.encode_cell({r,c:0}),rowNumber,styleCell(r,{...cellBase,align:"center"}));
+      setCell(ws,XLSX.utils.encode_cell({r,c:1}),f.empresa||f.cliente||"",styleCell(r,cellBase));
+      setCell(ws,XLSX.utils.encode_cell({r,c:2}),f.plan?(f.plan+(f.servicio?" "+f.servicio:"")):(f.servicio||""),styleCell(r,cellBase));
+      setCell(ws,XLSX.utils.encode_cell({r,c:3}),f.folio||"",styleCell(r,{...cellBase,align:"center"}));
+      setCell(ws,XLSX.utils.encode_cell({r,c:4}),fechaStr,styleCell(r,{...cellBase,align:"center"}));
+      setCell(ws,XLSX.utils.encode_cell({r,c:5}),f.periodo||f.solicitante||"",styleCell(r,cellBase));
+      setCell(ws,XLSX.utils.encode_cell({r,c:6}),sub,styleCell(r,{...cellBase,align:"right"}),MONEY_FMT);
+      setCell(ws,XLSX.utils.encode_cell({r,c:7}),iva,styleCell(r,{...cellBase,align:"right"}),MONEY_FMT);
+      setCell(ws,XLSX.utils.encode_cell({r,c:8}),tot,styleCell(r,{...cellBase,align:"right",bold:true}),MONEY_FMT);
+      const chip = styleStatusChip(f.status);
+      setCell(ws,XLSX.utils.encode_cell({r,c:9}),chip.text,{
+        font:{name:"Arial",sz:9,bold:true,color:{rgb:chip.color}},
+        fill:{patternType:"solid",fgColor:{rgb:chip.bg}},
+        alignment:{horizontal:"center",vertical:"center"},
+        border:BORDER_THIN,
+      });
+      rowHeights[r]=22; r++;
+    });
+    gSub+=mSub; gIva+=mIva; gTot+=mTot;
+    // Subtotal mes (A:F merged)
+    setCell(ws,XLSX.utils.encode_cell({r,c:0}),`SUBTOTAL  ${grp.mes} ${grp.anio}`,styleSubtotalLabel);
+    for(let c=1;c<6;c++) setCell(ws,XLSX.utils.encode_cell({r,c}),"",styleSubtotalRow);
+    merges.push({s:{r,c:0},e:{r,c:5}});
+    // Formulas para subtotales
+    setCell(ws,XLSX.utils.encode_cell({r,c:6}),{t:"n",f:`SUM(G${startR+1}:G${r})`,v:mSub},styleSubtotalRow,MONEY_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:7}),{t:"n",f:`SUM(H${startR+1}:H${r})`,v:mIva},styleSubtotalRow,MONEY_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:8}),{t:"n",f:`SUM(I${startR+1}:I${r})`,v:mTot},styleSubtotalRow,MONEY_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:9}),"",styleSubtotalRow);
+    rowHeights[r]=20; r++;
+    // Separador
+    r++;
+  });
+
+  // Grand totals
+  const factsCurrentYear = facts.filter(f=>(f.anio||year)==year);
+  const pipelineYear = year+1;
+  const factsPipeline = facts.filter(f=>(f.anio||year)==pipelineYear);
+  const sumY = factsCurrentYear.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt||f.iva||0),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
+  const sumP = factsPipeline.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt||f.iva||0),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
+  const addTotal = (label,s,i,t,style)=>{
+    setCell(ws,XLSX.utils.encode_cell({r,c:0}),label,style.label);
+    for(let c=1;c<6;c++) setCell(ws,XLSX.utils.encode_cell({r,c}),"",style.row);
+    merges.push({s:{r,c:0},e:{r,c:5}});
+    setCell(ws,XLSX.utils.encode_cell({r,c:6}),s,style.row,MONEY_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:7}),i,style.row,MONEY_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:8}),t,style.row,MONEY_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:9}),"",style.row);
+    rowHeights[r]=22; r++;
+  };
+  if(sumY.t>0) addTotal(`TOTAL FACTURADO ${year}`,sumY.s,sumY.i,sumY.t,{label:styleSubtotalLabel,row:styleSubtotalRow});
+  if(sumP.t>0) addTotal(`TOTAL PIPELINE ${pipelineYear} (s/IVA proyectado)`,sumP.s,sumP.i,sumP.t,{label:styleSubtotalLabel,row:styleSubtotalRow});
+  addTotal(`GRAN TOTAL GENERAL ${year}${sumP.t>0?" + "+pipelineYear:""}`,gSub,gIva,gTot,{label:styleGrandTotalLabel,row:styleGrandTotal});
+
+  // Final
+  ws["!ref"] = "A1:J"+r;
+  ws["!cols"] = [{wch:5},{wch:26},{wch:36},{wch:13},{wch:15},{wch:28},{wch:15},{wch:13},{wch:15},{wch:13}];
+  ws["!merges"] = merges;
+  ws["!rows"] = rowHeights.map(h=>({hpt:h||15}));
+  ws["!freeze"] = {xSplit:0,ySplit:3};
+  return ws;
 }
 
-// ═══════ REPORTE EJECUTIVO DE FACTURACIÓN ═══════
-// Genera un Excel con 5 hojas: Resumen, Por Mes, Por Cliente, Detalle Completo, Filtros
+/* ═══════ HELPER: Hoja "Resumen P&L" formato Botmate */
+function buildResumenPLSheet(facts, viat, brand, year){
+  const MESES_FULL=["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO","JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"];
+  const MESES_ABBR=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const ws = {};
+  const merges = [];
+  const rowHeights = [];
+  let r = 0;
+
+  // Título
+  setCell(ws,"A"+(r+1),`RESUMEN P&L  —  ${brand}  |  ${year}`,styleTitle);
+  merges.push({s:{r,c:0},e:{r,c:7}});
+  rowHeights[r]=22; r++;
+  // Subtítulo
+  setCell(ws,"A"+(r+1),"  Ingresos facturados (sin IVA) vs Costos operativos reales  |  Fuente: Facturación + Viáticos DMvimiento",styleSubtitle);
+  merges.push({s:{r,c:0},e:{r,c:7}});
+  rowHeights[r]=14; r++;
+  // Headers
+  const headers = ["MES","INGRESOS\n(sin IVA)","SUELDOS","VIÁTICOS\n/ COMBUST.","OPERACIÓN\n/ BRANDEOS","TOTAL\nCOSTOS","UTILIDAD\nBRUTA","MARGEN %"];
+  headers.forEach((h,i)=>setCell(ws,XLSX.utils.encode_cell({r,c:i}),h,styleColHeader));
+  rowHeights[r]=28; r++;
+
+  // Clasificación viáticos — adaptado a categorías DMOV
+  const catSueldo = (v)=>(/sueldo|salario|nomina|n[óo]mina|apoyo gerencial|apoyo admin/i.test(v.concepto||v.tipo||v.descripcion||""));
+  const catViatico = (v)=>(/comida|hotel|gasolina|caseta|peaje|viatico/i.test(v.concepto||v.tipo||v.descripcion||""));
+
+  let gIn=0,gS=0,gR=0,gP=0,gC=0,gU=0;
+  for(let mi=0;mi<12;mi++){
+    const mAbbr = MESES_ABBR[mi];
+    const mFull = MESES_FULL[mi];
+    const monthFacts = facts.filter(f=>(f.mesOp===mAbbr&&(f.anio||year)==year));
+    const ingreso = monthFacts.reduce((a,f)=>a+Number(f.subtotal||f.monto||0),0);
+    // Costos del mes — matchea por mes de createdAt/fecha
+    const monthViat = viat.filter(v=>{
+      const ts = v.fecha?new Date(v.fecha).getTime():(v.createdAt?.seconds?v.createdAt.seconds*1000:0);
+      if(!ts) return false;
+      const d = new Date(ts);
+      return d.getMonth()===mi && d.getFullYear()==year;
+    });
+    const cSueldo = monthViat.filter(catSueldo).reduce((a,v)=>a+Number(v.monto||0),0);
+    const cViat = monthViat.filter(catViatico).reduce((a,v)=>a+Number(v.monto||0),0);
+    const cOtro = monthViat.reduce((a,v)=>a+Number(v.monto||0),0)-cSueldo-cViat;
+    const totalC = cSueldo+cViat+cOtro;
+    const util = ingreso-totalC;
+    const margen = ingreso>0?util/ingreso:null;
+    gIn+=ingreso; gS+=cSueldo; gR+=cViat; gP+=cOtro; gC+=totalC; gU+=util;
+    const zebra = r%2===0?XC.ROW_WHITE:XC.ROW_ALT;
+    setCell(ws,XLSX.utils.encode_cell({r,c:0}),mFull,{...styleCell(r,{bg:zebra,bold:true,color:XC.TOTAL_TX}),alignment:{horizontal:"center",vertical:"center"}});
+    setCell(ws,XLSX.utils.encode_cell({r,c:1}),ingreso,styleCell(r,{bg:zebra,align:"right",color:XC.INCOME_TX}),NUM_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:2}),cSueldo,styleCell(r,{bg:zebra,align:"right",color:XC.COST_TX}),NUM_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:3}),cViat,styleCell(r,{bg:zebra,align:"right",color:XC.COST_TX}),NUM_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:4}),cOtro,styleCell(r,{bg:zebra,align:"right",color:XC.COST_TX}),NUM_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:5}),totalC,styleCell(r,{bg:zebra,align:"right",bold:true,color:XC.TOTAL_TX}),NUM_FMT);
+    // Utilidad con color
+    if(util>=0){
+      setCell(ws,XLSX.utils.encode_cell({r,c:6}),util,{font:{name:"Arial",sz:9,bold:true,color:{rgb:XC.OK_TX}},fill:{patternType:"solid",fgColor:{rgb:XC.OK_BG}},alignment:{horizontal:"right",vertical:"center"},border:BORDER_THIN,numFmt:NUM_FMT},NUM_FMT);
+    }else{
+      setCell(ws,XLSX.utils.encode_cell({r,c:6}),util,{font:{name:"Arial",sz:9,bold:true,color:{rgb:XC.BAD_TX}},fill:{patternType:"solid",fgColor:{rgb:XC.BAD_BG}},alignment:{horizontal:"right",vertical:"center"},border:BORDER_THIN,numFmt:NUM_FMT},NUM_FMT);
+    }
+    // Margen
+    if(margen===null){
+      setCell(ws,XLSX.utils.encode_cell({r,c:7}),"N/A",{font:{name:"Arial",sz:9,color:{rgb:XC.MUTED_TX}},fill:{patternType:"solid",fgColor:{rgb:XC.BAD_BG}},alignment:{horizontal:"center",vertical:"center"},border:BORDER_THIN});
+    }else{
+      const col = margen>=0?XC.OK_TX:XC.BAD_TX;
+      const bg = margen>=0?XC.OK_BG:XC.BAD_BG;
+      setCell(ws,XLSX.utils.encode_cell({r,c:7}),margen,{font:{name:"Arial",sz:9,bold:true,color:{rgb:col}},fill:{patternType:"solid",fgColor:{rgb:bg}},alignment:{horizontal:"right",vertical:"center"},border:BORDER_THIN,numFmt:PCT_FMT},PCT_FMT);
+    }
+    rowHeights[r]=20; r++;
+  }
+  // Total
+  const mT = gIn>0?gU/gIn:null;
+  setCell(ws,XLSX.utils.encode_cell({r,c:0}),`TOTAL ${year}`,styleGrandTotalLabel);
+  setCell(ws,XLSX.utils.encode_cell({r,c:1}),gIn,styleGrandTotal,NUM_FMT);
+  setCell(ws,XLSX.utils.encode_cell({r,c:2}),gS,styleGrandTotal,NUM_FMT);
+  setCell(ws,XLSX.utils.encode_cell({r,c:3}),gR,styleGrandTotal,NUM_FMT);
+  setCell(ws,XLSX.utils.encode_cell({r,c:4}),gP,styleGrandTotal,NUM_FMT);
+  setCell(ws,XLSX.utils.encode_cell({r,c:5}),gC,styleGrandTotal,NUM_FMT);
+  setCell(ws,XLSX.utils.encode_cell({r,c:6}),gU,styleGrandTotal,NUM_FMT);
+  if(mT===null) setCell(ws,XLSX.utils.encode_cell({r,c:7}),"N/A",styleGrandTotal);
+  else setCell(ws,XLSX.utils.encode_cell({r,c:7}),mT,styleGrandTotal,PCT_FMT);
+  rowHeights[r]=22; r++;
+  // Nota
+  setCell(ws,"A"+(r+1),"* Meses sin ingresos = sin factura emitida ese mes  |  Costos incluyen viáticos, combustible y operación",styleSubtitle);
+  merges.push({s:{r,c:0},e:{r,c:7}});
+  rowHeights[r]=14; r++;
+
+  ws["!ref"] = "A1:H"+r;
+  ws["!cols"] = [{wch:18},{wch:16},{wch:14},{wch:15},{wch:15},{wch:14},{wch:15},{wch:13}];
+  ws["!merges"] = merges;
+  ws["!rows"] = rowHeights.map(h=>({hpt:h||15}));
+  ws["!freeze"] = {xSplit:0,ySplit:3};
+  return ws;
+}
+
+/* ═══════ HELPER: Hoja "Costos Operativos" formato Botmate
+   Lista con categorización por concepto + colores por tipo + subtotales mes */
+function buildCostosOperativosSheet(viat, brand, year){
+  const MESES_FULL=["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO","JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"];
+  const ws = {};
+  const merges = [];
+  const rowHeights = [];
+  let r = 0;
+
+  // Título
+  setCell(ws,"A"+(r+1),`REPORTE DE COSTOS OPERATIVOS  —  ${brand}  |  ${year}`,styleTitle);
+  merges.push({s:{r,c:0},e:{r,c:7}});
+  rowHeights[r]=22; r++;
+  setCell(ws,"A"+(r+1),"  Fuente: Viáticos & Gastos  |  Clasificación: Sueldos / Viáticos-Combustible / Operación-Brandeos",styleSubtitle);
+  merges.push({s:{r,c:0},e:{r,c:7}});
+  rowHeights[r]=14; r++;
+  // Headers
+  const headers = ["#","CONCEPTO","PROVEEDOR","DESCRIPCIÓN / REFERENCIA","SUELDOS","VIÁTICOS / COMB.","OPERACIÓN / BRANDEOS","TOTAL MES"];
+  headers.forEach((h,i)=>setCell(ws,XLSX.utils.encode_cell({r,c:i}),h,styleColHeader));
+  rowHeights[r]=20; r++;
+
+  // Clasificar cada viático en bucket + ordenar por mes
+  const clasificar = (v)=>{
+    const t = ((v.concepto||"")+" "+(v.tipo||"")+" "+(v.descripcion||"")).toLowerCase();
+    if(/sueldo|salario|nomina|n[óo]mina|apoyo gerencial|apoyo admin/i.test(t)) return "sueldo";
+    if(/comida|hotel|gasolina|caseta|peaje|viatico/i.test(t)) return "viatico";
+    return "operacion";
+  };
+  const getDate = (v)=>{
+    if(v.fecha) return new Date(v.fecha);
+    if(v.createdAt?.seconds) return new Date(v.createdAt.seconds*1000);
+    return new Date();
+  };
+  const yearViat = viat.filter(v=>{
+    const d = getDate(v);
+    return d.getFullYear()==year;
+  }).sort((a,b)=>getDate(a)-getDate(b));
+
+  // Agrupar por mes
+  const byMonth = {};
+  for(let i=0;i<12;i++) byMonth[i]=[];
+  yearViat.forEach(v=>byMonth[getDate(v).getMonth()].push(v));
+
+  let idx = 0, gS=0, gV=0, gO=0, gT=0;
+  for(let mi=0;mi<12;mi++){
+    const items = byMonth[mi];
+    if(items.length===0) continue;
+    // Header mes (merged A:H)
+    setCell(ws,XLSX.utils.encode_cell({r,c:0}),`${MESES_FULL[mi]} ${year}`,styleMonthRow);
+    for(let c=1;c<8;c++) setCell(ws,XLSX.utils.encode_cell({r,c}),"",styleMonthRow);
+    merges.push({s:{r,c:0},e:{r,c:7}});
+    rowHeights[r]=20; r++;
+    let mS=0,mV=0,mO=0,mT=0;
+    const startR = r;
+    items.forEach(v=>{
+      idx++;
+      const cat = clasificar(v);
+      const monto = Number(v.monto||0);
+      const conceptoLabel = cat==="sueldo"?"Sueldos":cat==="viatico"?"Viáticos / Comb.":"Operación / Brandeos";
+      const palette = cat==="sueldo"?{bg:XC.SUELDOS_BG,tx:XC.SUELDOS_TX}:cat==="viatico"?{bg:XC.REDES_BG,tx:XC.REDES_TX}:{bg:XC.PROG_BG,tx:XC.PROG_TX};
+      const baseStyle = {bg:palette.bg};
+      setCell(ws,XLSX.utils.encode_cell({r,c:0}),idx,styleCell(r,{...baseStyle,align:"center"}));
+      setCell(ws,XLSX.utils.encode_cell({r,c:1}),conceptoLabel,styleCell(r,{...baseStyle,bold:true,color:palette.tx}));
+      setCell(ws,XLSX.utils.encode_cell({r,c:2}),v.proveedor||v.chofer||v.responsable||"",styleCell(r,baseStyle));
+      setCell(ws,XLSX.utils.encode_cell({r,c:3}),v.descripcion||v.concepto||v.notas||"",styleCell(r,baseStyle));
+      if(cat==="sueldo"){ setCell(ws,XLSX.utils.encode_cell({r,c:4}),monto,styleCell(r,{...baseStyle,align:"right",color:palette.tx}),NUM_FMT); mS+=monto; }
+      else setCell(ws,XLSX.utils.encode_cell({r,c:4}),"",styleCell(r,baseStyle));
+      if(cat==="viatico"){ setCell(ws,XLSX.utils.encode_cell({r,c:5}),monto,styleCell(r,{...baseStyle,align:"right",color:palette.tx}),NUM_FMT); mV+=monto; }
+      else setCell(ws,XLSX.utils.encode_cell({r,c:5}),"",styleCell(r,baseStyle));
+      if(cat==="operacion"){ setCell(ws,XLSX.utils.encode_cell({r,c:6}),monto,styleCell(r,{...baseStyle,align:"right",color:palette.tx}),NUM_FMT); mO+=monto; }
+      else setCell(ws,XLSX.utils.encode_cell({r,c:6}),"",styleCell(r,baseStyle));
+      setCell(ws,XLSX.utils.encode_cell({r,c:7}),monto,styleCell(r,{...baseStyle,align:"right",color:palette.tx}),NUM_FMT);
+      mT+=monto;
+      rowHeights[r]=15; r++;
+    });
+    gS+=mS; gV+=mV; gO+=mO; gT+=mT;
+    // Subtotal mes (A:D merged)
+    setCell(ws,XLSX.utils.encode_cell({r,c:0}),`SUBTOTAL  ${MESES_FULL[mi]} ${year}`,styleSubtotalLabel);
+    for(let c=1;c<4;c++) setCell(ws,XLSX.utils.encode_cell({r,c}),"",styleSubtotalRow);
+    merges.push({s:{r,c:0},e:{r,c:3}});
+    setCell(ws,XLSX.utils.encode_cell({r,c:4}),mS,styleSubtotalRow,NUM_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:5}),mV,styleSubtotalRow,NUM_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:6}),mO,styleSubtotalRow,NUM_FMT);
+    setCell(ws,XLSX.utils.encode_cell({r,c:7}),mT,styleSubtotalRow,NUM_FMT);
+    rowHeights[r]=20; r++;
+  }
+  // Gran total
+  setCell(ws,XLSX.utils.encode_cell({r,c:0}),`TOTAL GENERAL  COSTOS ${year}`,styleGrandTotalLabel);
+  for(let c=1;c<4;c++) setCell(ws,XLSX.utils.encode_cell({r,c}),"",styleGrandTotal);
+  merges.push({s:{r,c:0},e:{r,c:3}});
+  setCell(ws,XLSX.utils.encode_cell({r,c:4}),gS,styleGrandTotal,NUM_FMT);
+  setCell(ws,XLSX.utils.encode_cell({r,c:5}),gV,styleGrandTotal,NUM_FMT);
+  setCell(ws,XLSX.utils.encode_cell({r,c:6}),gO,styleGrandTotal,NUM_FMT);
+  setCell(ws,XLSX.utils.encode_cell({r,c:7}),gT,styleGrandTotal,NUM_FMT);
+  rowHeights[r]=22; r++;
+
+  ws["!ref"] = "A1:H"+r;
+  ws["!cols"] = [{wch:5},{wch:20},{wch:26},{wch:38},{wch:15},{wch:16},{wch:17},{wch:15}];
+  ws["!merges"] = merges;
+  ws["!rows"] = rowHeights.map(h=>({hpt:h||15}));
+  ws["!freeze"] = {xSplit:0,ySplit:3};
+  return ws;
+}
+
+// ═══════ REPORTE EJECUTIVO DE FACTURACIÓN — FORMATO OFICINA (Botmate-style) ═══════
+// Reemplaza el export anterior con el formato exacto que pide la oficina:
+// 3 hojas con formato profesional, colores, merges, subtotales por mes, chips de status.
 function exportFacturasXLSX(facts, mesFiltro){
   if(!facts || facts.length===0){alert("No hay facturas para exportar");return;}
-  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-  const wb = XLSX.utils.book_new();
-  const fechaReporte = new Date().toLocaleDateString("es-MX",{year:"numeric",month:"long",day:"numeric"});
+  const BRAND = "DMVIMIENTO";
   const anio = new Date().getFullYear();
+  const fechaTag = new Date().toISOString().slice(0,10);
+  const wb = XLSX.utils.book_new();
+
+  // Obtén los viáticos también para las hojas P&L + Costos
+  // (los datos ya están en Firestore vía onSnapshot del componente — pero aquí no tenemos acceso directo,
+  //  así que el caller los puede pasar. Si no, usamos array vacío.)
+  const viat = window.__DMOV_VIATICOS__ || [];
+
+  // Hoja 1: Relación de Facturas (formato oficina)
+  const ws1 = buildRelacionFacturasSheet(facts, BRAND, anio);
+  XLSX.utils.book_append_sheet(wb, ws1, "Relación de Facturas");
+
+  // Hoja 2: Resumen P&L
+  const ws2 = buildResumenPLSheet(facts, viat, BRAND, anio);
+  XLSX.utils.book_append_sheet(wb, ws2, `Resumen P&L ${anio}`);
+
+  // Hoja 3: Costos Operativos (si hay datos)
+  if(viat.length>0){
+    const ws3 = buildCostosOperativosSheet(viat, BRAND, anio);
+    XLSX.utils.book_append_sheet(wb, ws3, `Costos ${anio}`);
+  }
+
+  // Descargar
+  const mesTag = mesFiltro?"_"+mesFiltro:"";
+  XLSX.writeFile(wb, `DMOV_Reporte_Facturacion${mesTag}_${fechaTag}.xlsx`);
+}
+
+// ═══════ FIN exportFacturasXLSX (formato oficina) — código legacy eliminado ═══════
+function _legacyExportFacturasXLSX_disabled(facts, mesFiltro){
+  const anio = new Date().getFullYear();
+  const wb = XLSX.utils.book_new();
+  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const fechaReporte = new Date().toLocaleDateString("es-MX",{year:"numeric",month:"long",day:"numeric"});
 
   // ──────── HOJA 1: RESUMEN EJECUTIVO ────────
   const totalFact = facts.reduce((a,f)=>a+Number(f.total||0),0);
@@ -7865,11 +8279,20 @@ export default function App(){
     const u2=onSnapshot(collection(db,"facturas"),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u3=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u4=onSnapshot(collection(db,"entregas"),s=>setEntregas(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u5=onSnapshot(collection(db,"viaticos"),s=>setViat(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u5=onSnapshot(collection(db,"viaticos"),s=>{
+      const list = s.docs.map(d=>({id:d.id,...d.data()}));
+      setViat(list);
+      // Expone globalmente para que exportFacturasXLSX genere la hoja P&L + Costos
+      try{window.__DMOV_VIATICOS__ = list;}catch(e){}
+    });
+    // También trae gastosChofer para incluirlos en reportes oficiales
+    const u9=onSnapshot(collection(db,"gastosChofer"),s=>{
+      try{window.__DMOV_GASTOS_CHOFER__ = s.docs.map(d=>({id:d.id,...d.data()}));}catch(e){}
+    });
     const u6=onSnapshot(collection(db,"cuentas"),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u7=onSnapshot(collection(db,"prospeccion"),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u8=onSnapshot(collection(db,"choferes"),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()}))));
-    return()=>{u1();u2();u3();u4();u5();u6();u7();u8();};
+    return()=>{u1();u2();u3();u4();u5();u6();u7();u8();u9&&u9();};
   },[]);
 
   // Cmd+K shortcut
