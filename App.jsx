@@ -5178,6 +5178,7 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   const [misRutas,setMisRutas]=useState([]);
   const [activeRuta,setActiveRuta]=useState(null);
   const [tracking,setTracking]=useState(false);
+  const [justFinished,setJustFinished]=useState(null); // muestra celebración post-completar
   const watchIdRef = useRef(null);
 
   useEffect(()=>{
@@ -5245,6 +5246,7 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
     if(watchIdRef.current!==null){navigator.geolocation.clearWatch(watchIdRef.current);watchIdRef.current=null;}
     setTracking(false);
     if(activeRuta){
+      const finished = activeRuta;
       await updateDoc(doc(db,"rutas",activeRuta.id),{status:"Completada",completadaEn:serverTimestamp(),progreso:100}).catch(()=>{});
       // Marcar chofer como Disponible de nuevo
       await updateDoc(doc(db,"choferes",chofer.id),{status:"Disponible",rutaActivaId:"",rutaActivaNombre:""}).catch(()=>{});
@@ -5258,16 +5260,52 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
         setTimeout(()=>{if(confirm("¿Notificar al cliente que la ruta terminó?"))window.open(waUrl,"_blank");},500);
       }
       setActiveRuta(null);
+      setJustFinished(finished); // dispara pantalla de celebración
     }
   };
 
   useEffect(()=>()=>{if(watchIdRef.current!==null)navigator.geolocation.clearWatch(watchIdRef.current);},[]);
 
-  const [tabChofer,setTabChofer]=useState("activas");
+  const [tabChofer,setTabChofer]=useState("hoy");
   const hoy = new Date().toISOString().slice(0,10);
   const rutasActivas = misRutas.filter(r=>r.status!=="Completada"&&r.status!=="Cancelada");
   const rutasCompletadas = misRutas.filter(r=>r.status==="Completada");
   const completadas = rutasCompletadas.length;
+
+  // Completadas hoy (filtradas por día local)
+  const rutasHoyCompl = rutasCompletadas.filter(r=>{
+    const ts = r.completadaEn?.seconds;
+    if(!ts) return false;
+    const d = new Date(ts*1000);
+    const ld = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    return ld===hoy;
+  });
+
+  // Agregados para vista "Hoy": todas las paradas de rutas activas consolidadas
+  const paradasHoy = [];
+  rutasActivas.forEach(r=>{
+    const estados = (r.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+    (r.stops||[]).forEach((s,idx)=>{
+      if(s.isOrigin) return;
+      paradasHoy.push({
+        rutaId: r.id,
+        rutaNombre: r.nombre,
+        cliente: r.cliente||"",
+        city: s.city,
+        pdv: s.pdv||0,
+        puntos: s.puntos||[],
+        status: estados[idx]?.status||"pendiente",
+        idx,
+      });
+    });
+  });
+  const paradasPendientes = paradasHoy.filter(p=>p.status!=="entregado");
+  const paradasEntregadas = paradasHoy.filter(p=>p.status==="entregado");
+  const totalKmHoy = rutasActivas.reduce((a,r)=>a+(r.totalKm||0),0);
+  const totalPDVHoy = paradasHoy.reduce((a,p)=>a+p.pdv,0);
+
+  // Elige la próxima ruta pendiente (útil cuando termina una)
+  const siguienteRuta = rutasActivas.find(r=>r.status!=="En curso")||rutasActivas[0]||null;
 
   return(
     <div style={{minHeight:"100vh",background:"#f1f4fb",fontFamily:SANS}}>
@@ -5287,30 +5325,114 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
         </div>
       </div>
 
+      {/* Pantalla de celebración: "¡Ruta completada!" con CTAs */}
+      {justFinished&&!activeRuta&&<ChoferRutaCompletada ruta={justFinished} siguienteRuta={siguienteRuta} onIniciarSiguiente={()=>{setJustFinished(null);if(siguienteRuta)startTracking(siguienteRuta);}} onDescansar={()=>{setJustFinished(null);setTabChofer("historial");}} onVolverHoy={()=>{setJustFinished(null);setTabChofer("hoy");}}/>}
+
       {/* Active route view */}
       {activeRuta?<ChoferRutaActiva ruta={activeRuta} chofer={chofer} tracking={tracking} onStop={stopTracking} showT={showT}/>
-      :<div style={{padding:"18px 16px"}}>
+      :!justFinished&&<div style={{padding:"18px 16px"}}>
         {/* KPIs */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
           <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Pendientes</div>
-            <div style={{fontFamily:MONO,fontSize:28,fontWeight:800,color:A}}>{rutasActivas.length}</div>
+            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Pendientes hoy</div>
+            <div style={{fontFamily:MONO,fontSize:28,fontWeight:800,color:A}}>{paradasPendientes.length}</div>
+            <div style={{fontSize:10,color:MUTED,marginTop:2}}>{rutasActivas.length} ruta{rutasActivas.length===1?"":"s"}</div>
           </div>
           <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Completadas</div>
-            <div style={{fontFamily:MONO,fontSize:28,fontWeight:800,color:GREEN}}>{completadas}</div>
+            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Rutas hoy ✓</div>
+            <div style={{fontFamily:MONO,fontSize:28,fontWeight:800,color:GREEN}}>{rutasHoyCompl.length}</div>
+            <div style={{fontSize:10,color:MUTED,marginTop:2}}>{completadas} totales</div>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div style={{display:"flex",gap:6,marginBottom:12,background:"#fff",padding:4,borderRadius:12,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+        {/* Tabs: Hoy · Rutas · Historial */}
+        <div style={{display:"flex",gap:4,marginBottom:12,background:"#fff",padding:4,borderRadius:12,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <button onClick={()=>setTabChofer("hoy")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="hoy"?BLUE:"transparent",color:tabChofer==="hoy"?"#fff":MUTED,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+            <Calendar size={12}/>Hoy ({paradasPendientes.length})
+          </button>
           <button onClick={()=>setTabChofer("activas")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="activas"?A:"transparent",color:tabChofer==="activas"?"#fff":MUTED,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-            <Play size={12}/>Activas ({rutasActivas.length})
+            <Play size={12}/>Rutas ({rutasActivas.length})
           </button>
           <button onClick={()=>setTabChofer("historial")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="historial"?GREEN:"transparent",color:tabChofer==="historial"?"#fff":MUTED,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
             <CheckCircle size={12}/>Historial ({rutasCompletadas.length})
           </button>
         </div>
+
+        {/* TAB: HOY — vista consolidada de todas las entregas del día */}
+        {tabChofer==="hoy"&&(paradasHoy.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <Calendar size={32} color={BD2} style={{marginBottom:8}}/>
+          <div style={{fontWeight:700,color:TEXT,fontSize:14,marginBottom:3}}>No tienes entregas hoy</div>
+          <div style={{fontSize:11,marginTop:4}}>Cuando admin te asigne una ruta aparecerá aquí automáticamente</div>
+        </div>
+        :<>
+          {/* Resumen del día */}
+          <div style={{background:"linear-gradient(135deg,"+BLUE+","+VIOLET+")",borderRadius:14,padding:16,marginBottom:12,color:"#fff",boxShadow:"0 4px 16px "+BLUE+"30"}}>
+            <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.08em",textTransform:"uppercase",opacity:.75,marginBottom:10}}>📅 Tu día hoy · {new Date().toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long"})}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+              <div>
+                <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{paradasPendientes.length}</div>
+                <div style={{fontSize:10,opacity:.85,marginTop:3}}>Por entregar</div>
+              </div>
+              <div>
+                <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{paradasEntregadas.length}</div>
+                <div style={{fontSize:10,opacity:.85,marginTop:3}}>Entregadas</div>
+              </div>
+              <div>
+                <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{totalPDVHoy.toLocaleString()}</div>
+                <div style={{fontSize:10,opacity:.85,marginTop:3}}>PDVs totales</div>
+              </div>
+            </div>
+            {totalKmHoy>0&&<div style={{fontSize:11,marginTop:12,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.2)",opacity:.9,display:"flex",alignItems:"center",gap:6}}>
+              <Globe size={11}/>{totalKmHoy.toLocaleString()} km totales · {rutasActivas.length} ruta{rutasActivas.length===1?"":"s"} asignada{rutasActivas.length===1?"":"s"}
+            </div>}
+          </div>
+
+          {/* Agrupa por ruta para que se vea claro qué entregas son de cuál ruta */}
+          {rutasActivas.map(r=>{
+            const estados = (r.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+            const stopsEntrega = (r.stops||[]).map((s,idx)=>({...s,idx,status:estados[idx]?.status||"pendiente"})).filter(s=>!s.isOrigin);
+            const pendCount = stopsEntrega.filter(s=>s.status!=="entregado").length;
+            const sc={Programada:VIOLET,"En curso":BLUE,Completada:GREEN};
+            const rc = sc[r.status]||MUTED;
+            return(
+              <div key={r.id} style={{background:"#fff",borderRadius:14,marginBottom:10,boxShadow:"0 1px 4px rgba(12,24,41,.04)",overflow:"hidden",border:"1px solid "+BORDER}}>
+                {/* Header de la ruta */}
+                <div style={{padding:"12px 14px",background:rc+"08",borderBottom:"1px solid "+rc+"15",display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:30,height:30,borderRadius:9,background:rc+"18",display:"flex",alignItems:"center",justifyContent:"center"}}><Navigation size={14} color={rc}/></div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:800,fontSize:13,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.nombre}</div>
+                    {r.cliente&&<div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.cliente} · {pendCount} por entregar</div>}
+                  </div>
+                  <Tag color={rc} sm>{r.status||"Programada"}</Tag>
+                </div>
+                {/* Lista de paradas con status */}
+                <div style={{padding:"4px 0"}}>
+                  {stopsEntrega.map((s,i)=>{
+                    const c = s.status==="entregado"?GREEN:s.status==="llegue"?BLUE:s.status==="problema"?ROSE:A;
+                    return(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:i<stopsEntrega.length-1?"1px solid "+BORDER+"80":"none"}}>
+                        <div style={{width:26,height:26,borderRadius:"50%",background:c+"14",border:"2px solid "+c,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:c,flexShrink:0}}>{i+1}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:700,fontSize:13,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.city}</div>
+                          <div style={{fontSize:10,color:MUTED}}>
+                            {s.pdv>0?s.pdv+" PDVs":""}{s.puntos?.length>0?" · "+s.puntos.length+" punto"+(s.puntos.length===1?"":"s"):""}
+                          </div>
+                        </div>
+                        <Tag color={c} sm>{s.status==="entregado"?"✓":s.status==="llegue"?"En sitio":s.status==="problema"?"⚠":"Pendiente"}</Tag>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Acción de la ruta */}
+                <div style={{padding:"10px 14px",borderTop:"1px solid "+BORDER,background:"#fafbfd"}}>
+                  <button onClick={()=>startTracking(r)} className="btn" style={{width:"100%",padding:"10px 0",borderRadius:10,background:r.status==="En curso"?"linear-gradient(135deg,"+BLUE+",#3b82f6)":"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                    {r.status==="En curso"?<><Navigation size={14}/>Continuar ruta</>:<><Play size={14}/>Iniciar ruta</>}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </>)}
 
         {tabChofer==="activas"&&(rutasActivas.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
           <Package size={32} color={BD2} style={{marginBottom:8}}/>
@@ -5361,6 +5483,73 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           );
         }))}
       </div>}
+    </div>
+  );
+}
+
+/* Pantalla post-completar ruta — celebración + CTAs para siguiente ruta o descansar */
+function ChoferRutaCompletada({ruta,siguienteRuta,onIniciarSiguiente,onDescansar,onVolverHoy}){
+  const entregas = (ruta.stopsStatus||[]).filter(s=>s.status==="entregado").length;
+  const totalParadas = (ruta.stops||[]).filter(s=>!s.isOrigin).length;
+  const duracionMin = ruta.iniciadaEn?.seconds && ruta.completadaEn?.seconds
+    ? Math.round(((ruta.completadaEn.seconds-ruta.iniciadaEn.seconds)/60))
+    : null;
+  const horas = duracionMin?Math.floor(duracionMin/60):0;
+  const mins = duracionMin?duracionMin%60:0;
+  return(
+    <div style={{padding:"20px 16px",minHeight:"calc(100vh - 80px)",display:"flex",flexDirection:"column",gap:14}}>
+      {/* Hero celebración */}
+      <div className="pi" style={{background:"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",borderRadius:20,padding:"32px 22px",textAlign:"center",boxShadow:"0 12px 40px "+GREEN+"55"}}>
+        <div style={{fontSize:54,marginBottom:8,lineHeight:1}}>🎉</div>
+        <div style={{fontFamily:DISP,fontWeight:900,fontSize:24,letterSpacing:"-0.02em",marginBottom:4}}>¡Ruta completada!</div>
+        <div style={{fontSize:13,opacity:.9,marginBottom:16}}>{ruta.nombre}</div>
+        <div style={{display:"grid",gridTemplateColumns:duracionMin?"repeat(3,1fr)":"repeat(2,1fr)",gap:10,maxWidth:320,margin:"0 auto"}}>
+          <div style={{background:"rgba(255,255,255,.16)",borderRadius:12,padding:"10px 6px"}}>
+            <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{entregas}/{totalParadas}</div>
+            <div style={{fontSize:9,opacity:.85,marginTop:3,letterSpacing:"0.05em",textTransform:"uppercase"}}>Entregas</div>
+          </div>
+          {ruta.totalKm>0&&<div style={{background:"rgba(255,255,255,.16)",borderRadius:12,padding:"10px 6px"}}>
+            <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{ruta.totalKm.toLocaleString()}</div>
+            <div style={{fontSize:9,opacity:.85,marginTop:3,letterSpacing:"0.05em",textTransform:"uppercase"}}>Km</div>
+          </div>}
+          {duracionMin!==null&&<div style={{background:"rgba(255,255,255,.16)",borderRadius:12,padding:"10px 6px"}}>
+            <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{horas>0?horas+"h "+mins+"m":mins+"m"}</div>
+            <div style={{fontSize:9,opacity:.85,marginTop:3,letterSpacing:"0.05em",textTransform:"uppercase"}}>Duración</div>
+          </div>}
+        </div>
+      </div>
+
+      {/* CTA siguiente ruta */}
+      {siguienteRuta?<div style={{background:"#fff",borderRadius:16,padding:18,boxShadow:"0 4px 16px rgba(12,24,41,.06)",border:"2px solid "+A+"28"}}>
+        <div style={{fontSize:10,fontWeight:800,color:A,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+          <Navigation size={12}/>Siguiente ruta
+        </div>
+        <div style={{fontFamily:DISP,fontWeight:800,fontSize:18,color:TEXT,marginBottom:3}}>{siguienteRuta.nombre}</div>
+        {siguienteRuta.cliente&&<div style={{fontSize:12,color:MUTED,marginBottom:10}}>{siguienteRuta.cliente}</div>}
+        <div style={{display:"flex",gap:12,fontSize:11,color:MUTED,marginBottom:14,flexWrap:"wrap"}}>
+          <span><MapPin size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{(siguienteRuta.stops||[]).filter(s=>!s.isOrigin).length} paradas</span>
+          <span><Package size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{(siguienteRuta.totalPDV||0).toLocaleString()} PDVs</span>
+          {siguienteRuta.totalKm>0&&<span><Globe size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{siguienteRuta.totalKm.toLocaleString()} km</span>}
+        </div>
+        <button onClick={onIniciarSiguiente} className="btn" style={{width:"100%",padding:"14px 0",borderRadius:12,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",fontFamily:DISP,fontWeight:800,fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 6px 20px "+A+"40"}}>
+          <Play size={16}/>Iniciar siguiente ruta
+        </button>
+      </div>
+      :<div style={{background:"#fff",borderRadius:16,padding:24,textAlign:"center",boxShadow:"0 1px 4px rgba(12,24,41,.04)",border:"1.5px dashed "+BD2}}>
+        <CheckCircle size={36} color={GREEN} style={{marginBottom:10}}/>
+        <div style={{fontFamily:DISP,fontWeight:800,fontSize:16,color:TEXT,marginBottom:4}}>No hay más rutas pendientes</div>
+        <div style={{fontSize:12,color:MUTED,lineHeight:1.5}}>Excelente trabajo. Cuando tu administrador te asigne una ruta nueva, aparecerá aquí automáticamente.</div>
+      </div>}
+
+      {/* Botones secundarios */}
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={onVolverHoy} className="btn" style={{flex:1,padding:"12px 0",borderRadius:11,background:"#fff",border:"1.5px solid "+BD2,color:TEXT,fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <Calendar size={13}/>Ver mi día
+        </button>
+        <button onClick={onDescansar} className="btn" style={{flex:1,padding:"12px 0",borderRadius:11,background:"#fff",border:"1.5px solid "+BD2,color:TEXT,fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          <CheckCircle size={13}/>Ver historial
+        </button>
+      </div>
     </div>
   );
 }
