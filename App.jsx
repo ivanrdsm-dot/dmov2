@@ -991,6 +991,97 @@ function Toast({msg,type,onClose}){
     </div>
   );
 }
+/* SignaturePad: firma digital con canvas (touch + mouse) — retorna dataURL PNG */
+function SignaturePad({onChange,height=160,background="#fff",color="#0c1829"}){
+  const canvasRef=useRef(null);
+  const drawingRef=useRef(false);
+  const lastPointRef=useRef(null);
+  const hasDrawnRef=useRef(false);
+  const [empty,setEmpty]=useState(true);
+
+  useEffect(()=>{
+    const c = canvasRef.current;
+    if(!c) return;
+    // Ajuste retina
+    const rect = c.getBoundingClientRect();
+    const dpr = window.devicePixelRatio||1;
+    c.width = rect.width*dpr;
+    c.height = rect.height*dpr;
+    const ctx = c.getContext("2d");
+    ctx.scale(dpr,dpr);
+    ctx.fillStyle = background;
+    ctx.fillRect(0,0,rect.width,rect.height);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+  },[background,color]);
+
+  const getXY=(e)=>{
+    const rect = canvasRef.current.getBoundingClientRect();
+    const touch = e.touches?.[0]||e.changedTouches?.[0];
+    const clientX = touch?touch.clientX:e.clientX;
+    const clientY = touch?touch.clientY:e.clientY;
+    return {x:clientX-rect.left,y:clientY-rect.top};
+  };
+
+  const start=(e)=>{
+    e.preventDefault();
+    drawingRef.current=true;
+    lastPointRef.current=getXY(e);
+  };
+  const move=(e)=>{
+    if(!drawingRef.current) return;
+    e.preventDefault();
+    const p = getXY(e);
+    const l = lastPointRef.current;
+    if(!l){lastPointRef.current=p;return;}
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.beginPath();
+    ctx.moveTo(l.x,l.y);
+    ctx.lineTo(p.x,p.y);
+    ctx.stroke();
+    lastPointRef.current=p;
+    if(!hasDrawnRef.current){hasDrawnRef.current=true;setEmpty(false);}
+  };
+  const end=()=>{
+    drawingRef.current=false;
+    lastPointRef.current=null;
+    if(onChange&&hasDrawnRef.current){
+      try{onChange(canvasRef.current.toDataURL("image/png"));}catch(e){}
+    }
+  };
+
+  const clear=()=>{
+    const c = canvasRef.current;
+    const ctx = c.getContext("2d");
+    const rect = c.getBoundingClientRect();
+    ctx.fillStyle = background;
+    ctx.fillRect(0,0,rect.width,rect.height);
+    hasDrawnRef.current=false;
+    setEmpty(true);
+    if(onChange) onChange("");
+  };
+
+  return(
+    <div>
+      <div style={{position:"relative",border:"1.5px solid "+BD2,borderRadius:10,overflow:"hidden",background}}>
+        <canvas
+          ref={canvasRef}
+          style={{width:"100%",height,display:"block",touchAction:"none",cursor:"crosshair"}}
+          onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+          onTouchStart={start} onTouchMove={move} onTouchEnd={end}
+        />
+        {empty&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",color:MUTED,fontSize:12,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase"}}>✍ Firme aquí con el dedo</div>}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+        <div style={{fontSize:10,color:MUTED}}>{empty?"Firma requerida para confirmar":"✓ Firma capturada"}</div>
+        {!empty&&<button onClick={clear} className="btn" type="button" style={{fontSize:10,color:ROSE,fontWeight:700,padding:"3px 8px",border:"1px solid "+ROSE+"40",borderRadius:6}}>Limpiar</button>}
+      </div>
+    </div>
+  );
+}
+
 function Modal({title,onClose,children,wide,icon:Icon,iconColor=A}){
   useEffect(()=>{const h=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[onClose]);
   return(
@@ -5345,16 +5436,19 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           </div>
         </div>
 
-        {/* Tabs: Hoy · Rutas · Historial */}
-        <div style={{display:"flex",gap:4,marginBottom:12,background:"#fff",padding:4,borderRadius:12,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-          <button onClick={()=>setTabChofer("hoy")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="hoy"?BLUE:"transparent",color:tabChofer==="hoy"?"#fff":MUTED,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-            <Calendar size={12}/>Hoy ({paradasPendientes.length})
+        {/* Tabs: Hoy · Rutas · Historial · Perfil */}
+        <div style={{display:"flex",gap:3,marginBottom:12,background:"#fff",padding:4,borderRadius:12,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <button onClick={()=>setTabChofer("hoy")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="hoy"?BLUE:"transparent",color:tabChofer==="hoy"?"#fff":MUTED,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+            <Calendar size={11}/>Hoy ({paradasPendientes.length})
           </button>
-          <button onClick={()=>setTabChofer("activas")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="activas"?A:"transparent",color:tabChofer==="activas"?"#fff":MUTED,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-            <Play size={12}/>Rutas ({rutasActivas.length})
+          <button onClick={()=>setTabChofer("activas")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="activas"?A:"transparent",color:tabChofer==="activas"?"#fff":MUTED,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+            <Play size={11}/>Rutas ({rutasActivas.length})
           </button>
-          <button onClick={()=>setTabChofer("historial")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="historial"?GREEN:"transparent",color:tabChofer==="historial"?"#fff":MUTED,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-            <CheckCircle size={12}/>Historial ({rutasCompletadas.length})
+          <button onClick={()=>setTabChofer("historial")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="historial"?GREEN:"transparent",color:tabChofer==="historial"?"#fff":MUTED,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+            <CheckCircle size={11}/>Historial ({rutasCompletadas.length})
+          </button>
+          <button onClick={()=>setTabChofer("perfil")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="perfil"?VIOLET:"transparent",color:tabChofer==="perfil"?"#fff":MUTED,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+            <Shield size={11}/>Perfil
           </button>
         </div>
 
@@ -5482,8 +5576,100 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
             </div>
           );
         }))}
+
+        {/* TAB: PERFIL — stats históricas del chofer */}
+        {tabChofer==="perfil"&&<ChoferPerfil chofer={chofer} misRutas={misRutas} rutasCompletadas={rutasCompletadas} onLogout={onLogout}/>}
       </div>}
     </div>
+  );
+}
+
+/* Perfil del chofer — stats totales + datos + logout */
+function ChoferPerfil({chofer,misRutas,rutasCompletadas,onLogout}){
+  const totalEntregas = rutasCompletadas.reduce((a,r)=>a+((r.stopsStatus||[]).filter(s=>s.status==="entregado").length),0);
+  const totalKm = rutasCompletadas.reduce((a,r)=>a+(r.totalKm||0),0);
+  const totalHoras = rutasCompletadas.reduce((a,r)=>{
+    const ini = r.iniciadaEn?.seconds, fin = r.completadaEn?.seconds;
+    if(ini&&fin) return a+(fin-ini)/3600;
+    return a;
+  },0);
+  // Mejor día
+  const byDay = {};
+  rutasCompletadas.forEach(r=>{
+    const ts = r.completadaEn?.seconds;
+    if(!ts) return;
+    const d = new Date(ts*1000);
+    const ld = d.toISOString().slice(0,10);
+    const e = (r.stopsStatus||[]).filter(s=>s.status==="entregado").length;
+    byDay[ld] = (byDay[ld]||0)+e;
+  });
+  const mejorDia = Object.entries(byDay).sort((a,b)=>b[1]-a[1])[0];
+  // Porcentaje de entregas completadas (vs problemas)
+  const problemas = rutasCompletadas.reduce((a,r)=>a+((r.stopsStatus||[]).filter(s=>s.status==="problema").length),0);
+  const successRate = (totalEntregas+problemas)>0?Math.round(totalEntregas/(totalEntregas+problemas)*100):100;
+  const primeraFecha = rutasCompletadas.reduce((a,r)=>{const ts=r.completadaEn?.seconds;if(!ts) return a;return a===null||ts<a?ts:a;},null);
+  const antiguedadDias = primeraFecha?Math.floor((Date.now()/1000-primeraFecha)/86400):0;
+
+  return(
+    <>
+      {/* Avatar + datos */}
+      <div style={{background:"linear-gradient(135deg,"+VIOLET+",#9d5cff)",borderRadius:16,padding:"22px 18px",marginBottom:14,color:"#fff",display:"flex",alignItems:"center",gap:14,boxShadow:"0 6px 20px "+VIOLET+"40"}}>
+        <div style={{width:58,height:58,borderRadius:18,background:"rgba(255,255,255,.22)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:22,flexShrink:0}}>{(chofer.nombre||"?").slice(0,2).toUpperCase()}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:18,lineHeight:1.2}}>{chofer.nombre}</div>
+          <div style={{fontSize:11,opacity:.85,marginTop:3}}>{chofer.tel}</div>
+          <div style={{fontSize:11,opacity:.85}}>{chofer.placa||"Sin placa"}{chofer.vehiculo?" · "+chofer.vehiculo:""}</div>
+          {antiguedadDias>0&&<div style={{fontSize:10,marginTop:4,opacity:.75}}>{antiguedadDias} días activo en DMvimiento</div>}
+        </div>
+      </div>
+
+      {/* Stats hero grid */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+        <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <div style={{fontSize:22}}>📦</div>
+          <div style={{fontFamily:MONO,fontSize:26,fontWeight:900,color:A,lineHeight:1,marginTop:4}}>{totalEntregas.toLocaleString()}</div>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:3}}>Entregas totales</div>
+        </div>
+        <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <div style={{fontSize:22}}>🏁</div>
+          <div style={{fontFamily:MONO,fontSize:26,fontWeight:900,color:GREEN,lineHeight:1,marginTop:4}}>{rutasCompletadas.length}</div>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:3}}>Rutas completadas</div>
+        </div>
+        <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <div style={{fontSize:22}}>🛣️</div>
+          <div style={{fontFamily:MONO,fontSize:26,fontWeight:900,color:BLUE,lineHeight:1,marginTop:4}}>{Math.round(totalKm).toLocaleString()}</div>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:3}}>Km recorridos</div>
+        </div>
+        <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+          <div style={{fontSize:22}}>⏱️</div>
+          <div style={{fontFamily:MONO,fontSize:26,fontWeight:900,color:VIOLET,lineHeight:1,marginTop:4}}>{totalHoras>0?totalHoras.toFixed(1):"0"}</div>
+          <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:3}}>Horas en ruta</div>
+        </div>
+      </div>
+
+      {/* Success rate bar */}
+      <div style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={{fontSize:12,fontWeight:700,color:TEXT}}>Tasa de entregas exitosas</div>
+          <div style={{fontFamily:MONO,fontSize:16,fontWeight:900,color:successRate>=95?GREEN:successRate>=85?AMBER:ROSE}}>{successRate}%</div>
+        </div>
+        <MiniBar pct={successRate} color={successRate>=95?GREEN:successRate>=85?AMBER:ROSE} h={8}/>
+        <div style={{fontSize:10,color:MUTED,marginTop:6}}>{totalEntregas} entregadas · {problemas} con incidente</div>
+      </div>
+
+      {/* Mejor día */}
+      {mejorDia&&<div style={{background:"linear-gradient(135deg,"+A+"10,"+A+"22)",border:"1px solid "+A+"35",borderRadius:14,padding:14,marginBottom:10}}>
+        <div style={{fontSize:10,fontWeight:800,color:A,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:4}}>🏆 Mejor día</div>
+        <div style={{fontFamily:DISP,fontWeight:800,fontSize:16,color:TEXT}}>{new Date(mejorDia[0]+"T12:00:00").toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"short"})}</div>
+        <div style={{fontSize:12,color:MUTED,marginTop:2}}>{mejorDia[1]} entregas en un solo día</div>
+      </div>}
+
+      {/* Logout */}
+      <button onClick={()=>{if(confirm("¿Cerrar sesión?"))onLogout();}} className="btn" style={{width:"100%",marginTop:14,padding:"13px 0",borderRadius:11,background:"#fff",border:"1.5px solid "+ROSE+"30",color:ROSE,fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+        <LogOut size={14}/>Cerrar sesión
+      </button>
+      <div style={{fontSize:9,color:MUTED,textAlign:"center",marginTop:10,letterSpacing:"0.05em"}}>DMvimiento · App Chofer v2.2</div>
+    </>
   );
 }
 
@@ -5554,14 +5740,48 @@ function ChoferRutaCompletada({ruta,siguienteRuta,onIniciarSiguiente,onDescansar
   );
 }
 
+/* Tipos de incidentes con templates de mensaje al cliente */
+const INCIDENT_TYPES = [
+  {id:"ausente",   label:"Cliente ausente",     emoji:"👤", template:"No había quien recibiera el pedido"},
+  {id:"direccion", label:"Dirección incorrecta",emoji:"📍", template:"La dirección proporcionada es incorrecta / no existe"},
+  {id:"acceso",    label:"Acceso restringido",  emoji:"🚫", template:"No se permitió el acceso al lugar de entrega"},
+  {id:"devolucion",label:"Devolución",          emoji:"↩️", template:"Cliente rechazó el pedido"},
+  {id:"danado",    label:"Producto dañado",     emoji:"📦", template:"Pedido llegó con daños"},
+  {id:"otro",      label:"Otro",                emoji:"⚠️", template:""},
+];
+
 function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
-  const [stops,setStops]=useState(()=>(ruta.stops||[]).map((s,i)=>({...s,idx:i,status:i===0?"origen":"pendiente",fotoURL:"",receptor:""})));
+  const [stops,setStops]=useState(()=>{
+    // Si ya hay stopsStatus persistido (reanudando ruta), úsalo
+    const persisted = (ruta.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+    return (ruta.stops||[]).map((s,i)=>{
+      const p = persisted[i];
+      return {...s,idx:i,status:p?.status||(i===0&&s.isOrigin?"origen":"pendiente"),fotoURL:p?.fotoURL||"",firmaURL:p?.firmaURL||"",receptor:p?.receptor||"",notas:p?.notas||""};
+    });
+  });
   const [modalStop,setModalStop]=useState(null);
   const [comentario,setComentario]=useState("");
   const [receptor,setReceptor]=useState("");
   const [fotoFile,setFotoFile]=useState(null);
   const [fotoPreview,setFotoPreview]=useState("");
+  const [firmaData,setFirmaData]=useState("");
+  const [incidentType,setIncidentType]=useState("ausente");
   const [submitting,setSubmitting]=useState(false);
+  const [myLoc,setMyLoc]=useState(null); // Posición actual (fallback si no hay tracking)
+  const miniMapRef=useRef(null);
+  const miniMapContRef=useRef(null);
+  const myMarkerRef=useRef(null);
+
+  // Obtiene ubicación en vivo (además del tracking)
+  useEffect(()=>{
+    if(!("geolocation" in navigator)) return;
+    const wid = navigator.geolocation.watchPosition(
+      (pos)=>setMyLoc({lat:pos.coords.latitude,lng:pos.coords.longitude}),
+      ()=>{},
+      {enableHighAccuracy:true,maximumAge:10000,timeout:20000}
+    );
+    return()=>navigator.geolocation.clearWatch(wid);
+  },[]);
 
   const pickPhoto = (e)=>{
     const file = e.target.files?.[0];
@@ -5572,29 +5792,38 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
     reader.readAsDataURL(file);
   };
 
+  // Llamada 1-tap
+  const callTel = (tel)=>{
+    if(!tel) return;
+    const clean = tel.toString().replace(/\D/g,"");
+    if(clean.length<8){showT("Teléfono no válido","err");return;}
+    window.location.href = `tel:+52${clean}`;
+  };
+
   // Genera link WhatsApp del cliente con mensaje prellenado
-  const notifyCliente = (tipo, stop, fotoURL="", notas="")=>{
+  const notifyCliente = (tipo, stop, fotoURL="", notas="", incidentLabel="")=>{
     if(!ruta.clienteTel||ruta.clienteTel.replace(/\D/g,"").length!==10) return;
     const trackUrl = `${window.location.origin}/track/${ruta.trackingId||ruta.id}`;
     const emoji = tipo==="arrival"?"📍":tipo==="delivered"?"✅":tipo==="issue"?"⚠️":"🚚";
     let msg = "";
     if(tipo==="arrival") msg = `${emoji} DMvimiento: El chofer ${chofer.nombre} llegó a ${stop.city}. Puedes verlo en tiempo real: ${trackUrl}`;
     else if(tipo==="delivered") msg = `${emoji} DMvimiento: Entrega completada en ${stop.city}${notas?" · "+notas:""}${fotoURL?"\n📸 Con evidencia fotográfica.":""}\nVer todo: ${trackUrl}`;
-    else if(tipo==="issue") msg = `${emoji} DMvimiento: Incidencia en ${stop.city}: ${notas}\nTracking: ${trackUrl}`;
+    else if(tipo==="issue") msg = `${emoji} DMvimiento: Incidencia en ${stop.city}${incidentLabel?" — "+incidentLabel:""}: ${notas}\nTracking: ${trackUrl}`;
     const waUrl = `https://wa.me/52${ruta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
     window.open(waUrl,"_blank");
   };
 
-  const updateStopStatus = async (stopIdx, newStatus, notas="", fotoURL="", receptorNombre="")=>{
-    const nuevo = stops.map(s=>s.idx===stopIdx?{...s,status:newStatus,notas,fotoURL,receptor:receptorNombre,ts:Date.now()}:s);
+  const updateStopStatus = async (stopIdx, newStatus, notas="", fotoURL="", receptorNombre="", firmaURL="", incidentCategory="")=>{
+    const nuevo = stops.map(s=>s.idx===stopIdx?{...s,status:newStatus,notas,fotoURL,firmaURL,receptor:receptorNombre,incidentCategory,ts:Date.now()}:s);
     setStops(nuevo);
     const done = nuevo.filter(s=>s.status==="entregado").length;
-    const prog = Math.round(done/nuevo.filter(s=>s.status!=="origen").length*100);
-    await updateDoc(doc(db,"rutas",ruta.id),{progreso:prog,stopsStatus:nuevo.map(s=>({idx:s.idx,status:s.status,notas:s.notas||"",fotoURL:s.fotoURL||"",receptor:s.receptor||"",ts:s.ts||0}))}).catch(()=>{});
+    const totalNonOrigen = nuevo.filter(s=>s.status!=="origen"&&!s.isOrigin).length;
+    const prog = totalNonOrigen>0?Math.round(done/totalNonOrigen*100):0;
+    await updateDoc(doc(db,"rutas",ruta.id),{progreso:prog,stopsStatus:nuevo.map(s=>({idx:s.idx,status:s.status,notas:s.notas||"",fotoURL:s.fotoURL||"",firmaURL:s.firmaURL||"",receptor:s.receptor||"",incidentCategory:s.incidentCategory||"",ts:s.ts||0}))}).catch(()=>{});
     const stop = nuevo.find(s=>s.idx===stopIdx);
     if(newStatus==="llegue") postAlert(ruta.id,chofer.id,chofer.nombre,"arrival","Llegó a "+(stop.city||"parada "+(stopIdx+1)),{stopIdx});
     if(newStatus==="entregado") postAlert(ruta.id,chofer.id,chofer.nombre,"delivered","Entregó en "+(stop.city||"parada "+(stopIdx+1))+(notas?" · "+notas:""),{stopIdx,notas});
-    if(newStatus==="problema") postAlert(ruta.id,chofer.id,chofer.nombre,"issue","Problema en "+(stop.city||"parada "+(stopIdx+1))+": "+notas,{stopIdx,notas});
+    if(newStatus==="problema") postAlert(ruta.id,chofer.id,chofer.nombre,"issue","Problema en "+(stop.city||"parada "+(stopIdx+1))+(incidentCategory?" ["+incidentCategory+"]":"")+": "+notas,{stopIdx,notas,incidentCategory});
   };
 
   const openNavigation = (stop, punto=null)=>{
@@ -5616,25 +5845,157 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
   };
 
   const done = stops.filter(s=>s.status==="entregado").length;
-  const totalEntregas = stops.filter(s=>s.status!=="origen").length;
+  const totalEntregas = stops.filter(s=>s.status!=="origen"&&!s.isOrigin).length;
   const allDone = done>0 && done===totalEntregas;
 
+  // Siguiente parada pendiente (o "en sitio")
+  const siguiente = stops.find(s=>!s.isOrigin&&s.status!=="entregado"&&s.status!=="origen");
+
+  // ETA al siguiente stop (Haversine / 40km-h como proxy rápido sin API call)
+  const etaNextMin = (()=>{
+    if(!siguiente||!myLoc) return null;
+    const punto = (siguiente.puntos||[]).find(p=>p.lat&&p.lng);
+    if(!punto) return null;
+    const d = distKm(myLoc.lat,myLoc.lng,punto.lat,punto.lng);
+    return Math.max(1,Math.round(d/40*60));
+  })();
+
+  // Optimización de orden de paradas (nearest-neighbor desde ubicación actual)
+  const [optimizing,setOptimizing]=useState(false);
+  const optimizarOrden = async()=>{
+    const pendientes = stops.filter(s=>!s.isOrigin&&s.status!=="entregado");
+    if(pendientes.length<3){showT("Necesitas al menos 3 paradas pendientes para optimizar","warn");return;}
+    if(!myLoc){showT("Esperando ubicación GPS…","warn");return;}
+    setOptimizing(true);
+    try{
+      // Greedy nearest-neighbor desde mi ubicación
+      const withCoord = pendientes.map(s=>{
+        const p = (s.puntos||[]).find(x=>x.lat&&x.lng);
+        return p?{stop:s,lat:p.lat,lng:p.lng}:null;
+      }).filter(Boolean);
+      if(withCoord.length<2){showT("Las paradas no tienen coordenadas — pide al admin que las agregue","err");setOptimizing(false);return;}
+      let cur = {lat:myLoc.lat,lng:myLoc.lng};
+      const orden = [];
+      const pool = [...withCoord];
+      while(pool.length){
+        let bestI = 0, bestD = Infinity;
+        pool.forEach((c,i)=>{
+          const d = distKm(cur.lat,cur.lng,c.lat,c.lng);
+          if(d<bestD){bestD=d;bestI=i;}
+        });
+        const [picked] = pool.splice(bestI,1);
+        orden.push(picked.stop.idx);
+        cur = {lat:picked.lat,lng:picked.lng};
+      }
+      // Reordenar stops: origen primero + entregadas al final + optimizadas en medio
+      const origen = stops.filter(s=>s.isOrigin||s.status==="origen");
+      const entregadas = stops.filter(s=>s.status==="entregado"&&!s.isOrigin);
+      const optOrder = orden.map(idx=>stops.find(s=>s.idx===idx)).filter(Boolean);
+      const merged = [...origen,...optOrder,...entregadas].map((s,newIdx)=>({...s,idx:newIdx}));
+      setStops(merged);
+      // Persiste el nuevo orden de stops en la ruta
+      await updateDoc(doc(db,"rutas",ruta.id),{
+        stops: merged.map(s=>({city:s.city,pdv:s.pdv||0,km:s.km||0,addr:s.addr||"",isOrigin:!!s.isOrigin,puntos:s.puntos||[]})),
+        stopsStatus: merged.map(s=>({idx:s.idx,status:s.status,notas:s.notas||"",fotoURL:s.fotoURL||"",firmaURL:s.firmaURL||"",receptor:s.receptor||"",ts:s.ts||0})),
+        optimizedAt: serverTimestamp(),
+      }).catch(()=>{});
+      showT("✓ Orden optimizado por distancia");
+    }catch(e){showT("Error: "+e.message,"err");}
+    setOptimizing(false);
+  };
+
+  // Mini mapa con GPS
+  useEffect(()=>{
+    if(!MAPBOX_TOKEN||!miniMapContRef.current||miniMapRef.current) return;
+    const center = myLoc?[myLoc.lng,myLoc.lat]:MX_CENTER;
+    const m = new mapboxgl.Map({
+      container: miniMapContRef.current,
+      style: "mapbox://styles/mapbox/streets-v12",
+      center,
+      zoom: 13,
+      attributionControl:false,
+      interactive:true,
+    });
+    m.addControl(new mapboxgl.NavigationControl({showCompass:false}),"top-right");
+    miniMapRef.current = m;
+    // Paint stops
+    m.on("load",()=>{
+      const bnds = new mapboxgl.LngLatBounds();
+      stops.forEach((s,i)=>{
+        (s.puntos||[]).forEach(p=>{
+          if(!p.lat||!p.lng) return;
+          const c = s.status==="entregado"?GREEN:s.status==="llegue"?BLUE:s.status==="problema"?ROSE:s.isOrigin?MUTED:A;
+          const el = document.createElement("div");
+          el.style.cssText = `width:26px;height:26px;border-radius:50%;background:${c};border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.25);color:#fff;font-weight:800;font-size:10px;display:flex;align-items:center;justify-content:center;font-family:${MONO}`;
+          el.textContent = s.isOrigin?"🏠":String(i);
+          new mapboxgl.Marker(el).setLngLat([p.lng,p.lat]).addTo(m);
+          bnds.extend([p.lng,p.lat]);
+        });
+      });
+      if(myLoc){bnds.extend([myLoc.lng,myLoc.lat]);}
+      if(!bnds.isEmpty()) m.fitBounds(bnds,{padding:50,maxZoom:14,duration:0});
+    });
+    return()=>{try{m.remove();}catch(e){}miniMapRef.current=null;};
+  },[]);
+
+  // Update user marker
+  useEffect(()=>{
+    if(!miniMapRef.current||!myLoc) return;
+    if(myMarkerRef.current){
+      myMarkerRef.current.setLngLat([myLoc.lng,myLoc.lat]);
+    }else{
+      const el = document.createElement("div");
+      el.style.cssText = `width:20px;height:20px;border-radius:50%;background:${BLUE};border:3px solid #fff;box-shadow:0 0 0 6px ${BLUE}30,0 3px 10px rgba(0,0,0,.3);`;
+      myMarkerRef.current = new mapboxgl.Marker(el).setLngLat([myLoc.lng,myLoc.lat]).addTo(miniMapRef.current);
+    }
+  },[myLoc]);
+
   return(
-    <div style={{paddingBottom:80}}>
-      {/* Progress */}
-      <div style={{background:"#fff",padding:"14px 18px",borderBottom:"1px solid "+BORDER}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-          <div>
-            <div style={{fontFamily:DISP,fontWeight:800,fontSize:16}}>{ruta.nombre}</div>
-            <div style={{fontSize:11,color:MUTED,marginTop:2}}>{ruta.cliente||"Sin cliente"}</div>
+    <div style={{paddingBottom:150}}>
+      {/* Progress + acciones rápidas */}
+      <div style={{background:"#fff",padding:"12px 16px 10px",borderBottom:"1px solid "+BORDER}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:DISP,fontWeight:800,fontSize:15,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ruta.nombre}</div>
+            <div style={{fontSize:11,color:MUTED,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ruta.cliente||"Sin cliente"}</div>
           </div>
-          <div style={{textAlign:"right"}}>
-            <div style={{fontFamily:MONO,fontSize:20,fontWeight:800,color:A}}>{done}/{totalEntregas}</div>
+          <div style={{textAlign:"right",flexShrink:0,marginLeft:10}}>
+            <div style={{fontFamily:MONO,fontSize:20,fontWeight:800,color:A,lineHeight:1}}>{done}/{totalEntregas}</div>
             <div style={{fontSize:10,color:MUTED}}>entregas</div>
           </div>
         </div>
         <MiniBar pct={totalEntregas>0?done/totalEntregas*100:0} color={GREEN} h={6}/>
+        {/* Acciones rápidas: llamar cliente + optimizar */}
+        <div style={{display:"flex",gap:6,marginTop:10}}>
+          {ruta.clienteTel&&<button onClick={()=>callTel(ruta.clienteTel)} className="btn" style={{flex:1,padding:"8px 0",borderRadius:9,background:BLUE+"0e",border:"1px solid "+BLUE+"28",color:BLUE,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+            <Phone size={12}/>Llamar cliente
+          </button>}
+          <button onClick={optimizarOrden} disabled={optimizing} className="btn" style={{flex:1,padding:"8px 0",borderRadius:9,background:VIOLET+"0e",border:"1px solid "+VIOLET+"28",color:VIOLET,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+            <Zap size={12}/>{optimizing?"Optimizando…":"Optimizar recorrido"}
+          </button>
+        </div>
       </div>
+
+      {/* Sticky CTA "Próxima parada" — visible siempre hasta completar */}
+      {siguiente&&<div style={{position:"sticky",top:72,zIndex:40,margin:"10px 14px 0",background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:14,padding:"12px 14px",boxShadow:"0 6px 22px "+A+"45",display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.08em",textTransform:"uppercase",opacity:.9,marginBottom:2}}>{siguiente.status==="llegue"?"🎯 En sitio":"🧭 Próxima parada"}</div>
+          <div style={{fontWeight:800,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{siguiente.city}</div>
+          <div style={{fontSize:10,opacity:.9,display:"flex",gap:8,flexWrap:"wrap"}}>
+            {siguiente.pdv>0&&<span>{siguiente.pdv} PDVs</span>}
+            {(siguiente.puntos||[]).length>0&&<span>· {siguiente.puntos.length} punto{siguiente.puntos.length===1?"":"s"}</span>}
+            {etaNextMin!==null&&<span>· ETA ~{etaNextMin}min</span>}
+          </div>
+        </div>
+        <button onClick={()=>openNavigation(siguiente,(siguiente.puntos||[])[0]||null)} className="btn" style={{background:"rgba(255,255,255,.22)",color:"#fff",borderRadius:11,padding:"10px 14px",fontFamily:SANS,fontWeight:800,fontSize:12,display:"flex",alignItems:"center",gap:5,flexShrink:0,backdropFilter:"blur(6px)"}}>
+          <Navigation size={14}/>Ir
+        </button>
+      </div>}
+
+      {/* Mapa mini con ubicación en vivo */}
+      {MAPBOX_TOKEN&&<div style={{margin:"10px 14px",borderRadius:14,overflow:"hidden",border:"1px solid "+BORDER,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+        <div ref={miniMapContRef} style={{width:"100%",height:180}}/>
+      </div>}
 
       {/* Stops */}
       <div style={{padding:"14px 14px"}}>
@@ -5661,7 +6022,8 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontWeight:700,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
                       <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.address}</div>
-                      {p.notas&&<div style={{fontSize:10,color:BLUE,marginTop:2}}>📝 {p.notas}</div>}
+                      {p.notas&&<div style={{fontSize:11,color:AMBER,background:AMBER+"10",padding:"5px 8px",borderRadius:6,marginTop:5,fontWeight:600,lineHeight:1.4,border:"1px solid "+AMBER+"28"}}>⚠ {p.notas}</div>}
+                      {p.telContacto&&<button onClick={()=>callTel(p.telContacto)} className="btn" style={{marginTop:4,color:BLUE,background:BLUE+"10",border:"1px solid "+BLUE+"30",borderRadius:6,padding:"3px 8px",fontSize:10,fontWeight:700,display:"inline-flex",alignItems:"center",gap:4}}><Phone size={9}/>{p.telContacto}</button>}
                     </div>
                     {!isOrigen&&<button onClick={()=>openNavigation(s,p)} className="btn" style={{color:"#fff",background:BLUE,borderRadius:7,padding:"6px 10px",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:4,flexShrink:0}}><Navigation size={10}/>Ir</button>}
                   </div>
@@ -5691,20 +6053,31 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
       </div>
 
       {/* Confirmation modal */}
-      {modalStop&&<Modal title={modalStop.action==="entregado"?"Confirmar entrega":"Reportar problema"} onClose={()=>{setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setReceptor("");}} icon={modalStop.action==="entregado"?CheckCircle:AlertCircle} iconColor={modalStop.action==="entregado"?GREEN:ROSE}>
+      {modalStop&&<Modal title={modalStop.action==="entregado"?"Confirmar entrega":"Reportar incidente"} onClose={()=>{setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setReceptor("");setFirmaData("");setIncidentType("ausente");}} icon={modalStop.action==="entregado"?CheckCircle:AlertCircle} iconColor={modalStop.action==="entregado"?GREEN:ROSE}>
         <div style={{marginBottom:12}}>
           <div style={{fontSize:12,color:MUTED,marginBottom:4}}>Parada</div>
           <div style={{fontWeight:700,fontSize:15}}>{modalStop.city}</div>
         </div>
+        {/* INCIDENTE: categorías */}
+        {modalStop.action==="problema"&&<div style={{marginBottom:12}}>
+          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>Tipo de incidente</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+            {INCIDENT_TYPES.map(t=>(
+              <button key={t.id} type="button" onClick={()=>{setIncidentType(t.id);if(!comentario&&t.template)setComentario(t.template);}} className="btn" style={{padding:"9px 10px",borderRadius:10,border:"1.5px solid "+(incidentType===t.id?ROSE:BD2),background:incidentType===t.id?ROSE+"12":"#fff",color:incidentType===t.id?ROSE:TEXT,fontWeight:700,fontSize:11,textAlign:"left",display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:14}}>{t.emoji}</span>{t.label}
+              </button>
+            ))}
+          </div>
+        </div>}
         {modalStop.action==="entregado"&&<div style={{marginBottom:11}}>
-          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Nombre de quien recibió</div>
+          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Nombre de quien recibió <span style={{color:ROSE}}>*</span></div>
           <input value={receptor} onChange={e=>setReceptor(e.target.value)} placeholder="Juan Pérez" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14}}/>
         </div>}
-        <Txt label={modalStop.action==="entregado"?"Comentarios / Observaciones":"Describe el problema"} value={comentario} onChange={e=>setComentario(e.target.value)} placeholder={modalStop.action==="entregado"?"Sin observaciones":"Ej: Local cerrado, regreso en 1h"}/>
+        <Txt label={modalStop.action==="entregado"?"Comentarios / Observaciones":"Detalle del incidente"} value={comentario} onChange={e=>setComentario(e.target.value)} placeholder={modalStop.action==="entregado"?"Sin observaciones":"Explica con más detalle…"}/>
         {/* Foto evidencia */}
         <div style={{marginTop:13}}>
           <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>
-            {modalStop.action==="entregado"?"Foto de evidencia":"Foto del problema (opcional)"}
+            {modalStop.action==="entregado"?"Foto de evidencia":"Foto del incidente (opcional)"}
           </div>
           {fotoPreview?<div style={{position:"relative",borderRadius:12,overflow:"hidden",border:"1.5px solid "+BD2}}>
             <img src={fotoPreview} alt="preview" style={{width:"100%",display:"block",maxHeight:260,objectFit:"cover"}}/>
@@ -5715,6 +6088,11 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
             <input id={"foto-"+modalStop.idx} type="file" accept="image/*" capture="environment" onChange={pickPhoto} style={{display:"none"}}/>
           </label>}
         </div>
+        {/* Firma digital — solo para entregas */}
+        {modalStop.action==="entregado"&&<div style={{marginTop:13}}>
+          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Firma de quien recibió <span style={{color:ROSE}}>*</span></div>
+          <SignaturePad onChange={setFirmaData}/>
+        </div>}
         <button onClick={async()=>{
           setSubmitting(true);
           try{
@@ -5727,16 +6105,20 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
                 }
               }
             }
-            const notasFull = [receptor?"Recibió: "+receptor:"",comentario].filter(Boolean).join(" · ");
-            await updateStopStatus(modalStop.idx,modalStop.action,notasFull,fotoURL,receptor);
+            const incident = INCIDENT_TYPES.find(t=>t.id===incidentType);
+            const incidentLabel = modalStop.action==="problema"?(incident?.label||""):"";
+            const notasFull = modalStop.action==="entregado"
+              ? [receptor?"Recibió: "+receptor:"",comentario].filter(Boolean).join(" · ")
+              : [incidentLabel,comentario].filter(Boolean).join(" — ");
+            await updateStopStatus(modalStop.idx,modalStop.action,notasFull,fotoURL,receptor,firmaData,incidentLabel);
             // Notifica al cliente
-            if(ruta.clienteTel) notifyCliente(modalStop.action==="entregado"?"delivered":"issue",modalStop,fotoURL,notasFull);
-            showT(modalStop.action==="entregado"?"✓ Entrega confirmada":"⚠ Problema reportado");
+            if(ruta.clienteTel) notifyCliente(modalStop.action==="entregado"?"delivered":"issue",modalStop,fotoURL,notasFull,incidentLabel);
+            showT(modalStop.action==="entregado"?"✓ Entrega confirmada con firma":"⚠ Incidente reportado");
           }catch(e){showT(e.message,"err");}
           setSubmitting(false);
-          setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setReceptor("");
-        }} disabled={submitting||(modalStop.action==="entregado"&&!receptor.trim())} className="btn" style={{width:"100%",marginTop:14,background:modalStop.action==="entregado"&&!receptor.trim()?"#e0e0e0":(modalStop.action==="entregado"?"linear-gradient(135deg,"+GREEN+",#10b981)":"linear-gradient(135deg,"+ROSE+",#f43f5e)"),color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
-          {submitting?<><div className="spin" style={{width:14,height:14,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Enviando…</>:<><CheckCircle size={14}/>Confirmar</>}
+          setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setReceptor("");setFirmaData("");setIncidentType("ausente");
+        }} disabled={submitting||(modalStop.action==="entregado"&&(!receptor.trim()||!firmaData))} className="btn" style={{width:"100%",marginTop:14,background:modalStop.action==="entregado"&&(!receptor.trim()||!firmaData)?"#e0e0e0":(modalStop.action==="entregado"?"linear-gradient(135deg,"+GREEN+",#10b981)":"linear-gradient(135deg,"+ROSE+",#f43f5e)"),color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+          {submitting?<><div className="spin" style={{width:14,height:14,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Enviando…</>:modalStop.action==="entregado"&&(!receptor.trim()||!firmaData)?"Falta receptor y firma":<><CheckCircle size={14}/>Confirmar</>}
         </button>
       </Modal>}
     </div>
