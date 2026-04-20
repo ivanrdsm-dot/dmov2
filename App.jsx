@@ -3,6 +3,7 @@ import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
   doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
 } from "firebase/firestore";
 import {
   Truck, Package, FileText, LayoutDashboard, DollarSign, Plus,
@@ -31,7 +32,17 @@ const firebaseConfig = {
   appId:             import.meta.env.VITE_FIREBASE_APP_ID             || "1:525995422237:web:e69d7e7dd76ac9640c8cf4",
 };
 const fbApp = initializeApp(firebaseConfig);
-const db   = getFirestore(fbApp);
+// Firestore con offline persistence (IndexedDB) — el chofer puede seguir
+// registrando entregas sin señal; al volver conexión se sincroniza solo.
+let db;
+try{
+  db = initializeFirestore(fbApp,{
+    localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()}),
+  });
+}catch(e){
+  // Fallback si el navegador no soporta persistencia (modo incógnito estricto)
+  db = getFirestore(fbApp);
+}
 
 /* Helper: Comprime imagen en cliente a JPEG pequeño y retorna base64.
    No requiere Firebase Storage ni billing. Se guarda directo en Firestore. */
@@ -259,6 +270,12 @@ button:focus-visible{outline:2px solid ${A};outline-offset:2px;border-radius:8px
 .skel{background:linear-gradient(90deg,#e8eef6 25%,#f1f4fb 50%,#e8eef6 75%);background-size:200% 100%;animation:shimmer 1.5s ease infinite;border-radius:8px}
 .pulse{animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite}
 .glass{background:rgba(255,255,255,.82);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%)}
+/* Dark mode automatico para app chofer (sistema operativo oscuro = menos fatiga visual de noche + ahorra bateria OLED) */
+@media (prefers-color-scheme: dark){
+  body.chofer-mode{background:#0a1628!important}
+  body.chofer-mode .card-auto{background:#1a2740!important;color:#e8eef6!important;border-color:#2a3a55!important}
+  body.chofer-mode input,body.chofer-mode textarea,body.chofer-mode select{background:#1a2740!important;color:#fff!important;border-color:#2a3a55!important}
+}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .table-wrap table{min-width:800px}
 .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
@@ -991,6 +1008,101 @@ function Toast({msg,type,onClose}){
     </div>
   );
 }
+/* BarcodeQuickScan: escanea códigos de barras / QR con la cámara.
+   Usa la Barcode Detection API nativa cuando está disponible (Chrome mobile, Edge).
+   Fallback: permite input manual del código. */
+function BarcodeQuickScan({onScan}){
+  const [scanning,setScanning]=useState(false);
+  const [code,setCode]=useState("");
+  const [manual,setManual]=useState(false);
+  const videoRef=useRef(null);
+  const streamRef=useRef(null);
+  const scanLoopRef=useRef(null);
+  const supported = typeof window!=="undefined"&&"BarcodeDetector" in window;
+
+  const start=async()=>{
+    if(!supported){setManual(true);return;}
+    setScanning(true);
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+      streamRef.current = stream;
+      if(videoRef.current){
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      const detector = new window.BarcodeDetector({formats:["qr_code","code_128","code_39","ean_13","ean_8","upc_a","upc_e","itf","pdf417"]});
+      const tick = async()=>{
+        if(!videoRef.current||!streamRef.current) return;
+        try{
+          const codes = await detector.detect(videoRef.current);
+          if(codes&&codes[0]?.rawValue){
+            const val = codes[0].rawValue;
+            setCode(val);
+            onScan(val);
+            stop();
+            return;
+          }
+        }catch(e){}
+        scanLoopRef.current = requestAnimationFrame(tick);
+      };
+      scanLoopRef.current = requestAnimationFrame(tick);
+    }catch(e){
+      setScanning(false);
+      setManual(true);
+    }
+  };
+  const stop=()=>{
+    if(scanLoopRef.current) cancelAnimationFrame(scanLoopRef.current);
+    if(streamRef.current){
+      streamRef.current.getTracks().forEach(t=>t.stop());
+      streamRef.current = null;
+    }
+    setScanning(false);
+  };
+  useEffect(()=>()=>stop(),[]);
+
+  if(code){
+    return(
+      <div style={{background:GREEN+"10",border:"1.5px solid "+GREEN+"40",borderRadius:10,padding:"10px 12px",marginBottom:11,display:"flex",alignItems:"center",gap:10}}>
+        <div style={{fontSize:18}}>📦</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:9,fontWeight:800,color:GREEN,letterSpacing:"0.05em",textTransform:"uppercase"}}>Código escaneado</div>
+          <div style={{fontFamily:MONO,fontSize:12,fontWeight:700,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{code}</div>
+        </div>
+        <button onClick={()=>{setCode("");setManual(false);}} className="btn" type="button" style={{color:MUTED,padding:4,border:"1px solid "+BD2,borderRadius:6,fontSize:10}}>Otro</button>
+      </div>
+    );
+  }
+  if(scanning){
+    return(
+      <div style={{border:"2px solid "+BLUE+"50",borderRadius:10,overflow:"hidden",marginBottom:11,position:"relative",background:"#000"}}>
+        <video ref={videoRef} style={{width:"100%",height:180,objectFit:"cover",display:"block"}} playsInline muted/>
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+          <div style={{width:"70%",maxWidth:200,height:100,border:"3px solid #fff",borderRadius:10,boxShadow:"0 0 0 9999px rgba(0,0,0,.3)"}}/>
+        </div>
+        <button onClick={stop} type="button" className="btn" style={{position:"absolute",top:8,right:8,background:"rgba(12,24,41,.75)",color:"#fff",borderRadius:8,padding:"4px 10px",fontSize:11,fontWeight:700}}>Cancelar</button>
+        <div style={{position:"absolute",bottom:8,left:0,right:0,textAlign:"center",color:"#fff",fontSize:11,textShadow:"0 1px 4px rgba(0,0,0,.8)"}}>Apunta al código del paquete</div>
+      </div>
+    );
+  }
+  if(manual){
+    return(
+      <div style={{marginBottom:11}}>
+        <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Código del paquete (manual)</div>
+        <div style={{display:"flex",gap:6}}>
+          <input value={code} onChange={e=>setCode(e.target.value)} onBlur={()=>code&&onScan(code)} placeholder="Ej: ABC-12345" style={{flex:1,background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:13,fontFamily:MONO}}/>
+          <button type="button" onClick={()=>setManual(false)} className="btn" style={{padding:"0 12px",border:"1px solid "+BD2,borderRadius:8,color:MUTED,fontSize:11}}>✕</button>
+        </div>
+      </div>
+    );
+  }
+  return(
+    <button type="button" onClick={start} className="btn" style={{width:"100%",padding:"10px 0",marginBottom:11,borderRadius:10,background:BLUE+"08",border:"1.5px dashed "+BLUE+"40",color:BLUE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+      📱 Escanear código de paquete {!supported&&"(manual)"}
+    </button>
+  );
+}
+
 /* SignaturePad: firma digital con canvas (touch + mouse) — retorna dataURL PNG */
 function SignaturePad({onChange,height=160,background="#fff",color="#0c1829"}){
   const canvasRef=useRef(null);
@@ -5195,6 +5307,19 @@ function ChoferApp(){
   const [toast,setToast]=useState(null);
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
 
+  // Marca body para dark mode automático en app chofer
+  useEffect(()=>{
+    document.body.classList.add("chofer-mode");
+    return()=>document.body.classList.remove("chofer-mode");
+  },[]);
+
+  // Pide permiso de notificaciones al login (para alertas de nueva ruta)
+  useEffect(()=>{
+    if(chofer&&"Notification" in window&&Notification.permission==="default"){
+      Notification.requestPermission().catch(()=>{});
+    }
+  },[chofer]);
+
   const logout=()=>{localStorage.removeItem("dmov_chofer");setChofer(null);};
 
   const login=async(tel,codigo)=>{
@@ -5272,10 +5397,34 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   const [justFinished,setJustFinished]=useState(null); // muestra celebración post-completar
   const watchIdRef = useRef(null);
 
+  const prevRutaIdsRef = useRef(null);
   useEffect(()=>{
     const q = query(collection(db,"rutas"),where("choferId","==",chofer.id));
     return onSnapshot(q,s=>{
       const items = s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      // Detecta rutas nuevas asignadas (para notificación + vibración)
+      const prevIds = prevRutaIdsRef.current;
+      if(prevIds){
+        const nuevas = items.filter(r=>!prevIds.has(r.id)&&r.status!=="Completada"&&r.status!=="Cancelada");
+        nuevas.forEach(r=>{
+          // Vibración del celular
+          try{navigator.vibrate&&navigator.vibrate([180,90,180,90,250]);}catch(e){}
+          // Notificación nativa del OS (si hay permiso)
+          if("Notification" in window&&Notification.permission==="granted"){
+            try{
+              new Notification("📦 Nueva ruta asignada",{
+                body: r.nombre + (r.cliente?" — "+r.cliente:""),
+                icon: "/icon.svg",
+                badge: "/icon.svg",
+                vibrate: [180,90,180,90,250],
+                tag: "new-route-"+r.id,
+              });
+            }catch(e){}
+          }
+          setToast({msg:"🚚 Nueva ruta: "+r.nombre,type:"ok"});
+        });
+      }
+      prevRutaIdsRef.current = new Set(items.map(r=>r.id));
       setMisRutas(items);
       // auto-select active route if tracking
       if(tracking&&activeRuta){
@@ -5436,19 +5585,22 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           </div>
         </div>
 
-        {/* Tabs: Hoy · Rutas · Historial · Perfil */}
-        <div style={{display:"flex",gap:3,marginBottom:12,background:"#fff",padding:4,borderRadius:12,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-          <button onClick={()=>setTabChofer("hoy")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="hoy"?BLUE:"transparent",color:tabChofer==="hoy"?"#fff":MUTED,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-            <Calendar size={11}/>Hoy ({paradasPendientes.length})
+        {/* Tabs: Hoy · Rutas · Gastos · Historial · Perfil */}
+        <div style={{display:"flex",gap:2,marginBottom:12,background:"#fff",padding:3,borderRadius:12,boxShadow:"0 1px 4px rgba(12,24,41,.04)",overflowX:"auto"}}>
+          <button onClick={()=>setTabChofer("hoy")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="hoy"?BLUE:"transparent",color:tabChofer==="hoy"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
+            <Calendar size={10}/>Hoy ({paradasPendientes.length})
           </button>
-          <button onClick={()=>setTabChofer("activas")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="activas"?A:"transparent",color:tabChofer==="activas"?"#fff":MUTED,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-            <Play size={11}/>Rutas ({rutasActivas.length})
+          <button onClick={()=>setTabChofer("activas")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="activas"?A:"transparent",color:tabChofer==="activas"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
+            <Play size={10}/>Rutas ({rutasActivas.length})
           </button>
-          <button onClick={()=>setTabChofer("historial")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="historial"?GREEN:"transparent",color:tabChofer==="historial"?"#fff":MUTED,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-            <CheckCircle size={11}/>Historial ({rutasCompletadas.length})
+          <button onClick={()=>setTabChofer("gastos")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="gastos"?AMBER:"transparent",color:tabChofer==="gastos"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
+            <DollarSign size={10}/>Gastos
           </button>
-          <button onClick={()=>setTabChofer("perfil")} className="btn" style={{flex:1,padding:"9px 0",borderRadius:9,background:tabChofer==="perfil"?VIOLET:"transparent",color:tabChofer==="perfil"?"#fff":MUTED,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-            <Shield size={11}/>Perfil
+          <button onClick={()=>setTabChofer("historial")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="historial"?GREEN:"transparent",color:tabChofer==="historial"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
+            <CheckCircle size={10}/>Historial ({rutasCompletadas.length})
+          </button>
+          <button onClick={()=>setTabChofer("perfil")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="perfil"?VIOLET:"transparent",color:tabChofer==="perfil"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
+            <Shield size={10}/>Perfil
           </button>
         </div>
 
@@ -5577,6 +5729,9 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           );
         }))}
 
+        {/* TAB: GASTOS — combustible/casetas con foto ticket */}
+        {tabChofer==="gastos"&&<ChoferGastos chofer={chofer} showT={showT}/>}
+
         {/* TAB: PERFIL — stats históricas del chofer */}
         {tabChofer==="perfil"&&<ChoferPerfil chofer={chofer} misRutas={misRutas} rutasCompletadas={rutasCompletadas} onLogout={onLogout}/>}
       </div>}
@@ -5584,8 +5739,226 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   );
 }
 
-/* Perfil del chofer — stats totales + datos + logout */
+/* ChoferGastos — registro de combustible, casetas, viáticos con foto del ticket */
+const GASTO_TIPOS = [
+  {id:"gasolina", label:"Gasolina",  emoji:"⛽", color:"#f97316"},
+  {id:"caseta",   label:"Caseta",    emoji:"🛣️", color:"#2563eb"},
+  {id:"comida",   label:"Comida",    emoji:"🍽️", color:"#059669"},
+  {id:"hotel",    label:"Hotel",     emoji:"🏨", color:"#7c3aed"},
+  {id:"estacionamiento",label:"Estacion.",emoji:"🅿️",color:"#0891b2"},
+  {id:"mantenimiento",label:"Taller",emoji:"🔧", color:"#d97706"},
+  {id:"otro",     label:"Otro",      emoji:"📋", color:"#607080"},
+];
+function ChoferGastos({chofer,showT}){
+  const [gastos,setGastos]=useState([]);
+  const [loadG,setLoadG]=useState(true);
+  const [showForm,setShowForm]=useState(false);
+  const [tipo,setTipo]=useState("gasolina");
+  const [monto,setMonto]=useState("");
+  const [nota,setNota]=useState("");
+  const [fotoFile,setFotoFile]=useState(null);
+  const [fotoPreview,setFotoPreview]=useState("");
+  const [saving,setSaving]=useState(false);
+
+  useEffect(()=>{
+    const q = query(collection(db,"gastosChofer"),where("choferId","==",chofer.id));
+    return onSnapshot(q,s=>{
+      setGastos(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.fechaTs?.seconds||0)-(a.fechaTs?.seconds||0)));
+      setLoadG(false);
+    });
+  },[chofer.id]);
+
+  const pickPhoto=(e)=>{
+    const f = e.target.files?.[0];
+    if(!f) return;
+    setFotoFile(f);
+    const r = new FileReader();
+    r.onload = ev=>setFotoPreview(ev.target.result);
+    r.readAsDataURL(f);
+  };
+
+  const resetForm=()=>{setTipo("gasolina");setMonto("");setNota("");setFotoFile(null);setFotoPreview("");setShowForm(false);};
+
+  const handleSave = async()=>{
+    const amount = parseFloat(monto);
+    if(!amount||amount<=0){showT("Monto inválido","err");return;}
+    setSaving(true);
+    try{
+      let ticketURL="";
+      if(fotoFile){
+        try{ticketURL = await uploadEvidencia(fotoFile);}catch(e){}
+      }
+      await addDoc(collection(db,"gastosChofer"),{
+        choferId:chofer.id,
+        choferNombre:chofer.nombre,
+        choferTel:chofer.tel||"",
+        tipo,
+        monto:amount,
+        nota:nota||"",
+        ticketURL,
+        fechaTs:serverTimestamp(),
+        estado:"pendiente", // pendiente | reembolsado | rechazado (admin lo cambia)
+        createdAt:serverTimestamp(),
+      });
+      showT("✓ Gasto registrado");
+      resetForm();
+    }catch(e){showT(e.message,"err");}
+    setSaving(false);
+  };
+
+  const hoyStr = new Date().toISOString().slice(0,10);
+  const gastosHoy = gastos.filter(g=>{
+    const ts = g.fechaTs?.seconds;
+    if(!ts) return false;
+    return new Date(ts*1000).toISOString().slice(0,10)===hoyStr;
+  });
+  const totalHoy = gastosHoy.reduce((a,g)=>a+(g.monto||0),0);
+  const totalMes = gastos.filter(g=>{
+    const ts = g.fechaTs?.seconds;
+    if(!ts) return false;
+    const d = new Date(ts*1000);
+    const now = new Date();
+    return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
+  }).reduce((a,g)=>a+(g.monto||0),0);
+  const pendientes = gastos.filter(g=>g.estado==="pendiente").length;
+  const pendientesMonto = gastos.filter(g=>g.estado==="pendiente").reduce((a,g)=>a+(g.monto||0),0);
+
+  return(
+    <>
+      {/* Resumen */}
+      <div style={{background:"linear-gradient(135deg,"+AMBER+",#f59e0b)",borderRadius:14,padding:16,marginBottom:12,color:"#fff",boxShadow:"0 4px 16px "+AMBER+"30"}}>
+        <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.08em",textTransform:"uppercase",opacity:.85,marginBottom:8}}>💰 Resumen</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div>
+            <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{fmt(totalHoy)}</div>
+            <div style={{fontSize:10,opacity:.85,marginTop:3}}>Hoy · {gastosHoy.length} gastos</div>
+          </div>
+          <div>
+            <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{fmt(totalMes)}</div>
+            <div style={{fontSize:10,opacity:.85,marginTop:3}}>Este mes</div>
+          </div>
+        </div>
+        {pendientes>0&&<div style={{marginTop:10,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.2)",fontSize:11}}>
+          ⏳ {pendientes} pendiente{pendientes===1?"":"s"} de reembolso · {fmt(pendientesMonto)}
+        </div>}
+      </div>
+
+      {/* Botón agregar */}
+      {!showForm&&<button onClick={()=>setShowForm(true)} className="btn" style={{width:"100%",padding:"14px 0",borderRadius:12,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",fontFamily:DISP,fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7,boxShadow:"0 4px 16px "+A+"30",marginBottom:12}}>
+        <Plus size={15}/>Registrar gasto nuevo
+      </button>}
+
+      {/* Form nuevo gasto */}
+      {showForm&&<div style={{background:"#fff",borderRadius:14,padding:14,marginBottom:12,boxShadow:"0 4px 14px rgba(12,24,41,.08)",border:"1.5px solid "+A+"40"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:TEXT}}>Nuevo gasto</div>
+          <button onClick={resetForm} className="btn" style={{color:MUTED,padding:4}}><X size={14}/></button>
+        </div>
+        {/* Tipos */}
+        <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Tipo</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginBottom:12}}>
+          {GASTO_TIPOS.map(t=>(
+            <button key={t.id} type="button" onClick={()=>setTipo(t.id)} className="btn" style={{padding:"8px 4px",borderRadius:9,border:"1.5px solid "+(tipo===t.id?t.color:BD2),background:tipo===t.id?t.color+"12":"#fff",color:tipo===t.id?t.color:TEXT,fontWeight:700,fontSize:10,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+              <span style={{fontSize:18}}>{t.emoji}</span>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {/* Monto */}
+        <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Monto (MXN) *</div>
+        <div style={{position:"relative",marginBottom:12}}>
+          <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:MUTED,fontFamily:MONO,fontSize:16,fontWeight:700}}>$</span>
+          <input type="number" inputMode="decimal" value={monto} onChange={e=>setMonto(e.target.value)} placeholder="0.00" style={{width:"100%",paddingLeft:28,paddingRight:13,paddingTop:12,paddingBottom:12,background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,fontFamily:MONO,fontSize:18,fontWeight:800,color:A}}/>
+        </div>
+        {/* Nota */}
+        <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Nota (opcional)</div>
+        <input value={nota} onChange={e=>setNota(e.target.value)} placeholder="Ej: Caseta México-Puebla" style={{width:"100%",padding:"10px 13px",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,fontSize:13,marginBottom:12}}/>
+        {/* Ticket */}
+        <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Foto del ticket</div>
+        {fotoPreview?<div style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1.5px solid "+BD2,marginBottom:12}}>
+          <img src={fotoPreview} style={{width:"100%",maxHeight:200,objectFit:"cover",display:"block"}}/>
+          <button onClick={()=>{setFotoFile(null);setFotoPreview("");}} className="btn" style={{position:"absolute",top:6,right:6,background:"rgba(12,24,41,.7)",color:"#fff",borderRadius:"50%",width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center"}}><X size={13}/></button>
+        </div>
+        :<label htmlFor="gasto-foto" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,padding:"16px 10px",background:AMBER+"08",border:"2px dashed "+AMBER+"40",borderRadius:10,cursor:"pointer",color:AMBER,fontWeight:700,fontSize:12,marginBottom:12}}>
+          <Camera size={15}/>Tomar foto ticket
+          <input id="gasto-foto" type="file" accept="image/*" capture="environment" onChange={pickPhoto} style={{display:"none"}}/>
+        </label>}
+        <button onClick={handleSave} disabled={saving||!monto||parseFloat(monto)<=0} className="btn" style={{width:"100%",padding:"12px 0",borderRadius:11,background:!monto||parseFloat(monto)<=0?"#e0e0e0":"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+          {saving?<><div className="spin" style={{width:14,height:14,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Guardando…</>:<><Check size={14}/>Registrar gasto</>}
+        </button>
+      </div>}
+
+      {/* Lista de gastos */}
+      {loadG&&<SkeletonRows n={3}/>}
+      {!loadG&&gastos.length===0&&!showForm&&<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+        <DollarSign size={32} color={BD2} style={{marginBottom:8}}/>
+        <div style={{fontWeight:700,color:TEXT,fontSize:14,marginBottom:3}}>Sin gastos registrados</div>
+        <div style={{fontSize:11,marginTop:4}}>Registra combustible, casetas, etc.</div>
+      </div>}
+      {gastos.map(g=>{
+        const t = GASTO_TIPOS.find(x=>x.id===g.tipo)||GASTO_TIPOS[GASTO_TIPOS.length-1];
+        const fecha = g.fechaTs?.seconds?new Date(g.fechaTs.seconds*1000).toLocaleDateString("es-MX",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—";
+        const estadoColor = g.estado==="reembolsado"?GREEN:g.estado==="rechazado"?ROSE:AMBER;
+        const estadoLabel = g.estado==="reembolsado"?"✓ Reembolsado":g.estado==="rechazado"?"✕ Rechazado":"⏳ Pendiente";
+        return(
+          <div key={g.id} style={{background:"#fff",borderRadius:14,padding:12,marginBottom:8,boxShadow:"0 1px 4px rgba(12,24,41,.04)",display:"flex",alignItems:"center",gap:11,border:"1px solid "+BORDER}}>
+            <div style={{width:40,height:40,borderRadius:10,background:t.color+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{t.emoji}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:6}}>
+                <div style={{fontWeight:700,fontSize:13,color:TEXT}}>{t.label}</div>
+                <div style={{fontFamily:MONO,fontSize:15,fontWeight:900,color:t.color}}>{fmt(g.monto)}</div>
+              </div>
+              {g.nota&&<div style={{fontSize:11,color:MUTED,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.nota}</div>}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4,gap:6}}>
+                <div style={{fontSize:10,color:MUTED}}>{fecha}</div>
+                <Tag color={estadoColor} sm>{estadoLabel}</Tag>
+              </div>
+            </div>
+            {g.ticketURL&&<img src={g.ticketURL} alt="ticket" style={{width:40,height:40,borderRadius:8,objectFit:"cover",flexShrink:0,cursor:"pointer"}} onClick={()=>{const w=window.open();w.document.write(`<img src="${g.ticketURL}" style="max-width:100%"/>`);}}/>}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/* Perfil del chofer — stats totales + checkin/checkout + datos + logout */
 function ChoferPerfil({chofer,misRutas,rutasCompletadas,onLogout}){
+  // Checkin/Checkout — jornadas del chofer (horas trabajadas)
+  const [jornadaActiva,setJornadaActiva]=useState(null);
+  const [jornadasHoy,setJornadasHoy]=useState([]);
+  const hoyStr = new Date().toISOString().slice(0,10);
+  useEffect(()=>{
+    const q = query(collection(db,"jornadas"),where("choferId","==",chofer.id));
+    return onSnapshot(q,s=>{
+      const items = s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.inTs?.seconds||0)-(a.inTs?.seconds||0));
+      const activa = items.find(j=>!j.outTs);
+      setJornadaActiva(activa||null);
+      const today = items.filter(j=>{
+        const ts = j.inTs?.seconds;
+        if(!ts) return false;
+        const d = new Date(ts*1000);
+        return d.toISOString().slice(0,10)===hoyStr;
+      });
+      setJornadasHoy(today);
+    });
+  },[chofer.id]);
+  const checkin = async()=>{
+    if(jornadaActiva){return;}
+    await addDoc(collection(db,"jornadas"),{choferId:chofer.id,choferNombre:chofer.nombre,choferTel:chofer.tel||"",inTs:serverTimestamp(),outTs:null,fechaStr:hoyStr,createdAt:serverTimestamp()});
+  };
+  const checkout = async()=>{
+    if(!jornadaActiva) return;
+    if(!confirm("¿Cerrar jornada?")) return;
+    await updateDoc(doc(db,"jornadas",jornadaActiva.id),{outTs:serverTimestamp()});
+  };
+  const horasHoy = jornadasHoy.reduce((a,j)=>{
+    const inT = j.inTs?.seconds, outT = j.outTs?.seconds||Date.now()/1000;
+    if(inT) return a+(outT-inT)/3600;
+    return a;
+  },0);
+
+  // Recálculo de stats históricas
   const totalEntregas = rutasCompletadas.reduce((a,r)=>a+((r.stopsStatus||[]).filter(s=>s.status==="entregado").length),0);
   const totalKm = rutasCompletadas.reduce((a,r)=>a+(r.totalKm||0),0);
   const totalHoras = rutasCompletadas.reduce((a,r)=>{
@@ -5621,6 +5994,32 @@ function ChoferPerfil({chofer,misRutas,rutasCompletadas,onLogout}){
           <div style={{fontSize:11,opacity:.85}}>{chofer.placa||"Sin placa"}{chofer.vehiculo?" · "+chofer.vehiculo:""}</div>
           {antiguedadDias>0&&<div style={{fontSize:10,marginTop:4,opacity:.75}}>{antiguedadDias} días activo en DMvimiento</div>}
         </div>
+      </div>
+
+      {/* Checkin / Checkout de jornada */}
+      <div style={{background:"#fff",borderRadius:14,padding:14,marginBottom:14,boxShadow:"0 1px 4px rgba(12,24,41,.04)",border:jornadaActiva?"2px solid "+GREEN+"45":"1px solid "+BORDER}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase"}}>⏰ Jornada laboral</div>
+          {jornadaActiva&&<Tag color={GREEN} sm><span className="pulse">● </span>ACTIVA</Tag>}
+        </div>
+        {jornadaActiva?<>
+          <div style={{fontSize:12,color:TEXT,marginBottom:4}}>
+            Entrada: <strong>{jornadaActiva.inTs?.seconds?new Date(jornadaActiva.inTs.seconds*1000).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}):"—"}</strong>
+          </div>
+          <div style={{fontSize:12,color:TEXT,marginBottom:10}}>
+            Tiempo transcurrido: <strong style={{fontFamily:MONO,color:GREEN}}>{horasHoy.toFixed(2)} h</strong>
+          </div>
+          <button onClick={checkout} className="btn" style={{width:"100%",padding:"11px 0",borderRadius:10,background:"linear-gradient(135deg,"+ROSE+",#f43f5e)",color:"#fff",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <Square size={13}/>Cerrar jornada
+          </button>
+        </>:<>
+          <div style={{fontSize:12,color:MUTED,marginBottom:10}}>
+            {jornadasHoy.length>0?"Hoy trabajaste "+horasHoy.toFixed(2)+" h en "+jornadasHoy.length+" jornada"+(jornadasHoy.length===1?"":"s"):"Aún no has iniciado jornada hoy"}
+          </div>
+          <button onClick={checkin} className="btn" style={{width:"100%",padding:"11px 0",borderRadius:10,background:"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+            <Play size={13}/>Iniciar jornada (checkin)
+          </button>
+        </>}
       </div>
 
       {/* Stats hero grid */}
@@ -6046,7 +6445,16 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
       </div>
 
       {/* Sticky bottom controls */}
-      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1px solid "+BORDER,padding:"10px 14px",display:"flex",gap:8,boxShadow:"0 -4px 16px rgba(12,24,41,.08)"}}>
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1px solid "+BORDER,padding:"10px 14px",display:"flex",gap:8,boxShadow:"0 -4px 16px rgba(12,24,41,.08)",zIndex:50}}>
+        <button onClick={async()=>{
+          if(!confirm("⚠️ ENVIAR SOS?\n\nSe notificará al administrador de inmediato con tu ubicación actual. Solo usa esto en emergencia.")) return;
+          try{navigator.vibrate&&navigator.vibrate([400,100,400]);}catch(e){}
+          const coords = myLoc||{lat:0,lng:0};
+          await postAlert(ruta.id,chofer.id,chofer.nombre,"sos","🚨 SOS EMERGENCIA - Chofer solicita ayuda inmediata",{lat:coords.lat,lng:coords.lng,timestamp:Date.now(),critical:true}).catch(()=>{});
+          showT("🚨 SOS enviado al administrador");
+        }} className="btn" style={{padding:"12px 14px",borderRadius:11,background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",fontFamily:DISP,fontWeight:900,fontSize:14,display:"flex",alignItems:"center",gap:5,boxShadow:"0 6px 18px #dc262655"}}>
+          <AlertCircle size={15}/>SOS
+        </button>
         <button onClick={()=>{if(confirm("¿Terminar ruta y regresar al inicio?"))onStop();}} className="btn" style={{flex:1,padding:"12px 0",borderRadius:11,background:allDone?"linear-gradient(135deg,"+GREEN+",#10b981)":ROSE+"10",border:allDone?"none":"1.5px solid "+ROSE+"30",color:allDone?"#fff":ROSE,fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
           {allDone?<><Flag size={14}/>Finalizar ruta</>:<><Square size={13}/>Terminar</>}
         </button>
@@ -6069,10 +6477,16 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
             ))}
           </div>
         </div>}
-        {modalStop.action==="entregado"&&<div style={{marginBottom:11}}>
-          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Nombre de quien recibió <span style={{color:ROSE}}>*</span></div>
-          <input value={receptor} onChange={e=>setReceptor(e.target.value)} placeholder="Juan Pérez" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14}}/>
-        </div>}
+        {modalStop.action==="entregado"&&<>
+          {/* Escáner de código de barras / QR (opcional, si el navegador lo soporta) */}
+          <BarcodeQuickScan onScan={(code)=>{
+            setComentario(prev=>prev?prev+" · Cód: "+code:"Cód: "+code);
+          }}/>
+          <div style={{marginBottom:11}}>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Nombre de quien recibió <span style={{color:ROSE}}>*</span></div>
+            <input value={receptor} onChange={e=>setReceptor(e.target.value)} placeholder="Juan Pérez" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14}}/>
+          </div>
+        </>}
         <Txt label={modalStop.action==="entregado"?"Comentarios / Observaciones":"Detalle del incidente"} value={comentario} onChange={e=>setComentario(e.target.value)} placeholder={modalStop.action==="entregado"?"Sin observaciones":"Explica con más detalle…"}/>
         {/* Foto evidencia */}
         <div style={{marginTop:13}}>
