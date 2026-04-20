@@ -1327,6 +1327,255 @@ function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",
   );
 }
 
+/* Reverse geocoding: lat/lng → dirección humana (Search Box API /reverse) */
+async function reverseGeocode(lng,lat){
+  if(!MAPBOX_TOKEN) return null;
+  try{
+    const url = `https://api.mapbox.com/search/searchbox/v1/reverse?longitude=${lng}&latitude=${lat}&access_token=${MAPBOX_TOKEN}&language=es&limit=1`;
+    const r = await fetch(url);
+    if(!r.ok) return null;
+    const d = await r.json();
+    const f = d.features?.[0];
+    if(!f) return null;
+    return {
+      name: f.properties?.name || f.properties?.place_formatted || "Ubicación",
+      address: f.properties?.full_address || f.properties?.place_formatted || "",
+      lat, lng,
+      category: f.properties?.feature_type || "",
+      id: f.properties?.mapbox_id || `drop_${Date.now()}`,
+    };
+  }catch(e){console.warn("reverseGeocode",e);return null;}
+}
+
+/* LocationPicker: modal estilo Google Maps — buscador + lista + mapa interactivo
+   - Resultados como pins clickeables en el mapa
+   - Click en mapa → suelta pin manual con reverse geocoding
+   - Drag de pin → actualiza dirección en vivo
+   - Confirma y devuelve {name,address,lat,lng} al padre */
+function LocationPicker({onClose,onSelect,initialQuery="",proximity=null,bbox=null,cityHint="",title="Agregar ubicación"}){
+  const [q,setQ]=useState(initialQuery);
+  const [suggestions,setSuggestions]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [selected,setSelected]=useState(null); // {name,address,lat,lng,id}
+  const [hoverId,setHoverId]=useState(null);
+  const [authError,setAuthError]=useState(false);
+  const [mapReady,setMapReady]=useState(false);
+  const mapCont=useRef(null);
+  const mapRef=useRef(null);
+  const markersRef=useRef({});
+  const pickMarkerRef=useRef(null);
+  const sessionTokRef=useRef(null);
+  const timerRef=useRef(null);
+  if(!sessionTokRef.current) sessionTokRef.current=(crypto?.randomUUID?.()||Date.now().toString(36));
+
+  // Inicializa el mapa
+  useEffect(()=>{
+    if(!MAPBOX_TOKEN||!mapCont.current||mapRef.current) return;
+    const center = proximity||(bbox?[(bbox[0]+bbox[2])/2,(bbox[1]+bbox[3])/2]:MX_CENTER);
+    const m = new mapboxgl.Map({
+      container: mapCont.current,
+      style: "mapbox://styles/mapbox/streets-v12",
+      center,
+      zoom: bbox?10:5,
+      attributionControl:false,
+    });
+    m.addControl(new mapboxgl.NavigationControl({showCompass:false}),"top-right");
+    m.addControl(new mapboxgl.GeolocateControl({positionOptions:{enableHighAccuracy:true},trackUserLocation:false,showUserHeading:false}),"top-right");
+    // Fit bbox if available
+    if(bbox) m.fitBounds([[bbox[0],bbox[1]],[bbox[2],bbox[3]]],{padding:40,duration:0});
+    // Click to drop pin
+    m.on("click",async(e)=>{
+      const {lng,lat} = e.lngLat;
+      const place = await reverseGeocode(lng,lat) || {name:"Pin en el mapa",address:`${lat.toFixed(5)}, ${lng.toFixed(5)}`,lat,lng,id:`drop_${Date.now()}`};
+      setSelected(place);
+      setSuggestions([]);
+    });
+    m.on("load",()=>setMapReady(true));
+    mapRef.current=m;
+    return()=>{try{m.remove();}catch(e){}mapRef.current=null;};
+  },[]);
+
+  // Debounced suggest
+  useEffect(()=>{
+    if(!q||q.length<2){setSuggestions([]);return;}
+    if(!MAPBOX_TOKEN)return;
+    if(timerRef.current)clearTimeout(timerRef.current);
+    timerRef.current=setTimeout(async()=>{
+      setLoading(true);
+      const prox = proximity?`&proximity=${proximity[0]},${proximity[1]}`:"";
+      const bboxStr = bbox?`&bbox=${bbox.join(",")}`:"";
+      const url = `https://api.mapbox.com/search/searchbox/v1/suggest?q=${encodeURIComponent(q)}&access_token=${MAPBOX_TOKEN}&session_token=${sessionTokRef.current}&country=MX&language=es&limit=10${prox}${bboxStr}`;
+      try{
+        const r = await fetch(url);
+        if(!r.ok){
+          const body = await r.text();
+          if(r.status===401||/invalid token/i.test(body)) setAuthError(true);
+          setSuggestions([]);setLoading(false);return;
+        }
+        setAuthError(false);
+        const d = await r.json();
+        setSuggestions(d.suggestions||[]);
+      }catch(e){console.warn("picker suggest",e);setSuggestions([]);}
+      setLoading(false);
+    },220);
+    return()=>{if(timerRef.current)clearTimeout(timerRef.current);};
+  },[q,proximity,bbox]);
+
+  // Cuando hay sugerencias, resolverlas todas en paralelo para ponerles pin en el mapa
+  const [resolvedSugs,setResolvedSugs]=useState([]); // [{...sug, lng, lat}]
+  useEffect(()=>{
+    if(!suggestions.length){setResolvedSugs([]);return;}
+    let cancelled=false;
+    (async()=>{
+      // Resolve up to 8 suggestions (retrieve coords). Mapbox no cobra las resoluciones preview separadamente.
+      const resolved = await Promise.all(suggestions.slice(0,8).map(async s=>{
+        if(!s.mapbox_id) return null;
+        try{
+          const url = `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(s.mapbox_id)}?access_token=${MAPBOX_TOKEN}&session_token=${sessionTokRef.current}&language=es`;
+          const r = await fetch(url);
+          if(!r.ok) return null;
+          const d = await r.json();
+          const f = d.features?.[0];
+          if(!f) return null;
+          const [lng,lat] = f.geometry?.coordinates||[0,0];
+          return {...s, lng, lat, fullAddr: f.properties?.full_address||f.properties?.place_formatted||s.place_formatted||""};
+        }catch(e){return null;}
+      }));
+      if(!cancelled){
+        const good = resolved.filter(Boolean);
+        setResolvedSugs(good);
+        // Fit bounds al conjunto de resultados
+        if(good.length>0 && mapRef.current){
+          const bnds = new mapboxgl.LngLatBounds();
+          good.forEach(r=>bnds.extend([r.lng,r.lat]));
+          try{mapRef.current.fitBounds(bnds,{padding:80,maxZoom:15,duration:600});}catch(e){}
+        }
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[suggestions]);
+
+  // Renderiza pins de sugerencias
+  useEffect(()=>{
+    if(!mapReady||!mapRef.current) return;
+    // Limpia
+    Object.values(markersRef.current).forEach(m=>{try{m.remove();}catch(e){}});
+    markersRef.current={};
+    resolvedSugs.forEach((r,idx)=>{
+      const el = document.createElement("div");
+      el.style.cssText = `width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${A};box-shadow:0 4px 14px rgba(0,0,0,.3);border:2.5px solid #fff;cursor:pointer;display:flex;align-items:center;justify-content:center;`;
+      el.innerHTML = `<span style="transform:rotate(45deg);color:#fff;font-weight:800;font-size:12px;font-family:${SANS}">${idx+1}</span>`;
+      el.onmouseenter=()=>setHoverId(r.mapbox_id);
+      el.onmouseleave=()=>setHoverId(null);
+      el.onclick=(ev)=>{ev.stopPropagation();setSelected({name:r.name,address:r.fullAddr,lat:r.lat,lng:r.lng,id:r.mapbox_id,category:r.feature_type||""});};
+      const m = new mapboxgl.Marker({element:el,anchor:"bottom"}).setLngLat([r.lng,r.lat]).addTo(mapRef.current);
+      markersRef.current[r.mapbox_id]=m;
+    });
+  },[resolvedSugs,mapReady]);
+
+  // Pin de selección (el elegido) - draggeable
+  useEffect(()=>{
+    if(!mapReady||!mapRef.current) return;
+    if(pickMarkerRef.current){try{pickMarkerRef.current.remove();}catch(e){}pickMarkerRef.current=null;}
+    if(!selected) return;
+    const el = document.createElement("div");
+    el.style.cssText = `width:42px;height:42px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${VIOLET};box-shadow:0 6px 20px rgba(0,0,0,.35);border:3px solid #fff;cursor:grab;display:flex;align-items:center;justify-content:center;`;
+    el.innerHTML = `<span style="transform:rotate(45deg);color:#fff;font-weight:900;font-size:18px;">✓</span>`;
+    const m = new mapboxgl.Marker({element:el,anchor:"bottom",draggable:true}).setLngLat([selected.lng,selected.lat]).addTo(mapRef.current);
+    m.on("dragend",async()=>{
+      const {lng,lat} = m.getLngLat();
+      const place = await reverseGeocode(lng,lat) || {...selected,lat,lng,address:`${lat.toFixed(5)}, ${lng.toFixed(5)}`};
+      setSelected(place);
+    });
+    mapRef.current.flyTo({center:[selected.lng,selected.lat],zoom:Math.max(mapRef.current.getZoom(),14),duration:600});
+    pickMarkerRef.current=m;
+  },[selected,mapReady]);
+
+  const handleConfirm=()=>{
+    if(!selected) return;
+    onSelect({name:selected.name,address:selected.address,lat:selected.lat,lng:selected.lng,id:selected.id,category:selected.category||""});
+    onClose();
+  };
+
+  return(
+    <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(12,24,41,.55)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:24,backdropFilter:"blur(4px)"}}>
+      <div className="pi" style={{background:"#fff",borderRadius:18,width:"100%",maxWidth:1100,height:"82vh",maxHeight:720,boxShadow:"0 40px 90px rgba(0,0,0,.32)",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 18px",borderBottom:"1px solid "+BORDER,flexShrink:0}}>
+          <div style={{width:32,height:32,borderRadius:9,background:A+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><MapPin size={16} color={A}/></div>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:DISP,fontWeight:800,fontSize:15,color:TEXT}}>{title}</div>
+            <div style={{fontSize:11,color:MUTED}}>{cityHint?`Buscar en ${cityHint} · `:""}Click en un pin o en el mapa para soltar un alfiler</div>
+          </div>
+          <button onClick={onClose} className="btn" style={{width:32,height:32,borderRadius:10,border:"1px solid "+BD2,display:"flex",alignItems:"center",justifyContent:"center",color:MUTED}}><X size={16}/></button>
+        </div>
+        {/* Body */}
+        <div style={{flex:1,display:"flex",minHeight:0}}>
+          {/* Left panel: search + results */}
+          <div style={{width:360,borderRight:"1px solid "+BORDER,display:"flex",flexDirection:"column",minHeight:0,flexShrink:0}}>
+            <div style={{padding:"12px 14px",borderBottom:"1px solid "+BORDER,position:"relative"}}>
+              <Search size={14} color={MUTED} style={{position:"absolute",left:24,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}/>
+              <input autoFocus value={q} onChange={e=>setQ(e.target.value)} placeholder="Walmart, Estadio, dirección…"
+                style={{width:"100%",paddingLeft:34,paddingRight:32,paddingTop:10,paddingBottom:10,background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,fontSize:13}}/>
+              {loading&&<div className="spin" style={{position:"absolute",right:22,top:"50%",transform:"translateY(-50%)",width:13,height:13,border:"2px solid "+BD2,borderTop:"2px solid "+A,borderRadius:"50%"}}/>}
+            </div>
+            <div style={{flex:1,overflowY:"auto",minHeight:0}}>
+              {authError&&<div style={{padding:14,margin:12,background:ROSE+"10",border:"1.5px solid "+ROSE+"40",borderRadius:10,color:ROSE,fontSize:12,lineHeight:1.5}}>
+                <div style={{fontWeight:800,marginBottom:4}}>⚠ Token inválido</div>
+                Configura <code style={{fontFamily:MONO,background:"#fff",padding:"1px 5px",borderRadius:4}}>VITE_MAPBOX_TOKEN</code> en Vercel.
+              </div>}
+              {!q&&!selected&&<div style={{padding:"28px 20px",textAlign:"center",color:MUTED,fontSize:12,lineHeight:1.5}}>
+                <Search size={24} color={BD2} style={{marginBottom:8}}/>
+                <div style={{fontWeight:700,fontSize:13,color:TEXT,marginBottom:4}}>Buscar cualquier lugar de México</div>
+                Escribe un nombre de negocio, dirección, colonia o punto de interés.
+                <div style={{marginTop:14,padding:10,background:BLUE+"08",borderRadius:8,fontSize:11,color:BLUE,textAlign:"left"}}>
+                  💡 <strong>Tip:</strong> También puedes hacer click en cualquier punto del mapa para soltar un pin manual.
+                </div>
+              </div>}
+              {resolvedSugs.map((r,idx)=>(
+                <button key={r.mapbox_id} onClick={()=>setSelected({name:r.name,address:r.fullAddr,lat:r.lat,lng:r.lng,id:r.mapbox_id,category:r.feature_type||""})} onMouseEnter={()=>setHoverId(r.mapbox_id)} onMouseLeave={()=>setHoverId(null)}
+                  className="btn fr"
+                  style={{width:"100%",display:"flex",alignItems:"flex-start",gap:10,padding:"11px 14px",borderBottom:"1px solid "+BORDER,background:hoverId===r.mapbox_id?A+"06":"transparent",textAlign:"left",cursor:"pointer"}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:A,color:"#fff",fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>{idx+1}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:12,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</div>
+                    <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>{r.fullAddr||r.place_formatted}</div>
+                    {r.feature_type&&r.feature_type!=="address"&&<span style={{fontSize:9,color:VIOLET,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:3,display:"inline-block"}}>{r.feature_type.replace(/_/g," ")}</span>}
+                  </div>
+                </button>
+              ))}
+              {q.length>=2&&!loading&&resolvedSugs.length===0&&!authError&&<div style={{padding:"30px 20px",textAlign:"center",color:MUTED,fontSize:12}}>
+                Sin resultados para "{q}".<br/>Prueba otro término o haz click en el mapa.
+              </div>}
+            </div>
+            {/* Selection preview */}
+            {selected&&<div style={{padding:"12px 14px",borderTop:"2px solid "+VIOLET+"40",background:VIOLET+"06"}}>
+              <div style={{fontSize:9,fontWeight:800,color:VIOLET,letterSpacing:"0.05em",marginBottom:4}}>✓ UBICACIÓN ELEGIDA (arrástrala en el mapa para ajustar)</div>
+              <div style={{fontWeight:800,fontSize:13,color:TEXT,marginBottom:2,lineHeight:1.3}}>{selected.name}</div>
+              <div style={{fontSize:11,color:MUTED,lineHeight:1.4,marginBottom:6}}>{selected.address}</div>
+              <div style={{fontFamily:MONO,fontSize:10,color:MUTED,marginBottom:10}}>{selected.lat.toFixed(5)}, {selected.lng.toFixed(5)}</div>
+              <button onClick={handleConfirm} className="btn" style={{width:"100%",padding:"10px 14px",background:"linear-gradient(135deg,"+VIOLET+",#9d5cff)",color:"#fff",borderRadius:10,fontFamily:SANS,fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxShadow:"0 4px 16px "+VIOLET+"40"}}>
+                <Check size={14}/>Confirmar y agregar
+              </button>
+            </div>}
+          </div>
+          {/* Right panel: map */}
+          <div style={{flex:1,position:"relative",minWidth:0}}>
+            {!MAPBOX_TOKEN&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#f8f9fc",zIndex:10}}>
+              <div style={{textAlign:"center",padding:40,maxWidth:400}}>
+                <AlertCircle size={32} color={ROSE}/>
+                <div style={{fontSize:14,fontWeight:800,color:ROSE,marginTop:10}}>Mapbox no configurado</div>
+                <div style={{fontSize:12,color:MUTED,marginTop:6,lineHeight:1.5}}>Agrega la variable <code style={{fontFamily:MONO,background:"#fff",padding:"1px 5px",borderRadius:4,border:"1px solid "+BD2}}>VITE_MAPBOX_TOKEN</code> en Vercel y redeploy.</div>
+              </div>
+            </div>}
+            <div ref={mapCont} style={{width:"100%",height:"100%"}}/>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MiniBar({pct,color=A,h=4}){
   return <div style={{background:BORDER,borderRadius:4,height:h,overflow:"hidden"}}><div style={{background:color,width:Math.min(100,pct)+"%",height:"100%",borderRadius:4,transition:"width .4s"}}/></div>;
 }
@@ -2509,6 +2758,7 @@ function PlanificadorRutas(){
   const [saving,setSaving]=useState(false);
   const [toast,setToast]=useState(null);
   const [viewR,setViewR]=useState(null);
+  const [picker,setPicker]=useState(null); // {stopId, isOrigin}
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
 
   useEffect(()=>{
@@ -2588,6 +2838,22 @@ function PlanificadorRutas(){
   return(
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      {picker&&(()=>{
+        const s = stops.find(x=>x.id===picker.stopId);
+        if(!s) return null;
+        return <LocationPicker
+          title={picker.isOrigin?`Origen específico en ${s.city}`:`Punto de entrega en ${s.city}`}
+          cityHint={s.city}
+          bbox={s.cityBbox||CITY_BBOX[s.city]}
+          proximity={s.cityCenter}
+          onClose={()=>setPicker(null)}
+          onSelect={(place)=>{
+            const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:"",isOrigin:!!picker.isOrigin}];
+            updStop(s.id,"puntos",puntos);
+            showT("✓ Punto agregado: "+place.name);
+          }}
+        />;
+      })()}
       {!MAPBOX_TOKEN&&<div style={{background:ROSE+"10",border:"1.5px solid "+ROSE+"50",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",gap:10,alignItems:"flex-start"}}>
         <AlertCircle size={18} color={ROSE} style={{flexShrink:0,marginTop:1}}/>
         <div style={{flex:1,fontSize:12,color:TEXT,lineHeight:1.5}}>
@@ -2728,17 +2994,13 @@ function PlanificadorRutas(){
                         }} className="btn" style={{color:ROSE,padding:4}}><X size={11}/></button>
                       </div>
                     ))}
-                    {/* Agregar punto específico */}
-                    {!s.isOrigin&&MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:VIOLET+"04",border:"1.5px dashed "+VIOLET+"40",borderRadius:9,marginTop:6}}>
-                      <div style={{fontSize:9,fontWeight:800,color:VIOLET,marginBottom:6,letterSpacing:"0.05em"}}>+ AGREGAR PUNTO ESPECÍFICO EN {s.city.toUpperCase()}</div>
-                      <AddressSearch compact placeholder={"Ej: Walmart, Chedraui, dirección en "+s.city+"…"} bbox={s.cityBbox||CITY_BBOX[s.city]} proximity={s.cityCenter} cityHint={s.city} onSelect={(place)=>{
-                        const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:""}];
-                        updStop(s.id,"puntos",puntos);
-                      }}/>
-                    </div>}
-                    {s.isOrigin&&MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:BLUE+"04",border:"1.5px dashed "+BLUE+"40",borderRadius:9}}>
-                      <div style={{fontSize:9,fontWeight:800,color:BLUE,marginBottom:6,letterSpacing:"0.05em"}}>+ PUNTO DE ORIGEN ESPECÍFICO (bodega) EN {s.city.toUpperCase()}</div>
-                      <AddressSearch compact placeholder={"Ej: Bodega, dirección en "+s.city+"…"} bbox={s.cityBbox||CITY_BBOX[s.city]} proximity={s.cityCenter} cityHint={s.city} onSelect={(place)=>{
+                    {/* Agregar punto específico — ORIGEN */}
+                    {s.isOrigin&&MAPBOX_TOKEN&&<div style={{padding:"10px 12px",background:BLUE+"04",border:"1.5px dashed "+BLUE+"40",borderRadius:10,marginTop:4}}>
+                      <div style={{fontSize:9,fontWeight:800,color:BLUE,marginBottom:8,letterSpacing:"0.05em"}}>+ PUNTO DE ORIGEN ESPECÍFICO (bodega) EN {s.city.toUpperCase()}</div>
+                      <button onClick={()=>setPicker({stopId:s.id,isOrigin:true})} className="btn" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px 14px",background:"linear-gradient(135deg,"+BLUE+",#3b82f6)",color:"#fff",borderRadius:10,fontFamily:SANS,fontWeight:800,fontSize:13,boxShadow:"0 4px 14px "+BLUE+"30",marginBottom:8}}>
+                        <Map size={15}/>Abrir mapa y buscar
+                      </button>
+                      <AddressSearch compact placeholder={"Atajo: Bodega, dirección en "+s.city+"…"} bbox={s.cityBbox||CITY_BBOX[s.city]} proximity={s.cityCenter} cityHint={s.city} onSelect={(place)=>{
                         const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:"",isOrigin:true}];
                         updStop(s.id,"puntos",puntos);
                       }}/>
@@ -2826,10 +3088,14 @@ function PlanificadorRutas(){
                         }} className="btn" style={{color:ROSE,padding:4}}><X size={11}/></button>
                       </div>
                     ))}
-                    {/* Agregar punto en este destino */}
-                    {MAPBOX_TOKEN&&<div style={{padding:"8px 10px",background:VIOLET+"04",border:"1.5px dashed "+VIOLET+"40",borderRadius:9,marginTop:6}}>
-                      <div style={{fontSize:9,fontWeight:800,color:VIOLET,marginBottom:6,letterSpacing:"0.05em"}}>+ AGREGAR PUNTO ESPECÍFICO EN {s.city.toUpperCase()}</div>
-                      <AddressSearch compact placeholder={"Ej: Walmart, Chedraui, dirección en "+s.city+"…"} bbox={s.cityBbox||CITY_BBOX[s.city]} proximity={s.cityCenter} cityHint={s.city} onSelect={(place)=>{
+                    {/* Agregar punto en este destino — MAPA INTERACTIVO + atajo de búsqueda */}
+                    {MAPBOX_TOKEN&&<div style={{padding:"10px 12px",background:VIOLET+"04",border:"1.5px dashed "+VIOLET+"40",borderRadius:10,marginTop:6}}>
+                      <div style={{fontSize:9,fontWeight:800,color:VIOLET,marginBottom:8,letterSpacing:"0.05em"}}>+ AGREGAR PUNTO ESPECÍFICO EN {s.city.toUpperCase()}</div>
+                      <button onClick={()=>setPicker({stopId:s.id,isOrigin:false})} className="btn" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px 14px",background:"linear-gradient(135deg,"+VIOLET+",#9d5cff)",color:"#fff",borderRadius:10,fontFamily:SANS,fontWeight:800,fontSize:13,boxShadow:"0 4px 14px "+VIOLET+"30",marginBottom:8}}>
+                        <Map size={15}/>Abrir mapa y buscar ubicación
+                      </button>
+                      <div style={{fontSize:10,color:MUTED,textAlign:"center",margin:"4px 0 8px"}}>o búsqueda rápida sin mapa:</div>
+                      <AddressSearch compact placeholder={"Ej: Walmart, Estadio Harp Helu, dirección en "+s.city+"…"} bbox={s.cityBbox||CITY_BBOX[s.city]} proximity={s.cityCenter} cityHint={s.city} onSelect={(place)=>{
                         const puntos = [...(s.puntos||[]),{id:uid(),...place,notas:""}];
                         updStop(s.id,"puntos",puntos);
                       }}/>
