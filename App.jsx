@@ -1798,9 +1798,12 @@ const NAV_SECTIONS=[
     {id:"entregas", label:"Entregas",              icon:Package},
   ]},
   {section:"ADMINISTRACIÓN",items:[
-    {id:"facturas", label:"Facturación",     icon:FileText},
-    {id:"viaticos", label:"Viáticos & Gastos",icon:Zap},
-    {id:"clientes", label:"Clientes",        icon:Building2},
+    {id:"facturas",    label:"Facturación",       icon:FileText},
+    {id:"viaticos",    label:"Viáticos & Gastos", icon:Zap},
+    {id:"gastosAdmin", label:"Gastos Choferes",   icon:DollarSign, badge:"NEW"},
+    {id:"jornadas",    label:"Jornadas & Horas",  icon:Clock, badge:"NEW"},
+    {id:"alertas",     label:"Centro de Alertas", icon:Bell, badge:"NEW"},
+    {id:"clientes",    label:"Clientes",          icon:Building2},
   ]},
 ];
 function Sidebar({view,setView,stats,open,setOpen}){
@@ -1850,9 +1853,33 @@ function Sidebar({view,setView,stats,open,setOpen}){
 }
 /* ─── DASHBOARD ──────────────────────────────────────────────────────────── */
 function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospectos=[]}){
+  // KPIs operativos adicionales (gastos choferes, jornadas activas, SOS)
+  const [gastosChofer,setGastosChofer]=useState([]);
+  const [jornadas,setJornadas]=useState([]);
+  const [alertasItems,setAlertas]=useState([]);
+  useEffect(()=>{
+    const u1=onSnapshot(collection(db,"gastosChofer"),s=>setGastosChofer(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(collection(db,"jornadas"),s=>setJornadas(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3=onSnapshot(collection(db,"alertas"),s=>setAlertas(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();u3();};
+  },[]);
+  const gastosPendientes = gastosChofer.filter(g=>g.estado==="pendiente").reduce((a,g)=>a+(g.monto||0),0);
+  const gastosHoy = gastosChofer.filter(g=>{const ts=g.fechaTs?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).reduce((a,g)=>a+(g.monto||0),0);
+  const jornadasActivas = jornadas.filter(j=>!j.outTs).length;
+  const sosSinAtender = alertasItems.filter(a=>a.type==="sos"&&!a.atendida).length;
+  const alertasCriticas = alertasItems.filter(a=>(a.type==="sos"||a.type==="geofence")&&!a.atendida).length;
+
   const totalFac=facts.reduce((a,f)=>a+(f.total||0),0);
   const cobrado=facts.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const pendiente=facts.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
+  // Cartera vencida — facturas con fechaVenc < hoy y status != Pagada
+  const hoyTs = Date.now();
+  const cartera = facts.filter(f=>{
+    if(f.status==="Pagada"||f.status==="Cancelada") return false;
+    if(!f.fechaVenc) return false;
+    return new Date(f.fechaVenc).getTime() < hoyTs;
+  });
+  const carteraVencida = cartera.reduce((a,f)=>a+(f.total||0),0);
   const pctCob=totalFac>0?Math.round(cobrado/totalFac*100):0;
   const totalGastos=viat.reduce((a,g)=>a+(g.monto||0),0);
   const margen=cobrado-totalGastos;
@@ -1920,6 +1947,22 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
         <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutasActivas} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
         <KpiCard icon={TrendingUp} color={margen>=0?GREEN:ROSE} label="Margen neto" value={fmtK(margen)} sub="cobrado - gastos"/>
         <KpiCard icon={Building2} color={BLUE} label="Clientes activos" value={clientes.length} sub="en la base" onClick={()=>setView("clientes")}/>
+      </div>
+
+      {/* Fila nueva: Operaciones choferes + alertas */}
+      <div className="g4" style={{marginBottom:16}}>
+        <div onClick={()=>setView("alertas")} className="ch" style={{background:sosSinAtender>0?"linear-gradient(135deg,#dc2626,#ef4444)":alertasCriticas>0?"linear-gradient(135deg,"+ROSE+","+ROSE+"dd)":"#fff",border:sosSinAtender>0||alertasCriticas>0?"none":"1px solid "+BORDER,borderRadius:14,padding:"14px 16px",cursor:"pointer",color:sosSinAtender>0||alertasCriticas>0?"#fff":TEXT,boxShadow:sosSinAtender>0?"0 6px 20px #dc262655":"0 1px 4px rgba(12,24,41,.04)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{width:34,height:34,borderRadius:10,background:sosSinAtender>0||alertasCriticas>0?"rgba(255,255,255,.22)":ROSE+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Bell size={15} color={sosSinAtender>0||alertasCriticas>0?"#fff":ROSE}/></div>
+            {sosSinAtender>0&&<span className="pulse" style={{fontSize:9,fontWeight:900,letterSpacing:"0.1em"}}>● SOS</span>}
+          </div>
+          <div style={{fontFamily:MONO,fontSize:24,fontWeight:800,marginTop:8,lineHeight:1}}>{alertasCriticas}</div>
+          <div style={{fontSize:10,fontWeight:700,opacity:sosSinAtender>0||alertasCriticas>0?.9:1,color:sosSinAtender>0||alertasCriticas>0?"#fff":MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginTop:3}}>Alertas críticas</div>
+          <div style={{fontSize:10,opacity:.85,marginTop:2}}>{sosSinAtender>0?sosSinAtender+" SOS activos":alertasItems.filter(a=>!a.atendida).length+" sin atender"}</div>
+        </div>
+        <KpiCard icon={DollarSign} color={AMBER} label="Gastos chofer pendientes" value={fmtK(gastosPendientes)} sub={gastosChofer.filter(g=>g.estado==="pendiente").length+" reembolsos"} onClick={()=>setView("gastosAdmin")}/>
+        <KpiCard icon={Clock} color={GREEN} label="Jornadas activas" value={jornadasActivas} sub={jornadas.filter(j=>{const ts=j.inTs?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).length+" jornadas hoy"} onClick={()=>setView("jornadas")}/>
+        <KpiCard icon={AlertCircle} color={ROSE} label="Cartera vencida" value={fmtK(carteraVencida)} sub={cartera.length+" facturas"} onClick={()=>setView("facturas")}/>
       </div>
 
       <div className="g2-side" style={{marginBottom:16}}>
@@ -3981,7 +4024,7 @@ function Facturas(){
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const ANIO=new Date().getFullYear();
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
-  const empty={mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:""};
+  const empty={mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:new Date().toISOString().slice(0,10),fechaVenc:"",emailCliente:""};
   const [form,setForm]=useState(empty);
   const sf=k=>e=>setForm(f=>({...f,[k]:e.target.type==="checkbox"?e.target.checked:e.target.value}));
 
@@ -3991,7 +4034,7 @@ function Facturas(){
   }),[]);
 
   const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
-  const openEdit=f=>{setForm({mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||""});setEditItem(f);setModal(true);};
+  const openEdit=f=>{setForm({mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||"",fechaEmision:f.fechaEmision||"",fechaVenc:f.fechaVenc||"",emailCliente:f.emailCliente||""});setEditItem(f);setModal(true);};
 
   const save=async()=>{
     if(!form.empresa||!form.subtotal){showT("Empresa y subtotal son requeridos","err");return;}
@@ -4038,11 +4081,69 @@ function Facturas(){
         <KpiCard icon={AlertCircle} color={ROSE} label="Vencido" value={fmtK(vencido)}/>
       </div>
 
-      <div style={{display:"flex",gap:4,marginBottom:14}}>
-        {[["registros","📋 Registros"],["proyecciones","📈 Proyecciones"]].map(([k,l])=>(
+      <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
+        {[["registros","📋 Registros"],["cartera","💰 Cartera vencida"],["proyecciones","📈 Proyecciones"]].map(([k,l])=>(
           <button key={k} onClick={()=>setTab(k)} className="btn" style={{padding:"7px 18px",borderRadius:10,border:"1.5px solid "+(tab===k?A:BD2),background:tab===k?A+"10":"#fff",color:tab===k?A:MUTED,fontWeight:tab===k?700:500,fontSize:13,cursor:"pointer"}}>{l}</button>
         ))}
       </div>
+
+      {tab==="cartera"&&(()=>{
+        const hoyMs = Date.now();
+        const cart = items.filter(f=>(f.status==="Pendiente"||f.status==="Vencida")&&f.fechaVenc&&new Date(f.fechaVenc).getTime()<hoyMs)
+          .map(f=>({...f,diasVencido:Math.floor((hoyMs-new Date(f.fechaVenc).getTime())/86400000)}))
+          .sort((a,b)=>b.diasVencido-a.diasVencido);
+        const buckets = {"1-15":0,"16-30":0,"31-60":0,"60+":0};
+        cart.forEach(f=>{
+          if(f.diasVencido<=15) buckets["1-15"]+=f.total||0;
+          else if(f.diasVencido<=30) buckets["16-30"]+=f.total||0;
+          else if(f.diasVencido<=60) buckets["31-60"]+=f.total||0;
+          else buckets["60+"]+=f.total||0;
+        });
+        const totalCart = cart.reduce((a,f)=>a+(f.total||0),0);
+        const recordarPago = (f)=>{
+          const tel = f.telCliente||"";
+          const email = f.emailCliente||"";
+          const msg = `Recordatorio de pago · DMvimiento\n\nFactura ${f.folio||""} · ${fmt(f.total||0)}\nVencida hace ${f.diasVencido} días\n\nAgradecemos tu atención para regularizar el pago.`;
+          if(tel) window.open(`https://wa.me/52${tel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`,"_blank");
+          else if(email) window.location.href=`mailto:${email}?subject=${encodeURIComponent("Recordatorio de pago - "+(f.folio||""))}&body=${encodeURIComponent(msg)}`;
+          else alert("Agrega teléfono o email del cliente en la factura para enviar recordatorio");
+        };
+        return(<>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
+            <KpiCard icon={AlertCircle} color={ROSE} label="Cartera total vencida" value={fmtK(totalCart)} sub={cart.length+" facturas"}/>
+            <KpiCard icon={Clock} color={AMBER} label="1-15 días" value={fmtK(buckets["1-15"])}/>
+            <KpiCard icon={Clock} color={AMBER} label="16-30 días" value={fmtK(buckets["16-30"])}/>
+            <KpiCard icon={AlertCircle} color={ROSE} label="31-60 días" value={fmtK(buckets["31-60"])}/>
+            <KpiCard icon={AlertCircle} color="#991b1b" label="60+ días" value={fmtK(buckets["60+"])}/>
+          </div>
+          {cart.length===0?<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:40,textAlign:"center",color:GREEN,fontSize:14,fontWeight:700}}>✓ Sin cartera vencida — todo al corriente</div>
+          :<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+            <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{borderBottom:"1px solid "+BORDER,background:"#fafbfd"}}>
+                {["Folio","Empresa","Total","Vencimiento","Días vencida","Acciones"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase"}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{cart.map(f=>{
+                const urg = f.diasVencido>60?"#991b1b":f.diasVencido>30?ROSE:AMBER;
+                return(
+                  <tr key={f.id} style={{borderBottom:"1px solid "+BORDER}}>
+                    <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:11,color:MUTED}}>{f.folio||"—"}</td>
+                    <td style={{padding:"10px 14px",fontWeight:700,fontSize:13}}>{f.empresa||f.cliente||"—"}</td>
+                    <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:14,fontWeight:800}}>{fmt(f.total||0)}</td>
+                    <td style={{padding:"10px 14px",fontSize:12,color:MUTED}}>{new Date(f.fechaVenc).toLocaleDateString("es-MX")}</td>
+                    <td style={{padding:"10px 14px"}}><span style={{background:urg+"18",color:urg,padding:"3px 10px",borderRadius:7,fontWeight:800,fontSize:12}}>{f.diasVencido} días</span></td>
+                    <td style={{padding:"10px 14px"}}>
+                      <div style={{display:"flex",gap:5}}>
+                        <button onClick={()=>recordarPago(f)} className="btn" style={{padding:"5px 10px",borderRadius:7,background:BLUE+"10",border:"1px solid "+BLUE+"30",color:BLUE,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Send size={11}/>Recordar</button>
+                        <button onClick={()=>updStatus(f.id,"Pagada")} className="btn" style={{padding:"5px 10px",borderRadius:7,background:GREEN+"10",border:"1px solid "+GREEN+"30",color:GREEN,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Check size={11}/>Pagó</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}</tbody>
+            </table></div>
+          </div>}
+        </>);
+      })()}
 
       {tab==="registros"&&<>
         <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
@@ -4174,9 +4275,18 @@ function Facturas(){
           <div>
             <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado de pago</div>
             <select value={form.status} onChange={sf("status")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
-              {["Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s}</option>)}
+              {["Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s}</option>)}
             </select>
           </div>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Fecha emisión</div>
+            <input type="date" value={form.fechaEmision||""} onChange={sf("fechaEmision")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}/>
+          </div>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Vencimiento (cartera)</div>
+            <input type="date" value={form.fechaVenc||""} onChange={sf("fechaVenc")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}/>
+          </div>
+          <Inp label="Email cliente (para envío)" value={form.emailCliente||""} onChange={sf("emailCliente")} type="email" placeholder="contacto@cliente.com"/>
           <div style={{gridColumn:"1/-1"}}><Inp label="Servicio / Descripción" value={form.servicio} onChange={sf("servicio")} placeholder="Ej: Distribución masiva Monterrey — Ruta Norte"/></div>
           <Inp label="Subtotal sin IVA *" type="number" value={form.subtotal} onChange={sf("subtotal")} placeholder="0.00"/>
           <div style={{display:"flex",alignItems:"center"}}><Tog checked={form.iva} onChange={v=>setForm(f=>({...f,iva:v}))} label="Incluir IVA 16%" sub={sub>0?"IVA: "+fmt(ivaP):"Escribe el subtotal"} color={BLUE}/></div>
@@ -6809,6 +6919,444 @@ function ClientTracking({trackingId}){
 }
 
 /* ─── ROOT APP ───────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   MÓDULO ADMIN: GASTOS DE CHOFERES (aprobar/rechazar/export)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function GastosAdmin(){
+  const [items,setItems]=useState([]);
+  const [load,setLoad]=useState(true);
+  const [filtro,setFiltro]=useState("pendiente"); // pendiente | reembolsado | rechazado | todos
+  const [choferFil,setChoferFil]=useState("todos");
+  const [tipoFil,setTipoFil]=useState("todos");
+  const [toast,setToast]=useState(null);
+  const [photoModal,setPhotoModal]=useState(null);
+  const showT=(m,t="ok")=>setToast({msg:m,type:t});
+
+  useEffect(()=>onSnapshot(collection(db,"gastosChofer"),s=>{
+    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.fechaTs?.seconds||0)-(a.fechaTs?.seconds||0)));
+    setLoad(false);
+  }),[]);
+
+  const actualizarEstado = async(id,nuevoEstado)=>{
+    try{
+      await updateDoc(doc(db,"gastosChofer",id),{estado:nuevoEstado,aprobadoEn:serverTimestamp()});
+      showT(nuevoEstado==="reembolsado"?"✓ Gasto reembolsado":"✕ Gasto rechazado");
+    }catch(e){showT(e.message,"err");}
+  };
+
+  const choferes = [...new Set(items.map(g=>g.choferNombre).filter(Boolean))];
+  const filtered = items.filter(g=>{
+    if(filtro!=="todos"&&g.estado!==filtro) return false;
+    if(choferFil!=="todos"&&g.choferNombre!==choferFil) return false;
+    if(tipoFil!=="todos"&&g.tipo!==tipoFil) return false;
+    return true;
+  });
+  const totalPend = items.filter(g=>g.estado==="pendiente").reduce((a,g)=>a+(g.monto||0),0);
+  const totalReemb = items.filter(g=>g.estado==="reembolsado").reduce((a,g)=>a+(g.monto||0),0);
+  const totalRech = items.filter(g=>g.estado==="rechazado").reduce((a,g)=>a+(g.monto||0),0);
+  const totalMes = items.filter(g=>{const ts=g.fechaTs?.seconds;if(!ts) return false;const d=new Date(ts*1000);const now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).reduce((a,g)=>a+(g.monto||0),0);
+
+  const exportar=()=>{
+    const wb = XLSX.utils.book_new();
+    const data = filtered.map(g=>({
+      Fecha: g.fechaTs?.seconds?new Date(g.fechaTs.seconds*1000).toLocaleDateString("es-MX"):"",
+      Chofer: g.choferNombre||"",
+      Teléfono: g.choferTel||"",
+      Tipo: (GASTO_TIPOS.find(t=>t.id===g.tipo)||{}).label||g.tipo||"",
+      Monto: g.monto||0,
+      Nota: g.nota||"",
+      Estado: g.estado||"pendiente",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{wch:12},{wch:22},{wch:14},{wch:14},{wch:12},{wch:30},{wch:14}];
+    XLSX.utils.book_append_sheet(wb,ws,"Gastos Choferes");
+    XLSX.writeFile(wb,"gastos_choferes_"+new Date().toISOString().slice(0,10)+".xlsx");
+  };
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,flexWrap:"wrap",gap:10}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Gastos de Choferes</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Gasolina, casetas, viáticos · Aprobar o rechazar reembolsos</p>
+        </div>
+        <button onClick={exportar} className="btn" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Download size={13}/>Exportar XLSX</button>
+      </div>
+
+      {/* KPIs */}
+      <div className="g4" style={{marginBottom:18}}>
+        <KpiCard icon={Clock} color={AMBER} label="Pendiente aprobación" value={fmtK(totalPend)} sub={items.filter(g=>g.estado==="pendiente").length+" gastos"}/>
+        <KpiCard icon={CheckCircle} color={GREEN} label="Reembolsado" value={fmtK(totalReemb)} sub={items.filter(g=>g.estado==="reembolsado").length+" aprobados"}/>
+        <KpiCard icon={X} color={ROSE} label="Rechazado" value={fmtK(totalRech)} sub={items.filter(g=>g.estado==="rechazado").length+" rechazos"}/>
+        <KpiCard icon={Calendar} color={BLUE} label="Total este mes" value={fmtK(totalMes)}/>
+      </div>
+
+      {/* Filtros */}
+      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{display:"flex",gap:4}}>
+          {[["pendiente","Pendientes",AMBER],["reembolsado","Reembolsados",GREEN],["rechazado","Rechazados",ROSE],["todos","Todos",MUTED]].map(([v,l,c])=>(
+            <button key={v} onClick={()=>setFiltro(v)} className="btn" style={{padding:"7px 14px",borderRadius:9,border:"1.5px solid "+(filtro===v?c:BD2),background:filtro===v?c+"14":"#fff",color:filtro===v?c:MUTED,fontWeight:filtro===v?700:500,fontSize:12,cursor:"pointer"}}>{l}</button>
+          ))}
+        </div>
+        <select value={choferFil} onChange={e=>setChoferFil(e.target.value)} style={{padding:"7px 12px",border:"1.5px solid "+BD2,borderRadius:9,fontSize:12,background:"#fff"}}>
+          <option value="todos">Todos los choferes</option>
+          {choferes.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={tipoFil} onChange={e=>setTipoFil(e.target.value)} style={{padding:"7px 12px",border:"1.5px solid "+BD2,borderRadius:9,fontSize:12,background:"#fff"}}>
+          <option value="todos">Todos los tipos</option>
+          {GASTO_TIPOS.map(t=><option key={t.id} value={t.id}>{t.emoji} {t.label}</option>)}
+        </select>
+      </div>
+
+      {/* Lista */}
+      {load?<SkeletonRows n={4}/>
+      :filtered.length===0?<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin gastos {filtro!=="todos"?"en estado "+filtro:""}</div>
+      :<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+        <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:900}}>
+          <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
+            {["Fecha","Chofer","Tipo","Monto","Nota","Ticket","Estado","Acciones"].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>{filtered.map(g=>{
+            const t = GASTO_TIPOS.find(x=>x.id===g.tipo)||GASTO_TIPOS[GASTO_TIPOS.length-1];
+            const fecha = g.fechaTs?.seconds?new Date(g.fechaTs.seconds*1000).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"2-digit"}):"—";
+            const estadoColor = g.estado==="reembolsado"?GREEN:g.estado==="rechazado"?ROSE:AMBER;
+            const estadoLabel = g.estado==="reembolsado"?"✓ Reembolsado":g.estado==="rechazado"?"✕ Rechazado":"⏳ Pendiente";
+            return(
+              <tr key={g.id} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
+                <td style={{padding:"10px 12px",fontSize:12,whiteSpace:"nowrap"}}>{fecha}</td>
+                <td style={{padding:"10px 12px"}}>
+                  <div style={{fontWeight:700,fontSize:13}}>{g.choferNombre}</div>
+                  <div style={{fontSize:10,color:MUTED}}>{g.choferTel}</div>
+                </td>
+                <td style={{padding:"10px 12px"}}><span style={{background:t.color+"14",color:t.color,borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:700,display:"inline-flex",alignItems:"center",gap:4}}>{t.emoji} {t.label}</span></td>
+                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:14,fontWeight:800,color:t.color}}>{fmt(g.monto||0)}</td>
+                <td style={{padding:"10px 12px",fontSize:12,color:MUTED,maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.nota||"—"}</td>
+                <td style={{padding:"10px 12px"}}>{g.ticketURL?<img onClick={()=>setPhotoModal(g.ticketURL)} src={g.ticketURL} alt="t" style={{width:40,height:40,borderRadius:7,objectFit:"cover",cursor:"pointer",border:"1px solid "+BD2}}/>:<span style={{fontSize:10,color:MUTED}}>—</span>}</td>
+                <td style={{padding:"10px 12px"}}><Tag color={estadoColor} sm>{estadoLabel}</Tag></td>
+                <td style={{padding:"10px 12px"}}>
+                  {g.estado==="pendiente"?<div style={{display:"flex",gap:5}}>
+                    <button onClick={()=>actualizarEstado(g.id,"reembolsado")} className="btn" style={{padding:"5px 10px",borderRadius:7,background:GREEN,color:"#fff",fontWeight:700,fontSize:11,display:"flex",alignItems:"center",gap:4}}><Check size={11}/>Aprobar</button>
+                    <button onClick={()=>{if(confirm("¿Rechazar este gasto?"))actualizarEstado(g.id,"rechazado");}} className="btn" style={{padding:"5px 10px",borderRadius:7,background:ROSE+"14",border:"1px solid "+ROSE+"30",color:ROSE,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",gap:4}}><X size={11}/>Rechazar</button>
+                  </div>:<button onClick={()=>actualizarEstado(g.id,"pendiente")} className="btn" style={{padding:"4px 8px",border:"1px solid "+BD2,borderRadius:6,color:MUTED,fontSize:10}}>Revertir</button>}
+                </td>
+              </tr>
+            );
+          })}</tbody>
+        </table></div>
+      </div>}
+      {photoModal&&<div onClick={()=>setPhotoModal(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:20,cursor:"pointer"}}>
+        <img src={photoModal} alt="ticket" style={{maxWidth:"90%",maxHeight:"90%",borderRadius:10,boxShadow:"0 16px 50px rgba(0,0,0,.5)"}}/>
+      </div>}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MÓDULO ADMIN: JORNADAS (checkin/checkout, horas trabajadas)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function JornadasAdmin(){
+  const [items,setItems]=useState([]);
+  const [load,setLoad]=useState(true);
+  const [choferFil,setChoferFil]=useState("todos");
+  const [desde,setDesde]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().slice(0,10);});
+  const [hasta,setHasta]=useState(()=>new Date().toISOString().slice(0,10));
+
+  useEffect(()=>onSnapshot(collection(db,"jornadas"),s=>{
+    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.inTs?.seconds||0)-(a.inTs?.seconds||0)));
+    setLoad(false);
+  }),[]);
+
+  const choferes = [...new Set(items.map(j=>j.choferNombre).filter(Boolean))];
+  const rangoIn = new Date(desde+"T00:00:00").getTime()/1000;
+  const rangoOut = new Date(hasta+"T23:59:59").getTime()/1000;
+  const filtered = items.filter(j=>{
+    const ts = j.inTs?.seconds;
+    if(!ts) return false;
+    if(ts<rangoIn||ts>rangoOut) return false;
+    if(choferFil!=="todos"&&j.choferNombre!==choferFil) return false;
+    return true;
+  });
+
+  const getHoras = j=>{
+    const i = j.inTs?.seconds, o = j.outTs?.seconds||(j.outTs?null:Date.now()/1000);
+    if(!i) return 0;
+    return Math.max(0,(o-i)/3600);
+  };
+  const totalHoras = filtered.reduce((a,j)=>a+getHoras(j),0);
+  const activas = filtered.filter(j=>!j.outTs).length;
+
+  // Por chofer
+  const porChofer = {};
+  filtered.forEach(j=>{
+    const k = j.choferNombre||"—";
+    if(!porChofer[k]) porChofer[k] = {horas:0,jornadas:0,nombre:k,tel:j.choferTel};
+    porChofer[k].horas += getHoras(j);
+    porChofer[k].jornadas += 1;
+  });
+  const ranking = Object.values(porChofer).sort((a,b)=>b.horas-a.horas);
+
+  const exportar=()=>{
+    const wb = XLSX.utils.book_new();
+    const data = filtered.map(j=>{
+      const inT = j.inTs?.seconds, outT = j.outTs?.seconds;
+      return {
+        Chofer: j.choferNombre||"",
+        Teléfono: j.choferTel||"",
+        Fecha: inT?new Date(inT*1000).toLocaleDateString("es-MX"):"",
+        Entrada: inT?new Date(inT*1000).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}):"",
+        Salida: outT?new Date(outT*1000).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}):"EN CURSO",
+        "Horas trabajadas": getHoras(j).toFixed(2),
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [{wch:22},{wch:14},{wch:12},{wch:10},{wch:10},{wch:18}];
+    XLSX.utils.book_append_sheet(wb,ws,"Jornadas");
+    // Segunda hoja: resumen por chofer
+    const resumen = ranking.map(r=>({Chofer:r.nombre,Teléfono:r.tel||"",Jornadas:r.jornadas,"Total horas":r.horas.toFixed(2),"Promedio h/día":(r.horas/r.jornadas).toFixed(2)}));
+    const ws2 = XLSX.utils.json_to_sheet(resumen);
+    ws2["!cols"] = [{wch:22},{wch:14},{wch:10},{wch:12},{wch:15}];
+    XLSX.utils.book_append_sheet(wb,ws2,"Resumen por chofer");
+    XLSX.writeFile(wb,"jornadas_"+desde+"_a_"+hasta+".xlsx");
+  };
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,flexWrap:"wrap",gap:10}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Jornadas & Horas Trabajadas</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Reporte para nómina · Checkin/checkout de choferes</p>
+        </div>
+        <button onClick={exportar} className="btn" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Download size={13}/>Exportar nómina</button>
+      </div>
+
+      {/* KPIs */}
+      <div className="g4" style={{marginBottom:18}}>
+        <KpiCard icon={Clock} color={BLUE} label="Jornadas en rango" value={filtered.length}/>
+        <KpiCard icon={Activity} color={A} label="Horas totales" value={totalHoras.toFixed(1)+"h"} sub={(filtered.length>0?(totalHoras/filtered.length).toFixed(1):"0")+"h promedio"}/>
+        <KpiCard icon={Radio} color={GREEN} label="Activas ahora" value={activas} sub="en jornada"/>
+        <KpiCard icon={Users} color={VIOLET} label="Choferes con hrs" value={ranking.length}/>
+      </div>
+
+      {/* Filtros */}
+      <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:11,color:MUTED,fontWeight:600}}>Desde:</span>
+          <input type="date" value={desde} onChange={e=>setDesde(e.target.value)} style={{padding:"6px 10px",border:"1.5px solid "+BD2,borderRadius:8,fontSize:12,background:"#fff"}}/>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:11,color:MUTED,fontWeight:600}}>Hasta:</span>
+          <input type="date" value={hasta} onChange={e=>setHasta(e.target.value)} style={{padding:"6px 10px",border:"1.5px solid "+BD2,borderRadius:8,fontSize:12,background:"#fff"}}/>
+        </div>
+        <select value={choferFil} onChange={e=>setChoferFil(e.target.value)} style={{padding:"7px 12px",border:"1.5px solid "+BD2,borderRadius:9,fontSize:12,background:"#fff"}}>
+          <option value="todos">Todos los choferes</option>
+          {choferes.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      <div className="g2-side">
+        {/* Ranking por chofer */}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:18,height:"fit-content"}}>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:14}}>🏆 Horas por chofer</div>
+          {ranking.length===0?<div style={{padding:20,textAlign:"center",color:MUTED,fontSize:12}}>Sin datos en el rango</div>
+          :ranking.map((r,i)=>{
+            const maxH = ranking[0].horas||1;
+            return(
+              <div key={r.nombre} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <div style={{fontSize:12,fontWeight:700}}>#{i+1} {r.nombre}</div>
+                  <div style={{fontFamily:MONO,fontSize:13,fontWeight:800,color:A}}>{r.horas.toFixed(1)}h</div>
+                </div>
+                <MiniBar pct={r.horas/maxH*100} color={i===0?A:i<3?VIOLET:BLUE} h={6}/>
+                <div style={{fontSize:10,color:MUTED,marginTop:3}}>{r.jornadas} jornadas · {(r.horas/r.jornadas).toFixed(1)}h promedio</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Lista de jornadas */}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+          {load?<SkeletonRows n={5}/>
+          :filtered.length===0?<div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin jornadas en el rango</div>
+          :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr style={{borderBottom:"1px solid "+BORDER,background:"#fafbfd"}}>
+              {["Chofer","Fecha","Entrada","Salida","Horas"].map(h=><th key={h} style={{padding:"10px 14px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase"}}>{h}</th>)}
+            </tr></thead>
+            <tbody>{filtered.map(j=>{
+              const inT = j.inTs?.seconds, outT = j.outTs?.seconds;
+              const h = getHoras(j);
+              const activa = !outT;
+              return(
+                <tr key={j.id} style={{borderBottom:"1px solid "+BORDER,background:activa?GREEN+"04":"transparent"}}>
+                  <td style={{padding:"10px 14px",fontSize:13,fontWeight:700}}>{j.choferNombre}</td>
+                  <td style={{padding:"10px 14px",fontSize:12,color:MUTED}}>{inT?new Date(inT*1000).toLocaleDateString("es-MX",{weekday:"short",day:"2-digit",month:"short"}):"—"}</td>
+                  <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:12}}>{inT?new Date(inT*1000).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}):"—"}</td>
+                  <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:12}}>{outT?new Date(outT*1000).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}):<span className="pulse" style={{color:GREEN,fontWeight:800}}>● EN CURSO</span>}</td>
+                  <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:14,fontWeight:800,color:A}}>{h.toFixed(2)}h</td>
+                </tr>
+              );
+            })}</tbody>
+          </table></div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CENTRO DE ALERTAS — agrupa SOS, geofence, arrivals, deliveries, issues
+   ═══════════════════════════════════════════════════════════════════════════ */
+function AlertasCentro({setView}){
+  const [items,setItems]=useState([]);
+  const [load,setLoad]=useState(true);
+  const [filtro,setFiltro]=useState("todas");
+  useEffect(()=>onSnapshot(collection(db,"alertas"),s=>{
+    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.ts?.seconds||0)-(a.ts?.seconds||0)));
+    setLoad(false);
+  }),[]);
+
+  const ALERT_META = {
+    sos:      {color:"#dc2626",icon:"🚨",label:"SOS EMERGENCIA",priority:1},
+    geofence: {color:ROSE,icon:"📍",label:"Fuera de zona",priority:2},
+    issue:    {color:AMBER,icon:"⚠️",label:"Problema en parada",priority:3},
+    arrival:  {color:BLUE,icon:"📬",label:"Llegada",priority:5},
+    delivered:{color:GREEN,icon:"✅",label:"Entrega",priority:5},
+    start:    {color:VIOLET,icon:"▶️",label:"Ruta iniciada",priority:6},
+    complete: {color:GREEN,icon:"🏁",label:"Ruta completada",priority:6},
+  };
+
+  const filtered = items.filter(a=>{
+    if(filtro==="todas") return true;
+    if(filtro==="criticas") return a.type==="sos"||a.type==="geofence"||a.type==="issue";
+    return a.type===filtro;
+  });
+
+  const sosActivas = items.filter(a=>a.type==="sos"&&!a.atendida);
+  const criticas = items.filter(a=>(a.type==="sos"||a.type==="geofence")&&!a.atendida).length;
+
+  const marcarAtendida = async(id)=>{
+    await updateDoc(doc(db,"alertas",id),{atendida:true,atendidaEn:serverTimestamp()}).catch(()=>{});
+  };
+  const abrirUbicacion = (a)=>{
+    const d = a.data||{};
+    if(d.lat&&d.lng){
+      window.open(`https://www.google.com/maps?q=${d.lat},${d.lng}`,"_blank");
+    }else if(a.rutaId){
+      setView&&setView("tracking");
+    }
+  };
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,flexWrap:"wrap",gap:10}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Centro de Alertas</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>SOS · Geofence · Entregas · Todos los eventos en vivo</p>
+        </div>
+        {criticas>0&&<div style={{background:"#dc2626",color:"#fff",borderRadius:12,padding:"10px 16px",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",gap:8,boxShadow:"0 6px 20px #dc262655"}} className="pulse">
+          <AlertCircle size={16}/>{criticas} alertas críticas sin atender
+        </div>}
+      </div>
+
+      {/* SOS activas destacadas */}
+      {sosActivas.length>0&&<div style={{marginBottom:18}}>
+        {sosActivas.map(a=>(
+          <div key={a.id} style={{background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",borderRadius:14,padding:"16px 20px",marginBottom:10,boxShadow:"0 8px 30px #dc262655",display:"flex",alignItems:"center",gap:14}} className="pulse">
+            <div style={{fontSize:32}}>🚨</div>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:DISP,fontWeight:900,fontSize:16,letterSpacing:"-0.02em"}}>SOS EMERGENCIA ACTIVA</div>
+              <div style={{fontSize:13,opacity:.95,marginTop:2}}>Chofer: <strong>{a.choferNombre}</strong> · {a.ts?.seconds?ago(a.ts.seconds):"ahora"}</div>
+              <div style={{fontSize:11,opacity:.85,marginTop:2,fontFamily:MONO}}>
+                {a.data?.lat&&a.data?.lng?`${a.data.lat.toFixed(5)}, ${a.data.lng.toFixed(5)}`:"Sin coordenadas"}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              {(a.data?.lat&&a.data?.lng)&&<button onClick={()=>abrirUbicacion(a)} className="btn" style={{background:"rgba(255,255,255,.2)",color:"#fff",border:"1px solid rgba(255,255,255,.3)",borderRadius:10,padding:"9px 14px",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",gap:5}}><Map size={12}/>Ver en mapa</button>}
+              <button onClick={()=>marcarAtendida(a.id)} className="btn" style={{background:"#fff",color:"#dc2626",borderRadius:10,padding:"9px 14px",fontWeight:800,fontSize:12,display:"flex",alignItems:"center",gap:5}}><Check size={12}/>Atendida</button>
+            </div>
+          </div>
+        ))}
+      </div>}
+
+      {/* Filtros */}
+      <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
+        {[["todas","Todas"],["criticas","⚠️ Críticas"],["sos","🚨 SOS"],["geofence","📍 Fuera zona"],["issue","⚠️ Problemas"],["arrival","📬 Llegadas"],["delivered","✅ Entregas"],["start","▶️ Inicios"],["complete","🏁 Finales"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFiltro(v)} className="btn" style={{padding:"6px 13px",borderRadius:9,border:"1.5px solid "+(filtro===v?A:BD2),background:filtro===v?A+"10":"#fff",color:filtro===v?A:MUTED,fontWeight:filtro===v?700:500,fontSize:11,cursor:"pointer"}}>{l}</button>
+        ))}
+      </div>
+
+      {/* Lista */}
+      {load?<SkeletonRows n={5}/>
+      :filtered.length===0?<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin alertas</div>
+      :<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+        {filtered.slice(0,100).map((a,i)=>{
+          const meta = ALERT_META[a.type]||{color:MUTED,icon:"•",label:a.type};
+          const atend = a.atendida;
+          return(
+            <div key={a.id} style={{padding:"14px 18px",borderBottom:i<filtered.length-1?"1px solid "+BORDER:"none",display:"flex",alignItems:"flex-start",gap:12,background:atend?"#fafbfd":"#fff",opacity:atend?.7:1}}>
+              <div style={{width:38,height:38,borderRadius:10,background:meta.color+"14",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{meta.icon}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700,fontSize:13,color:meta.color}}>{meta.label}</span>
+                  <span style={{fontSize:11,color:MUTED}}>· {a.choferNombre||"—"}</span>
+                  <span style={{fontSize:10,color:MUTED,fontFamily:MONO}}>· {a.ts?.seconds?ago(a.ts.seconds):"ahora"}</span>
+                  {atend&&<Tag color={GREEN} sm>✓ Atendida</Tag>}
+                </div>
+                {a.message&&<div style={{fontSize:12,color:TEXT,marginTop:3}}>{a.message}</div>}
+                {a.data?.lat&&a.data?.lng&&<div style={{fontSize:10,fontFamily:MONO,color:MUTED,marginTop:2}}>📍 {a.data.lat.toFixed(5)}, {a.data.lng.toFixed(5)}</div>}
+              </div>
+              <div style={{display:"flex",gap:5,flexShrink:0}}>
+                {a.data?.lat&&a.data?.lng&&<button onClick={()=>abrirUbicacion(a)} className="btn" style={{padding:"5px 10px",borderRadius:7,background:BLUE+"10",border:"1px solid "+BLUE+"30",color:BLUE,fontSize:11,fontWeight:700}}>Mapa</button>}
+                {!atend&&<button onClick={()=>marcarAtendida(a.id)} className="btn" style={{padding:"5px 10px",borderRadius:7,background:GREEN+"10",border:"1px solid "+GREEN+"30",color:GREEN,fontSize:11,fontWeight:700}}>✓ Atendida</button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BANNER GLOBAL SOS — alerta flotante cuando entra un SOS nuevo
+   ═══════════════════════════════════════════════════════════════════════════ */
+function SOSGlobalBanner({onGo}){
+  const [sos,setSos]=useState([]);
+  const prevIdsRef = useRef(null);
+  useEffect(()=>{
+    const q = query(collection(db,"alertas"),where("type","==","sos"));
+    return onSnapshot(q,s=>{
+      const items = s.docs.map(d=>({id:d.id,...d.data()})).filter(a=>!a.atendida).sort((a,b)=>(b.ts?.seconds||0)-(a.ts?.seconds||0));
+      // Notifica si entra una nueva
+      const prevIds = prevIdsRef.current;
+      if(prevIds){
+        const nuevas = items.filter(a=>!prevIds.has(a.id));
+        if(nuevas.length>0){
+          try{navigator.vibrate&&navigator.vibrate([500,200,500,200,500]);}catch(e){}
+          try{new Audio("data:audio/wav;base64,UklGRnQGAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YVAGAAA=").play().catch(()=>{});}catch(e){}
+          if("Notification" in window&&Notification.permission==="granted"){
+            try{new Notification("🚨 SOS EMERGENCIA",{body:nuevas[0].choferNombre+" solicita ayuda inmediata",icon:"/icon.svg",requireInteraction:true,tag:"sos-"+nuevas[0].id});}catch(e){}
+          }
+        }
+      }
+      prevIdsRef.current = new Set(items.map(a=>a.id));
+      setSos(items);
+    });
+  },[]);
+  if(sos.length===0) return null;
+  const first = sos[0];
+  return(
+    <div className="pulse" style={{position:"fixed",top:12,left:"50%",transform:"translateX(-50%)",zIndex:800,background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",borderRadius:14,padding:"12px 20px",boxShadow:"0 10px 40px #dc2626aa",display:"flex",alignItems:"center",gap:12,cursor:"pointer",maxWidth:"90vw"}} onClick={onGo}>
+      <div style={{fontSize:22}}>🚨</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontFamily:DISP,fontWeight:900,fontSize:13,letterSpacing:"0.02em"}}>SOS ACTIVO · {sos.length} sin atender</div>
+        <div style={{fontSize:11,opacity:.9,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{first.choferNombre} · {first.ts?.seconds?ago(first.ts.seconds):"ahora"}</div>
+      </div>
+      <ArrowRight size={16}/>
+    </div>
+  );
+}
+
 export default function App(){
   const path = typeof window!=="undefined"?window.location.pathname:"";
   // /chofer route — driver PWA
@@ -6880,6 +7428,9 @@ export default function App(){
     nacional:<PlanificadorNacional/>,
     facturas:<Facturas/>,
     viaticos:<Viaticos/>,
+    gastosAdmin:<GastosAdmin/>,
+    jornadas:<JornadasAdmin/>,
+    alertas:<AlertasCentro setView={setView}/>,
     clientes:<Clientes/>,
     entregas:<Entregas/>,
   };
@@ -6887,6 +7438,7 @@ export default function App(){
   return(
     <>
       <style>{CSS}</style>
+      <SOSGlobalBanner onGo={()=>setView("alertas")}/>
       <div style={{display:"flex",minHeight:"100vh",background:"#f1f4fb",color:TEXT,fontFamily:SANS}}>
         <Sidebar view={view} setView={v=>{setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen}/>
         <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
