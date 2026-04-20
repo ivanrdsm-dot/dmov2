@@ -64,9 +64,10 @@ async function uploadEvidencia(file){
 }
 
 /* ─── MAPBOX ─────────────────────────────────────────────────────────────── */
-// Mapbox public token (client-side, safe to embed — split to avoid false-positive secret scanning)
-const _MBP = ["pk.eyJ1IjoiZG1vdiIsImEiOi","JjbW8wZGc1emkwNnlwMzFwbm","tiYXVmdHB5In0.vTJY--Ybfu","NW8XC_p8dc-w"];
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || _MBP.join("");
+// Mapbox public token — debe configurarse en VITE_MAPBOX_TOKEN (Vercel env vars).
+// El token anterior hardcodeado fue revocado; si no configuras uno nuevo, las búsquedas
+// de direcciones mostrarán un aviso en pantalla en lugar de fallar en silencio.
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "";
 if(MAPBOX_TOKEN) mapboxgl.accessToken = MAPBOX_TOKEN;
 const MX_CENTER = [-99.1332, 19.4326]; // CDMX default
 
@@ -1070,10 +1071,30 @@ function InfoBox({icon:Icon,color,title,value,sub}){
     </div>
   );
 }
+// Normaliza texto (quita acentos + lowercase) para búsqueda tolerante
+const normTxt = s => (s||"").toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim();
+// Aliases comunes que el usuario podría escribir pero no matchean el nombre oficial
+const CITY_ALIASES = {
+  "Ciudad de México": ["cdmx","df","distrito federal","ciudad mexico","mexico df","ciudad de mexico"],
+  "Cd. Juárez":["juarez","ciudad juarez","cd juarez"],
+  "Mérida":["merida","yucatan"],
+  "León":["leon","leon gto","guanajuato"],
+  "Querétaro":["queretaro","qro"],
+  "Cancún":["cancun","quintana roo"],
+  "San Luis Potosí":["san luis","slp","san luis potosi"],
+  "Jalapa/Xalapa":["xalapa","jalapa","veracruz jalapa"],
+  "Tuxtla":["tuxtla gutierrez","tuxtla gtz"],
+};
 function CitySearch({value,onChange,onSelect,veh,exclude=[]}){
   const [open,setOpen]=useState(false);
-  // Cities that match the query (without exclude filter)
-  const allMatches = TAR.filter(t=>t.c.toLowerCase().includes(value.toLowerCase()));
+  const q = normTxt(value);
+  // Cities that match the query (without exclude filter) — acentos insensibles + aliases
+  const allMatches = TAR.filter(t=>{
+    if(!q) return false;
+    if(normTxt(t.c).includes(q)) return true;
+    const aliases = CITY_ALIASES[t.c]||[];
+    return aliases.some(a=>normTxt(a).includes(q));
+  });
   const filt = allMatches.filter(t=>!exclude.includes(t.c));
   // Cities that match but are excluded (shown with greyed-out state + hint)
   const excludedMatches = allMatches.filter(t=>exclude.includes(t.c));
@@ -1083,7 +1104,7 @@ function CitySearch({value,onChange,onSelect,veh,exclude=[]}){
       <div style={{position:"relative"}}>
         <Search size={13} color={MUTED} style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}/>
         <input value={value} onChange={e=>{onChange(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),200)}
-          placeholder={"Busca entre "+TAR.length+" destinos…"}
+          placeholder={"Busca entre "+TAR.length+" destinos (CDMX, Monterrey, Guadalajara…)"}
           style={{width:"100%",paddingLeft:32,paddingRight:12,paddingTop:10,paddingBottom:10,background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,fontSize:14}}/>
       </div>
       {showDropdown&&(
@@ -1193,56 +1214,72 @@ function SearchPalette({cots=[],facts=[],rutas=[],clientes=[],entregas=[],onSele
   );
 }
 const ago=s=>{if(!s)return"";const d=Date.now()/1000-s;if(d<60)return"ahora";if(d<3600)return Math.floor(d/60)+"m";if(d<86400)return Math.floor(d/3600)+"h";return Math.floor(d/86400)+"d";};
-/* AddressSearch: búsqueda de direcciones con Mapbox — bbox + proximity + fallback */
+/* AddressSearch: Mapbox Search Box API v1 (suggest + retrieve)
+   — cobertura de POIs enormemente mejor que Geocoding v5 clásico.
+   Flujo: user teclea → /suggest (sin coords, retorna mapbox_id) → user clica → /retrieve (coords) */
 function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",proximity=null,bbox=null,cityHint="",compact=false}){
   const [q,setQ]=useState("");
   const [results,setResults]=useState([]);
   const [loading,setLoading]=useState(false);
   const [open,setOpen]=useState(false);
-  const [usedFallback,setUsedFallback]=useState(false);
+  const [authError,setAuthError]=useState(false);
+  const [retrievingId,setRetrievingId]=useState(null);
   const timerRef=useRef(null);
+  // session_token vive toda la vida del componente — Mapbox factura 1 request = 1 sesión (múltiples suggest + 1 retrieve)
+  const sessionTokRef=useRef(null);
+  if(!sessionTokRef.current){
+    sessionTokRef.current=(crypto?.randomUUID?.()||Date.now().toString(36)+Math.random().toString(36).slice(2));
+  }
 
   useEffect(()=>{
-    if(!q||q.length<2){setResults([]);setUsedFallback(false);return;}
-    if(!MAPBOX_TOKEN)return;
+    if(!q||q.length<2){setResults([]);return;}
+    if(!MAPBOX_TOKEN){console.warn("AddressSearch: MAPBOX_TOKEN ausente");return;}
     if(timerRef.current)clearTimeout(timerRef.current);
     timerRef.current=setTimeout(async()=>{
-      setLoading(true);setUsedFallback(false);
+      setLoading(true);
       const prox = proximity?`&proximity=${proximity[0]},${proximity[1]}`:"";
       const bboxStr = bbox?`&bbox=${bbox.join(",")}`:"";
-      const typesBase = "poi,address,place,locality,neighborhood,postcode";
+      const url = `https://api.mapbox.com/search/searchbox/v1/suggest?q=${encodeURIComponent(q)}&access_token=${MAPBOX_TOKEN}&session_token=${sessionTokRef.current}&country=MX&language=es&limit=10${prox}${bboxStr}`;
       try{
-        // ETAPA 1: Búsqueda con bbox estricto (si existe)
-        let features = [];
-        if(bbox){
-          const url1 = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=10${prox}${bboxStr}&types=${typesBase}`;
-          const r1 = await fetch(url1);
-          const d1 = await r1.json();
-          features = d1.features||[];
+        const r = await fetch(url);
+        if(!r.ok){
+          const body = await r.text();
+          console.warn("Mapbox SearchBox HTTP",r.status,body.slice(0,200));
+          if(r.status===401||/invalid token/i.test(body)) setAuthError(true);
+          setResults([]);setLoading(false);return;
         }
-        // ETAPA 2: Si no hay resultados con bbox, fallback a búsqueda más amplia con proximity
-        if(features.length===0){
-          const queryWithCity = cityHint&&!q.toLowerCase().includes(cityHint.toLowerCase())?`${q} ${cityHint}`:q;
-          const url2 = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(queryWithCity)}.json?access_token=${MAPBOX_TOKEN}&country=MX&language=es&limit=10${prox}&types=${typesBase}`;
-          const r2 = await fetch(url2);
-          const d2 = await r2.json();
-          features = d2.features||[];
-          // Filtra por distancia si hay proximity (máx 80km del centro)
-          if(proximity&&features.length>0){
-            features = features.filter(f=>{
-              const [flng,flat] = f.center;
-              const d = distKm(proximity[1],proximity[0],flat,flng);
-              return d<80;
-            });
-          }
-          if(features.length>0) setUsedFallback(true);
-        }
-        setResults(features);
-      }catch(e){console.warn("geocoding",e);}
+        setAuthError(false);
+        const d = await r.json();
+        setResults(d.suggestions||[]);
+      }catch(e){console.warn("searchbox fetch",e);setResults([]);}
       setLoading(false);
-    },250);
+    },220);
     return()=>{if(timerRef.current)clearTimeout(timerRef.current);};
-  },[q,proximity,bbox,cityHint]);
+  },[q,proximity,bbox]);
+
+  const handlePick = async (s)=>{
+    if(!s.mapbox_id){
+      // Fallback si por algún motivo no hay mapbox_id (no debería pasar en v1)
+      onSelect({name:s.name||q,address:s.full_address||s.place_formatted||"",lat:0,lng:0,category:s.feature_type||"",id:s.mapbox_id||uid()});
+      setQ("");setResults([]);setOpen(false);return;
+    }
+    setRetrievingId(s.mapbox_id);
+    try{
+      const url = `https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(s.mapbox_id)}?access_token=${MAPBOX_TOKEN}&session_token=${sessionTokRef.current}&language=es`;
+      const r = await fetch(url);
+      const d = await r.json();
+      const f = d.features?.[0];
+      if(!f){setRetrievingId(null);return;}
+      const [lng,lat] = f.geometry?.coordinates||[0,0];
+      const nombre = f.properties?.name || s.name || q;
+      const direccion = f.properties?.full_address || f.properties?.place_formatted || s.full_address || s.place_formatted || "";
+      onSelect({name:nombre,address:direccion,lat,lng,category:f.properties?.feature_type||s.feature_type||"",id:s.mapbox_id});
+      setQ("");setResults([]);setOpen(false);
+      // Nueva sesión para la próxima búsqueda (buena práctica Mapbox)
+      sessionTokRef.current=(crypto?.randomUUID?.()||Date.now().toString(36)+Math.random().toString(36).slice(2));
+    }catch(e){console.warn("retrieve",e);}
+    setRetrievingId(null);
+  };
 
   return(
     <div style={{position:"relative"}}>
@@ -1254,30 +1291,36 @@ function AddressSearch({onSelect,placeholder="Buscar dirección, Walmart, etc.",
         {q&&!loading&&<button onClick={()=>{setQ("");setResults([]);}} className="btn" style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",color:MUTED,padding:3}}><X size={12}/></button>}
       </div>
       {open&&results.length>0&&(
-        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:320,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
-          {usedFallback&&<div style={{padding:"6px 12px",background:AMBER+"10",borderBottom:"1px solid "+AMBER+"30",fontSize:10,color:AMBER,fontWeight:700}}>
-            💡 Búsqueda expandida (sin restricción de ciudad)
-          </div>}
-          {results.map(r=>{
-            const [lng,lat] = r.center;
-            const nombre = r.text;
-            const direccion = r.place_name;
+        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:340,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
+          {results.map(s=>{
+            const isLoading = retrievingId===s.mapbox_id;
+            const nombre = s.name || s.name_preferred || "";
+            const direccion = s.full_address || s.place_formatted || s.address || "";
+            const ftype = s.feature_type || s.poi_category?.[0] || "";
             return(
-              <button key={r.id} onClick={()=>{onSelect({name:nombre,address:direccion,lat,lng,category:r.properties?.category||"",id:r.id});setQ("");setResults([]);setOpen(false);}} className="btn fr"
-                style={{width:"100%",display:"flex",alignItems:"flex-start",gap:10,padding:"9px 14px",borderBottom:"1px solid "+BORDER,background:"transparent",cursor:"pointer",textAlign:"left"}}>
+              <button key={s.mapbox_id||nombre+direccion} onMouseDown={e=>{e.preventDefault();handlePick(s);}} className="btn fr" disabled={isLoading}
+                style={{width:"100%",display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",borderBottom:"1px solid "+BORDER,background:isLoading?"#f6f9ff":"transparent",cursor:isLoading?"wait":"pointer",textAlign:"left",opacity:isLoading?0.7:1}}>
                 <MapPin size={13} color={A} style={{flexShrink:0,marginTop:2}}/>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:700,fontSize:12,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{nombre}</div>
                   <div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{direccion}</div>
+                  {ftype&&ftype!=="address"&&<div style={{fontSize:9,color:VIOLET,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:2}}>{ftype.replace(/_/g," ")}</div>}
                 </div>
+                {isLoading&&<div className="spin" style={{width:12,height:12,border:"2px solid "+BD2,borderTop:"2px solid "+A,borderRadius:"50%",flexShrink:0,marginTop:2}}/>}
               </button>
             );
           })}
         </div>
       )}
-      {open&&q.length>=3&&!loading&&results.length===0&&(
+      {open&&q.length>=3&&!loading&&results.length===0&&!authError&&(
         <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,padding:14,fontSize:12,color:MUTED,textAlign:"center",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
           Sin resultados para "{q}"
+        </div>
+      )}
+      {authError&&(
+        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+ROSE+"60",borderRadius:13,zIndex:300,padding:14,fontSize:12,color:ROSE,textAlign:"left",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
+          <div style={{fontWeight:800,marginBottom:4}}>⚠ Token de Mapbox inválido</div>
+          <div style={{color:MUTED,fontSize:11,lineHeight:1.4}}>La búsqueda de direcciones requiere un token válido. Configura <code style={{fontFamily:MONO,background:"#f5f7fc",padding:"1px 5px",borderRadius:4}}>VITE_MAPBOX_TOKEN</code> en Vercel → Settings → Environment Variables, redeploy, y recarga.</div>
         </div>
       )}
     </div>
@@ -2545,6 +2588,13 @@ function PlanificadorRutas(){
   return(
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      {!MAPBOX_TOKEN&&<div style={{background:ROSE+"10",border:"1.5px solid "+ROSE+"50",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",gap:10,alignItems:"flex-start"}}>
+        <AlertCircle size={18} color={ROSE} style={{flexShrink:0,marginTop:1}}/>
+        <div style={{flex:1,fontSize:12,color:TEXT,lineHeight:1.5}}>
+          <div style={{fontWeight:800,color:ROSE,marginBottom:3}}>Mapbox no está configurado</div>
+          No podrás buscar direcciones (Walmart, Estadio Harp Helú, etc.) hasta configurar un token válido. Ve a <strong>Vercel → Settings → Environment Variables</strong>, agrega <code style={{fontFamily:MONO,background:"#fff",padding:"1px 5px",borderRadius:4,border:"1px solid "+BD2}}>VITE_MAPBOX_TOKEN</code> con un token público de <a href="https://account.mapbox.com/access-tokens/" target="_blank" rel="noreferrer" style={{color:BLUE,fontWeight:700}}>account.mapbox.com</a>, redeploy, y recarga esta página.
+        </div>
+      </div>}
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,flexWrap:"wrap",gap:10}}>
         <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Planificador de Rutas</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>Multi-parada · Flota automática · Import CSV/Excel</p></div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
