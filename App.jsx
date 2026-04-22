@@ -283,21 +283,52 @@ button:focus-visible{outline:2px solid ${A};outline-offset:2px;border-radius:8px
 .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .g2-side{display:grid;grid-template-columns:1fr 340px;gap:16px}
-@media(max-width:1024px){
+.hide-mobile{display:initial}
+.show-mobile{display:none}
+.hamburger-btn{display:none!important}
+.mobile-backdrop{display:none;position:fixed;inset:0;background:rgba(12,24,41,.55);z-index:199;backdrop-filter:blur(3px)}
+/* Safe-area para iPhone con notch */
+.safe-pad-top{padding-top:env(safe-area-inset-top,0)}
+.safe-pad-bottom{padding-bottom:env(safe-area-inset-bottom,0)}
+@media(max-width:1280px){
   .g4{grid-template-columns:repeat(2,1fr)}
-  .g2-side{grid-template-columns:1fr}
+}
+@media(max-width:1024px){
+  .g4{grid-template-columns:repeat(2,1fr);gap:10px}
+  .g3{grid-template-columns:repeat(2,1fr)}
+  .g2-side{grid-template-columns:1fr;gap:12px}
 }
 @media(max-width:768px){
-  .g4,.g3,.g2{grid-template-columns:1fr}
+  .g4,.g3,.g2{grid-template-columns:repeat(2,1fr);gap:8px}
   .g2-side{grid-template-columns:1fr}
   .hide-mobile{display:none!important}
+  .show-mobile{display:initial!important}
   .btn{min-height:40px}
-  .sidebar-desktop{transform:translateX(-100%);position:fixed;z-index:200}
+  .sidebar-desktop{transform:translateX(-100%);position:fixed;z-index:200;top:0;bottom:0;box-shadow:0 0 40px rgba(0,0,0,.5)}
   .sidebar-desktop.open{transform:translateX(0)}
-  .mobile-backdrop{display:block!important}
+  .mobile-backdrop{display:block}
+  .hamburger-btn{display:flex!important}
+  /* Reducir padding interno de todas las vistas principales */
+  main > div{padding-left:14px!important;padding-right:14px!important}
+  main > div[style*="padding: 28px 32px"], main > div[style*="padding:28px 32px"]{padding:18px 14px!important}
+  main > div[style*="padding: 24px 28px"], main > div[style*="padding:24px 28px"]{padding:16px 14px!important}
+  main h1{font-size:22px!important}
+  /* Tablas scroll horizontal con borde visible */
+  table{min-width:600px}
+  .table-wrap{border-radius:12px}
+  /* Textos de KPI más compactos */
+  .kpi-card-value{font-size:18px!important}
+  /* TopBar */
+  .topbar-search{max-width:none!important}
+  .topbar-search span:first-of-type{display:none}
 }
 @media(max-width:480px){
+  .g4,.g3{grid-template-columns:1fr}
+  .g4.g4-force-2,.g3.g3-force-2{grid-template-columns:repeat(2,1fr)}
   .g4,.g3,.g2{gap:8px}
+  main h1{font-size:19px!important;letter-spacing:-0.02em!important}
+  main > div{padding:14px 12px!important}
+  .btn{font-size:12px}
 }
 @media print{.noprint{display:none!important}body{background:#fff}}
 `;
@@ -1770,13 +1801,13 @@ function TopBar({view,setView,sidebarOpen,setSidebarOpen,setSearchOpen}){
   const cur=nav.find(n=>n.id===view)||{label:"Dashboard",icon:LayoutDashboard};
   const Icon=cur.icon;
   return(
-    <div className="glass noprint" style={{position:"sticky",top:0,zIndex:100,height:56,display:"flex",alignItems:"center",gap:14,padding:"0 28px",borderBottom:"1px solid "+BORDER+"80"}}>
-      <button onClick={()=>setSidebarOpen(!sidebarOpen)} className="btn" style={{display:"none",width:36,height:36,borderRadius:10,border:"1px solid "+BD2,alignItems:"center",justifyContent:"center",color:MUTED,flexShrink:0}} id="hamburger"><Menu size={18}/></button>
-      <div style={{display:"flex",alignItems:"center",gap:9,flex:"0 0 auto"}}>
-        <div style={{width:30,height:30,borderRadius:9,background:A+"12",display:"flex",alignItems:"center",justifyContent:"center"}}><Icon size={15} color={A}/></div>
-        <span style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT}}>{cur.label}</span>
+    <div className="glass noprint" style={{position:"sticky",top:0,zIndex:100,minHeight:56,display:"flex",alignItems:"center",gap:10,padding:"0 16px",borderBottom:"1px solid "+BORDER+"80"}}>
+      <button onClick={()=>setSidebarOpen(!sidebarOpen)} className="btn hamburger-btn" title="Menú" style={{width:40,height:40,borderRadius:10,border:"1px solid "+BD2,alignItems:"center",justifyContent:"center",color:MUTED,flexShrink:0}}><Menu size={20}/></button>
+      <div style={{display:"flex",alignItems:"center",gap:9,flex:"0 0 auto",minWidth:0}}>
+        <div style={{width:30,height:30,borderRadius:9,background:A+"12",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon size={15} color={A}/></div>
+        <span style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cur.label}</span>
       </div>
-      <button onClick={()=>setSearchOpen(true)} className="btn" style={{flex:1,maxWidth:420,margin:"0 auto",display:"flex",alignItems:"center",gap:10,padding:"8px 16px",borderRadius:11,border:"1.5px solid "+BD2,background:"#fff",cursor:"pointer"}}>
+      <button onClick={()=>setSearchOpen(true)} className="btn topbar-search" style={{flex:1,maxWidth:420,margin:"0 auto",display:"flex",alignItems:"center",gap:10,padding:"8px 16px",borderRadius:11,border:"1.5px solid "+BD2,background:"#fff",cursor:"pointer",minWidth:0}}>
         <Search size={14} color={MUTED}/>
         <span style={{flex:1,textAlign:"left",fontSize:13,color:MUTED+"90"}}>Buscar en todo el sistema…</span>
         <span style={{fontSize:10,fontFamily:MONO,color:BD2,background:"#f5f7fc",padding:"2px 8px",borderRadius:6,fontWeight:700}}>⌘K</span>
@@ -2223,27 +2254,30 @@ const NAV_SECTIONS=[
   ]},
 ];
 function Sidebar({view,setView,stats,open,setOpen}){
-  const w=open?220:64;
+  const isMobile = typeof window!=="undefined"&&window.innerWidth<768;
+  const w = isMobile?260:(open?220:64);
+  const showFull = open||isMobile;
   return(
-    <aside className={"noprint sidebar-desktop"+(open?" open":"")} style={{width:w,flexShrink:0,background:"#0a1628",display:"flex",flexDirection:"column",minHeight:"100vh",padding:"0 "+(open?"10px":"6px")+" 16px",transition:"width .22s cubic-bezier(.22,1,.36,1),padding .22s",overflow:"hidden"}}>
-      <div style={{padding:open?"20px 6px 14px":"20px 0 14px",borderBottom:"1px solid #ffffff14",marginBottom:6,display:"flex",alignItems:"center",gap:10,justifyContent:open?"flex-start":"center"}}>
+    <aside className={"noprint sidebar-desktop"+(open?" open":"")} style={{width:w,flexShrink:0,background:"#0a1628",display:"flex",flexDirection:"column",minHeight:"100vh",padding:"0 "+(showFull?"10px":"6px")+" 16px",transition:"width .22s cubic-bezier(.22,1,.36,1),padding .22s",overflow:"hidden",paddingTop:"env(safe-area-inset-top,0)"}}>
+      <div style={{padding:showFull?"20px 6px 14px":"20px 0 14px",borderBottom:"1px solid #ffffff14",marginBottom:6,display:"flex",alignItems:"center",gap:10,justifyContent:showFull?"flex-start":"center"}}>
         <div style={{width:36,height:36,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:15,color:"#fff",flexShrink:0}}>DM</div>
-        {open&&<div><div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:"#fff",letterSpacing:"-0.02em",whiteSpace:"nowrap"}}>DMvimiento</div><div style={{fontSize:9,color:"#ffffff60",fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",whiteSpace:"nowrap"}}>LOGISTICS OS v2.1</div></div>}
+        {showFull&&<div style={{flex:1,minWidth:0}}><div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:"#fff",letterSpacing:"-0.02em",whiteSpace:"nowrap"}}>DMvimiento</div><div style={{fontSize:9,color:"#ffffff60",fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",whiteSpace:"nowrap"}}>LOGISTICS OS v2.2</div></div>}
+        {showFull&&isMobile&&<button onClick={()=>setOpen(false)} className="btn" style={{width:32,height:32,borderRadius:8,background:"rgba(255,255,255,.08)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X size={16}/></button>}
       </div>
-      {open&&<button onClick={()=>setOpen(false)} className="btn" style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:"1px solid #ffffff14",marginBottom:10,color:"#ffffff60",fontSize:11,whiteSpace:"nowrap"}}><Search size={12}/><span style={{flex:1,textAlign:"left"}}>Buscar… ⌘K</span></button>}
+      {showFull&&<button onClick={()=>!isMobile&&setOpen(false)} className="btn" style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:"1px solid #ffffff14",marginBottom:10,color:"#ffffff60",fontSize:11,whiteSpace:"nowrap"}}><Search size={12}/><span style={{flex:1,textAlign:"left"}}>Buscar… ⌘K</span></button>}
       <nav style={{flex:1,overflowY:"auto"}}>
         {NAV_SECTIONS.map(({section,items})=>(
           <div key={section} style={{marginBottom:8}}>
-            {open&&<div style={{fontSize:9,fontWeight:800,color:"#ffffff30",letterSpacing:"0.12em",padding:"6px 10px 4px",textTransform:"uppercase",whiteSpace:"nowrap"}}>{section}</div>}
+            {showFull&&<div style={{fontSize:9,fontWeight:800,color:"#ffffff30",letterSpacing:"0.12em",padding:"6px 10px 4px",textTransform:"uppercase",whiteSpace:"nowrap"}}>{section}</div>}
             {items.map(({id,label,icon:Icon,badge})=>{
               const a=view===id;
               return(
-                <button key={id} onClick={()=>setView(id)} className="btn" title={open?"":label} style={{width:"100%",display:"flex",alignItems:"center",gap:open?9:0,padding:open?"8px 10px":"8px 0",borderRadius:9,marginBottom:1,cursor:"pointer",transition:"all .15s",background:a?A+"22":"transparent",justifyContent:open?"flex-start":"center",position:"relative"}}>
+                <button key={id} onClick={()=>setView(id)} className="btn" title={showFull?"":label} style={{width:"100%",display:"flex",alignItems:"center",gap:showFull?9:0,padding:showFull?"10px 10px":"10px 0",borderRadius:9,marginBottom:1,cursor:"pointer",transition:"all .15s",background:a?A+"22":"transparent",justifyContent:showFull?"flex-start":"center",position:"relative"}}>
                   {a&&<div style={{position:"absolute",left:0,top:"20%",bottom:"20%",width:3,borderRadius:4,background:A,transition:"all .15s"}}/>}
-                  <Icon size={15} color={a?A:"#ffffff70"} strokeWidth={a?2.5:2}/>
-                  {open&&<span style={{fontSize:12,fontWeight:a?700:500,color:a?A:"#ffffff90",flex:1,textAlign:"left",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</span>}
-                  {open&&badge&&<span style={{fontSize:8,fontWeight:800,background:a?A:badge==="NEW"?VIOLET:A,color:"#fff",borderRadius:6,padding:"1px 5px",letterSpacing:"0.05em"}}>{badge}</span>}
-                  {!open&&a&&<div style={{position:"absolute",right:-2,width:5,height:5,borderRadius:"50%",background:A}}/>}
+                  <Icon size={showFull?16:15} color={a?A:"#ffffff70"} strokeWidth={a?2.5:2}/>
+                  {showFull&&<span style={{fontSize:13,fontWeight:a?700:500,color:a?A:"#ffffff90",flex:1,textAlign:"left",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</span>}
+                  {showFull&&badge&&<span style={{fontSize:8,fontWeight:800,background:a?A:badge==="NEW"?VIOLET:A,color:"#fff",borderRadius:6,padding:"1px 5px",letterSpacing:"0.05em"}}>{badge}</span>}
+                  {!showFull&&a&&<div style={{position:"absolute",right:-2,width:5,height:5,borderRadius:"50%",background:A}}/>}
                 </button>
               );
             })}
@@ -2251,7 +2285,7 @@ function Sidebar({view,setView,stats,open,setOpen}){
         ))}
       </nav>
       <div style={{borderTop:"1px solid #ffffff14",paddingTop:10,marginTop:4}}>
-        {open?<div style={{display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
+        {showFull?<div style={{display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
           {[["",GREEN,"En línea",stats.fb],[stats.cot+"","#fff","cots",null],[stats.fac+"","#fff","facts",null]].map(([ic,c,l,blink])=>(
             <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
               {blink!==undefined&&<div className={blink?"pulse":""} style={{width:5,height:5,borderRadius:"50%",background:blink?GREEN:ROSE}}/>}
@@ -2259,10 +2293,10 @@ function Sidebar({view,setView,stats,open,setOpen}){
             </div>
           ))}
         </div>:<div style={{display:"flex",justifyContent:"center"}}><div className={stats.fb?"pulse":""} style={{width:6,height:6,borderRadius:"50%",background:stats.fb?GREEN:ROSE}}/></div>}
-        <button onClick={()=>setOpen(!open)} className="btn" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",marginTop:8,borderRadius:8,border:"1px solid #ffffff10",color:"#ffffff50"}}>
+        {!isMobile&&<button onClick={()=>setOpen(!open)} className="btn" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"8px 0",marginTop:8,borderRadius:8,border:"1px solid #ffffff10",color:"#ffffff50"}}>
           <ChevronLeft size={14} style={{transition:"transform .2s",transform:open?"":"rotate(180deg)"}}/>
           {open&&<span style={{fontSize:10,fontWeight:600}}>Colapsar</span>}
-        </button>
+        </button>}
       </div>
     </aside>
   );
@@ -4678,7 +4712,7 @@ function Facturas(){
         </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:18}}>
+      <div className="g4" style={{marginBottom:18}}>
         <KpiCard icon={BarChart2} color={BLUE} label="Total facturado" value={fmtK(totTotal)} sub={filt.length+" registros"}/>
         <KpiCard icon={CheckCircle} color={GREEN} label="Cobrado" value={fmtK(cobrado)} sub={totTotal>0?Math.round(cobrado/totTotal*100)+"%":"0%"}/>
         <KpiCard icon={Clock} color={AMBER} label="Por cobrar" value={fmtK(pendiente)}/>
@@ -4713,7 +4747,7 @@ function Facturas(){
           else alert("Agrega teléfono o email del cliente en la factura para enviar recordatorio");
         };
         return(<>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
+          <div className="g4" style={{marginBottom:16,gridTemplateColumns:"repeat(5,1fr)"}}>
             <KpiCard icon={AlertCircle} color={ROSE} label="Cartera total vencida" value={fmtK(totalCart)} sub={cart.length+" facturas"}/>
             <KpiCard icon={Clock} color={AMBER} label="1-15 días" value={fmtK(buckets["1-15"])}/>
             <KpiCard icon={Clock} color={AMBER} label="16-30 días" value={fmtK(buckets["16-30"])}/>
@@ -5064,7 +5098,7 @@ function Viaticos(){
       </div>
 
       {/* KPIs */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:20}}>
+      <div className="g4" style={{marginBottom:20}}>
         <KpiCard icon={TrendingUp} color={ROSE} label="Total gastos" value={fmtK(items.reduce((a,g)=>a+(g.monto||0),0))} sub={items.length+" registros"}/>
         <KpiCard icon={Calendar} color={AMBER} label={mesActual+" "+ANIO} value={fmtK(items.filter(g=>g.mes===mesActual&&g.anio===ANIO).reduce((a,g)=>a+(g.monto||0),0))} sub="mes actual"/>
         <KpiCard icon={Truck} color={BLUE} label="Gasolina+Casetas+TAG" value={fmtK(items.filter(g=>["gasolina","casetas","tag"].includes(g.tipo)).reduce((a,g)=>a+(g.monto||0),0))}/>
@@ -5384,7 +5418,7 @@ function Presupuestos(){
         </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:16}}>
+      <div className="g4" style={{marginBottom:16}}>
         <KpiCard icon={ClipboardList} color={A} label="Total presupuestos" value={items.length} sub="en la base"/>
         <KpiCard icon={DollarSign} color={VIOLET} label="Monto filtrado" value={fmtK(totAll)} sub={filt.length+" registros"}/>
         <KpiCard icon={CheckCircle} color={GREEN} label="Aprobados" value={fmtK(aprobados)}/>
@@ -6425,7 +6459,7 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
     <div style={{minHeight:"100vh",background:"#f1f4fb",fontFamily:SANS}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
       {/* Header */}
-      <div style={{background:"#0a1628",color:"#fff",padding:"18px 20px",position:"sticky",top:0,zIndex:50}}>
+      <div style={{background:"#0a1628",color:"#fff",padding:"calc(env(safe-area-inset-top,0) + 14px) 16px 14px",position:"sticky",top:0,zIndex:50}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <div style={{width:42,height:42,borderRadius:14,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:15,flexShrink:0}}>{(chofer.nombre||"?").slice(0,2).toUpperCase()}</div>
           <div style={{flex:1,minWidth:0}}>
@@ -7420,7 +7454,7 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
       </div>
 
       {/* Sticky bottom controls */}
-      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1px solid "+BORDER,padding:"10px 14px",display:"flex",gap:8,boxShadow:"0 -4px 16px rgba(12,24,41,.08)",zIndex:50}}>
+      <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#fff",borderTop:"1px solid "+BORDER,padding:"10px 14px calc(env(safe-area-inset-bottom,0) + 10px)",display:"flex",gap:8,boxShadow:"0 -4px 16px rgba(12,24,41,.08)",zIndex:50}}>
         <button onClick={async()=>{
           if(!confirm("⚠️ ENVIAR SOS?\n\nSe notificará al administrador de inmediato con tu ubicación actual. Solo usa esto en emergencia.")) return;
           try{navigator.vibrate&&navigator.vibrate([400,100,400]);}catch(e){}
@@ -8549,7 +8583,7 @@ export default function App(){
   const [prospectos,setProspectos]=useState([]);
   const [choferes,setChoferes]=useState([]);
   const [fbOk,setFbOk]=useState(false);
-  const [sidebarOpen,setSidebarOpen]=useState(true);
+  const [sidebarOpen,setSidebarOpen]=useState(()=>typeof window!=="undefined"?window.innerWidth>=768:true);
   const [searchOpen,setSearchOpen]=useState(false);
   const [installPrompt,setInstallPrompt]=useState(null);
   const [showInstallBanner,setShowInstallBanner]=useState(false);
@@ -8620,6 +8654,7 @@ export default function App(){
       <style>{CSS}</style>
       <SOSGlobalBanner onGo={()=>setView("alertas")}/>
       <div style={{display:"flex",minHeight:"100vh",background:"#f1f4fb",color:TEXT,fontFamily:SANS}}>
+        {sidebarOpen&&<div className="mobile-backdrop" onClick={()=>setSidebarOpen(false)}/>}
         <Sidebar view={view} setView={v=>{setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen}/>
         <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
           <TopBar view={view} setView={setView} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} setSearchOpen={setSearchOpen}/>
