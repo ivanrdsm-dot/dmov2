@@ -266,6 +266,7 @@ button:focus-visible{outline:2px solid ${A};outline-offset:2px;border-radius:8px
 @keyframes slideIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
 @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes pulseHalo{0%,100%{opacity:.85;transform:scale(1.45)}50%{opacity:.25;transform:scale(2.3)}}
 .slide-in{animation:slideIn .25s cubic-bezier(.22,1,.36,1) both}
 .skel{background:linear-gradient(90deg,#e8eef6 25%,#f1f4fb 50%,#e8eef6 75%);background-size:200% 100%;animation:shimmer 1.5s ease infinite;border-radius:8px}
 .pulse{animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite}
@@ -6077,9 +6078,13 @@ function ChoferApp(){
     }
   },[chofer]);
 
-  const logout=()=>{localStorage.removeItem("dmov_chofer");setChofer(null);};
+  const logout=()=>{
+    localStorage.removeItem("dmov_chofer");
+    localStorage.removeItem("dmov_chofer_last_code"); // borra credencial guardada
+    setChofer(null);
+  };
 
-  const login=async(tel,codigo)=>{
+  const login=async(tel,codigo,remember=true)=>{
     try{
       const telNorm = tel.replace(/\D/g,"");
       const q = query(collection(db,"choferes"),where("tel","==",telNorm));
@@ -6100,21 +6105,52 @@ function ChoferApp(){
 }
 
 function ChoferLogin({onLogin,toast,setToast}){
-  const [tel,setTel]=useState("");
+  // Rellena automáticamente el último teléfono usado (acceso más rápido)
+  const [tel,setTel]=useState(()=>{
+    try{return localStorage.getItem("dmov_chofer_last_tel")||"";}catch(e){return "";}
+  });
   const [codigo,setCodigo]=useState("");
   const [loading,setLoading]=useState(false);
+  const [remember,setRemember]=useState(true);
 
-  const handle=async()=>{
+  const handle=async(e)=>{
+    if(e&&e.preventDefault) e.preventDefault();
     if(!tel||!codigo){return;}
     setLoading(true);
-    await onLogin(tel,codigo);
+    const ok = await onLogin(tel,codigo,remember);
+    if(ok&&remember){
+      try{
+        localStorage.setItem("dmov_chofer_last_tel",tel.replace(/\D/g,""));
+        // Guarda también código codificado básico (NO es seguridad real, solo conveniencia)
+        localStorage.setItem("dmov_chofer_last_code",btoa(codigo));
+      }catch(e){}
+    }
     setLoading(false);
   };
+
+  // Si ya hay credenciales guardadas, intenta auto-login al cargar
+  useEffect(()=>{
+    try{
+      const savedTel = localStorage.getItem("dmov_chofer_last_tel");
+      const savedCode = localStorage.getItem("dmov_chofer_last_code");
+      if(savedTel&&savedCode){
+        setTel(savedTel);
+        const dec = atob(savedCode);
+        setCodigo(dec);
+        // Intenta login automático en background
+        setTimeout(async()=>{
+          setLoading(true);
+          await onLogin(savedTel,dec,true);
+          setLoading(false);
+        },300);
+      }
+    }catch(e){}
+  },[]);
 
   return(
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#1e293b)",display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:SANS}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
-      <div className="pi" style={{width:"100%",maxWidth:380,background:"#fff",borderRadius:24,padding:32,boxShadow:"0 32px 80px rgba(0,0,0,.4)"}}>
+      <form onSubmit={handle} className="pi" style={{width:"100%",maxWidth:380,background:"#fff",borderRadius:24,padding:32,boxShadow:"0 32px 80px rgba(0,0,0,.4)"}}>
         <div style={{textAlign:"center",marginBottom:28}}>
           <div style={{width:64,height:64,borderRadius:18,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:22,color:"#fff",margin:"0 auto 14px"}}>DM</div>
           <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:26,color:TEXT,letterSpacing:"-0.02em"}}>DMvimiento</h1>
@@ -6122,27 +6158,33 @@ function ChoferLogin({onLogin,toast,setToast}){
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           <div>
-            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Teléfono</div>
+            <label htmlFor="chofer-tel" style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em",display:"block"}}>Teléfono</label>
             <div style={{position:"relative"}}>
-              <Phone size={15} color={MUTED} style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)"}}/>
-              <input type="tel" value={tel} onChange={e=>setTel(e.target.value)} placeholder="5512345678" style={{width:"100%",padding:"14px 14px 14px 40px",fontSize:15,border:"1.5px solid "+BD2,borderRadius:12,fontFamily:SANS}}/>
+              <Phone size={15} color={MUTED} style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",zIndex:1}}/>
+              <input id="chofer-tel" name="username" type="tel" autoComplete="username" inputMode="numeric" value={tel} onChange={e=>setTel(e.target.value)} placeholder="5512345678"
+                style={{width:"100%",padding:"14px 14px 14px 40px",fontSize:15,border:"1.5px solid "+BD2,borderRadius:12,fontFamily:SANS}}/>
             </div>
           </div>
           <div>
-            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Código de acceso</div>
+            <label htmlFor="chofer-code" style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em",display:"block"}}>Código de acceso</label>
             <div style={{position:"relative"}}>
-              <Hash size={15} color={MUTED} style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)"}}/>
-              <input value={codigo} onChange={e=>setCodigo(e.target.value.toUpperCase())} placeholder="ABC123" maxLength={6} style={{width:"100%",padding:"14px 14px 14px 40px",fontSize:16,fontFamily:MONO,fontWeight:800,letterSpacing:"0.15em",border:"1.5px solid "+BD2,borderRadius:12,textTransform:"uppercase"}}/>
+              <Hash size={15} color={MUTED} style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",zIndex:1}}/>
+              <input id="chofer-code" name="password" type="password" autoComplete="current-password" value={codigo} onChange={e=>setCodigo(e.target.value.toUpperCase())} placeholder="ABC123" maxLength={6}
+                style={{width:"100%",padding:"14px 14px 14px 40px",fontSize:16,fontFamily:MONO,fontWeight:800,letterSpacing:"0.15em",border:"1.5px solid "+BD2,borderRadius:12,textTransform:"uppercase"}}/>
             </div>
           </div>
-          <button onClick={handle} disabled={loading||!tel||!codigo} className="btn" style={{marginTop:6,background:loading||!tel||!codigo?"#e0e0e0":"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:15,boxShadow:"0 6px 20px "+A+"30"}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:TEXT,cursor:"pointer",paddingLeft:2,marginTop:2}}>
+            <input type="checkbox" checked={remember} onChange={e=>setRemember(e.target.checked)} style={{width:16,height:16,accentColor:A}}/>
+            <span>Mantener sesión iniciada en este dispositivo</span>
+          </label>
+          <button type="submit" disabled={loading||!tel||!codigo} className="btn" style={{marginTop:6,background:loading||!tel||!codigo?"#e0e0e0":"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:15,boxShadow:"0 6px 20px "+A+"30"}}>
             {loading?"Verificando…":"Ingresar"}
           </button>
           <div style={{fontSize:11,color:MUTED,textAlign:"center",marginTop:6,lineHeight:1.5}}>
             Pide a tu administrador el código de acceso de 6 caracteres
           </div>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
@@ -6199,23 +6241,90 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   },[chofer.id]);
 
   // Start/stop GPS tracking
-  const startTracking = (ruta)=>{
+  const wakeLockRef = useRef(null);
+  const requestWakeLock = async()=>{
+    try{
+      if("wakeLock" in navigator){
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+        wakeLockRef.current.addEventListener("release",()=>{wakeLockRef.current=null;});
+      }
+    }catch(e){console.warn("WakeLock error",e);}
+  };
+  // Re-adquirir WakeLock cuando la pestaña vuelve a primer plano
+  useEffect(()=>{
+    const onVis = ()=>{
+      if(document.visibilityState==="visible"&&tracking&&!wakeLockRef.current){
+        requestWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange",onVis);
+    return()=>document.removeEventListener("visibilitychange",onVis);
+  },[tracking]);
+
+  // Notificaciones diferenciadas al cliente (WhatsApp con msg específico por evento)
+  const notifyClienteEvent = (ruta,evento,extra={})=>{
+    if(!ruta.clienteTel||ruta.clienteTel.replace(/\D/g,"").length!==10) return;
+    const trackUrl = `${window.location.origin}/track/${ruta.trackingId||ruta.id}`;
+    const nombreChofer = chofer.nombre;
+    const cliente = ruta.cliente||"";
+    const primer = (ruta.stops||[]).find(s=>s.isOrigin)||(ruta.stops||[])[0]||{};
+    const primerPunto = primer?.city||"el punto de carga";
+    let msg = "";
+    switch(evento){
+      case "setout":
+        msg = `🚚 DMvimiento — ${nombreChofer} salió hacia el punto de carga (${primerPunto}). Sigue en tiempo real: ${trackUrl}`;
+        break;
+      case "pickup-arrived":
+        msg = `📍 DMvimiento — ${nombreChofer} llegó a ${primerPunto} y está preparando la carga. Sigue: ${trackUrl}`;
+        break;
+      case "loaded":
+        msg = `📦✅ DMvimiento — Material cargado. En camino a ${extra.nextCity||"el siguiente destino"}. ${trackUrl}`;
+        break;
+      case "stop-arrived":
+        msg = `📬 DMvimiento — ${nombreChofer} llegó a ${extra.city||"la parada"} ${extra.stopIdx?"(parada "+extra.stopIdx+")":""}. Tracking: ${trackUrl}`;
+        break;
+      case "stop-delivered":
+        msg = `✅ DMvimiento — Entrega confirmada en ${extra.city||"la parada"}${extra.notas?" · "+extra.notas:""}${extra.fotoURL?" · 📸 con evidencia":""}. ${trackUrl}`;
+        break;
+      case "completed":
+        msg = `🏁 DMvimiento — Ruta "${ruta.nombre}" completada con éxito. Ver detalles y evidencias: ${trackUrl}`;
+        break;
+      case "issue":
+        msg = `⚠️ DMvimiento — Incidente en ${extra.city||"la parada"}${extra.tipo?" — "+extra.tipo:""}: ${extra.notas||""}\n${trackUrl}`;
+        break;
+    }
+    const waUrl = `https://wa.me/52${ruta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
+    const label = {setout:"saliste hacia el punto de carga",["pickup-arrived"]:"llegaste al punto de carga",loaded:"cargaste material",["stop-arrived"]:"llegaste a una parada",["stop-delivered"]:"confirmaste una entrega",completed:"completaste la ruta",issue:"hay un incidente"}[evento]||"hay una actualización";
+    setTimeout(()=>{if(confirm(`¿Avisar al cliente que ${label}?`))window.open(waUrl,"_blank");},300);
+  };
+
+  const startTracking = async(ruta)=>{
     if(!("geolocation" in navigator)){showT("GPS no disponible en este dispositivo","err");return;}
     setActiveRuta(ruta);
     setTracking(true);
-    // Update ruta status + chofer status = "En ruta"
-    updateDoc(doc(db,"rutas",ruta.id),{status:"En curso",iniciadaEn:serverTimestamp()}).catch(()=>{});
+    // Fase 0 "Camino a carga" — el chofer sale hacia el primer punto, aún no está en ruta formal
+    const fase = ruta.fase||"en-curso";
+    const initialStatus = ruta.primerArribo?"En curso":"Camino a carga";
+    const initialFase = ruta.primerArribo?"en-ruta":"camino-a-carga";
+    updateDoc(doc(db,"rutas",ruta.id),{status:initialStatus,fase:initialFase,iniciadaEn:ruta.iniciadaEn||serverTimestamp()}).catch(()=>{});
     updateDoc(doc(db,"choferes",chofer.id),{status:"En ruta",rutaActivaId:ruta.id,rutaActivaNombre:ruta.nombre}).catch(()=>{});
-    postAlert(ruta.id,chofer.id,chofer.nombre,"start","Inició la ruta: "+ruta.nombre);
-    // Notifica al cliente que inició
-    if(ruta.clienteTel&&ruta.clienteTel.replace(/\D/g,"").length===10){
-      const trackUrl = `${window.location.origin}/track/${ruta.trackingId||ruta.id}`;
-      const msg = `🚚 DMvimiento: ${chofer.nombre} inició la ruta "${ruta.nombre}". Sigue el recorrido en tiempo real: ${trackUrl}`;
-      const waUrl = `https://wa.me/52${ruta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
-      setTimeout(()=>{if(confirm("¿Notificar al cliente que iniciaste la ruta por WhatsApp?"))window.open(waUrl,"_blank");},500);
-    }
-    // Start watch - sends GPS continuously
-    // Geofence: construye bbox de tolerancia con buffer de 15km
+    postAlert(ruta.id,chofer.id,chofer.nombre,"start",`Salió hacia el punto de carga: ${ruta.nombre}`);
+    // Notifica con mensaje específico de "salida"
+    if(initialFase==="camino-a-carga") notifyClienteEvent(ruta,"setout");
+    // WakeLock para que la pantalla no se apague (evita que el GPS se pause)
+    await requestWakeLock();
+    // Notificación persistente del sistema operativo
+    try{
+      if("Notification" in window && Notification.permission==="granted"){
+        new Notification("🚚 GPS activo — DMvimiento",{
+          body:"Mantén esta pestaña abierta para transmitir tu ubicación. La pantalla se mantendrá encendida.",
+          icon:"/icon.svg",
+          tag:"gps-active",
+          requireInteraction:false,
+        });
+      }
+    }catch(e){}
+    // Geofence + watch
     const geofence = buildRutaGeofence(ruta, 15);
     let lastGeofenceAlert = 0;
     watchIdRef.current = navigator.geolocation.watchPosition(
@@ -6231,8 +6340,8 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
           lat,lng,speed:speed||0,heading:heading||0,accuracy:accuracy||0,
           ts:serverTimestamp(),
         },{merge:true}).catch(()=>{});
-        // Geofencing: si el chofer se sale de la zona autorizada, genera alerta
-        // (máximo una alerta cada 5 minutos para no saturar)
+        // Guarda en localStorage para recuperación si el nav pausa
+        try{localStorage.setItem("dmov_last_gps",JSON.stringify({lat,lng,heading,speed,ts:Date.now(),rutaId:ruta.id}));}catch(e){}
         if(geofence&&!dentroBbox(lng,lat,geofence)){
           const now = Date.now();
           if(now-lastGeofenceAlert > 5*60*1000){
@@ -6249,26 +6358,27 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   const stopTracking = async()=>{
     if(watchIdRef.current!==null){navigator.geolocation.clearWatch(watchIdRef.current);watchIdRef.current=null;}
     setTracking(false);
+    // Liberar WakeLock
+    try{if(wakeLockRef.current){await wakeLockRef.current.release();wakeLockRef.current=null;}}catch(e){}
     if(activeRuta){
       const finished = activeRuta;
-      await updateDoc(doc(db,"rutas",activeRuta.id),{status:"Completada",completadaEn:serverTimestamp(),progreso:100}).catch(()=>{});
-      // Marcar chofer como Disponible de nuevo
+      await updateDoc(doc(db,"rutas",activeRuta.id),{status:"Completada",fase:"completada",completadaEn:serverTimestamp(),progreso:100}).catch(()=>{});
       await updateDoc(doc(db,"choferes",chofer.id),{status:"Disponible",rutaActivaId:"",rutaActivaNombre:""}).catch(()=>{});
       await deleteDoc(doc(db,"driverLocations",chofer.id)).catch(()=>{});
       postAlert(activeRuta.id,chofer.id,chofer.nombre,"complete","Completó la ruta: "+activeRuta.nombre);
-      // Notifica al cliente final
-      if(activeRuta.clienteTel&&activeRuta.clienteTel.replace(/\D/g,"").length===10){
-        const trackUrl = `${window.location.origin}/track/${activeRuta.trackingId||activeRuta.id}`;
-        const msg = `🏁 DMvimiento: Ruta "${activeRuta.nombre}" completada con éxito. Ver detalles y evidencias: ${trackUrl}`;
-        const waUrl = `https://wa.me/52${activeRuta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
-        setTimeout(()=>{if(confirm("¿Notificar al cliente que la ruta terminó?"))window.open(waUrl,"_blank");},500);
-      }
+      notifyClienteEvent(activeRuta,"completed");
       setActiveRuta(null);
-      setJustFinished(finished); // dispara pantalla de celebración
+      setJustFinished(finished);
     }
   };
 
   useEffect(()=>()=>{if(watchIdRef.current!==null)navigator.geolocation.clearWatch(watchIdRef.current);},[]);
+
+  // Expone notifyClienteEvent al subcomponente ChoferRutaActiva via window
+  useEffect(()=>{
+    window.__notifyEvent__ = notifyClienteEvent;
+    return()=>{delete window.__notifyEvent__;};
+  },[chofer]);
 
   const [tabChofer,setTabChofer]=useState("hoy");
   const hoy = new Date().toISOString().slice(0,10);
@@ -7190,6 +7300,13 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
 
   return(
     <div style={{paddingBottom:150}}>
+      {/* Aviso GPS — mantener pantalla encendida */}
+      {tracking&&<div style={{background:"linear-gradient(135deg,"+BLUE+"12,"+BLUE+"22)",borderBottom:"1px solid "+BLUE+"30",padding:"9px 14px",display:"flex",alignItems:"center",gap:10,fontSize:11,color:BLUE}}>
+        <Radio size={14} className="pulse" style={{flexShrink:0}}/>
+        <div style={{flex:1,lineHeight:1.4}}>
+          <strong>GPS activo · </strong>Mantén esta app abierta en primer plano. Si cierras o minimizas el navegador el GPS se detiene.
+        </div>
+      </div>}
       {/* Progress + acciones rápidas */}
       <div style={{background:"#fff",padding:"12px 16px 10px",borderBottom:"1px solid "+BORDER}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
@@ -7267,11 +7384,30 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
                   </div>
                 ))}
               </div>}
+              {/* ORIGEN: botones de llegada y cargué material */}
+              {isOrigen&&<div style={{display:"flex",gap:8,marginTop:8}}>
+                <button onClick={()=>openNavigation(s)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Navigation size={13}/>Navegar</button>
+                {ruta.fase==="camino-a-carga"&&<button onClick={async()=>{
+                  await updateDoc(doc(db,"rutas",ruta.id),{fase:"cargando",primerArribo:serverTimestamp(),status:"Cargando"}).catch(()=>{});
+                  // Usa el helper global
+                  if(window.__notifyEvent__) window.__notifyEvent__(ruta,"pickup-arrived",{city:s.city});
+                  showT("✓ Llegada al punto de carga notificada");
+                }} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><MapPin size={13}/>Llegué a cargar</button>}
+                {(ruta.fase==="cargando"||ruta.status==="Cargando")&&<button onClick={async()=>{
+                  // Busca próxima ciudad no-origen
+                  const proximo = (ruta.stops||[]).find(x=>!x.isOrigin);
+                  await updateDoc(doc(db,"rutas",ruta.id),{fase:"en-ruta",status:"En curso",materialCargadoEn:serverTimestamp()}).catch(()=>{});
+                  if(window.__notifyEvent__) window.__notifyEvent__(ruta,"loaded",{nextCity:proximo?.city||""});
+                  showT("✓ Material cargado, en ruta");
+                }} className="btn" style={{flex:2,padding:"10px 0",borderRadius:10,background:"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",fontWeight:800,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Package size={13}/>Ya cargué material</button>}
+              </div>}
+
+              {/* DESTINOS: flow normal */}
               {!isOrigen&&s.status!=="entregado"&&<div style={{display:"flex",gap:8,marginTop:8}}>
                 <button onClick={()=>openNavigation(s)} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><Navigation size={13}/>Navegar ciudad</button>
                 {s.status==="pendiente"&&<button onClick={async()=>{
                   await updateStopStatus(i,"llegue");
-                  if(ruta.clienteTel) notifyCliente("arrival",s);
+                  if(window.__notifyEvent__) window.__notifyEvent__(ruta,"stop-arrived",{city:s.city,stopIdx:i});
                 }} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:BLUE,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><MapPin size={13}/>Llegué</button>}
                 {s.status==="llegue"&&<>
                   <button onClick={()=>setModalStop({...s,action:"entregado"})} className="btn" style={{flex:1,padding:"10px 0",borderRadius:10,background:GREEN,color:"#fff",fontWeight:700,fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><CheckCircle size={13}/>Entregué</button>
@@ -7365,7 +7501,14 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
               : [incidentLabel,comentario].filter(Boolean).join(" — ");
             await updateStopStatus(modalStop.idx,modalStop.action,notasFull,fotoURL,receptor,firmaData,incidentLabel);
             // Notifica al cliente
-            if(ruta.clienteTel) notifyCliente(modalStop.action==="entregado"?"delivered":"issue",modalStop,fotoURL,notasFull,incidentLabel);
+            if(ruta.clienteTel){
+              if(window.__notifyEvent__){
+                if(modalStop.action==="entregado") window.__notifyEvent__(ruta,"stop-delivered",{city:modalStop.city,notas:notasFull,fotoURL});
+                else window.__notifyEvent__(ruta,"issue",{city:modalStop.city,tipo:incidentLabel,notas:notasFull});
+              }else{
+                notifyCliente(modalStop.action==="entregado"?"delivered":"issue",modalStop,fotoURL,notasFull,incidentLabel);
+              }
+            }
             showT(modalStop.action==="entregado"?"✓ Entrega confirmada con firma":"⚠ Incidente reportado");
           }catch(e){showT(e.message,"err");}
           setSubmitting(false);
@@ -7456,58 +7599,178 @@ function ClientTracking({trackingId}){
     if(!bounds.isEmpty()) mapRef.current.fitBounds(bounds,{padding:60,maxZoom:14,duration:400});
   },[ruta]);
 
-  // Driver marker live + línea + AUTO-FOLLOW tipo Uber/Rappi
+  // Refs para animación smooth del marker (estilo Uber/Rappi)
+  const lastRenderedPosRef = useRef(null); // {lat,lng,heading}
+  const animFrameRef = useRef(null);
+  const [etaMin,setEtaMin] = useState(null);
+  const [etaDistKm,setEtaDistKm] = useState(null);
+  const [routeGeometry,setRouteGeometry] = useState(null);
+  const etaFetchRef = useRef(0);
+
+  // Construye o actualiza marker de camión (rotación + animación smooth)
+  const updateTruckMarker = (lng,lat,heading)=>{
+    const m = mapRef.current;
+    if(!m) return;
+    if(!driverMarkerRef.current){
+      const el = document.createElement("div");
+      el.id = "truck-marker";
+      // Halo pulsante + flecha direccional SVG
+      el.innerHTML = `
+        <div style="position:absolute;inset:0;border-radius:50%;background:${A}55;animation:pulseHalo 2s ease-in-out infinite;transform:scale(1.6);z-index:0;"></div>
+        <div id="truck-rot" style="position:relative;width:52px;height:52px;border-radius:50%;background:#fff;box-shadow:0 6px 22px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:1;transition:transform .6s ease;">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block">
+            <path d="M12 2 L20 16 L12 12 L4 16 Z" fill="${A}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/>
+          </svg>
+        </div>
+      `;
+      el.style.cssText = "width:52px;height:52px;position:relative;z-index:100;";
+      driverMarkerRef.current = new mapboxgl.Marker({element:el,anchor:"center"}).setLngLat([lng,lat]).addTo(m);
+    }
+    // Actualiza rotación del interior
+    const rot = document.getElementById("truck-rot");
+    if(rot&&typeof heading==="number") rot.style.transform = `rotate(${heading}deg)`;
+  };
+
+  // Animación smooth entre posiciones (requestAnimationFrame)
+  const animateMarkerTo = (targetLng,targetLat,targetHeading)=>{
+    const from = lastRenderedPosRef.current;
+    if(!from){
+      lastRenderedPosRef.current = {lat:targetLat,lng:targetLng,heading:targetHeading};
+      updateTruckMarker(targetLng,targetLat,targetHeading);
+      return;
+    }
+    const startTs = performance.now();
+    const duration = 1400; // ms — suaviza el salto entre GPS pings
+    const startLng = from.lng, startLat = from.lat;
+    const fromHead = from.heading||targetHeading||0;
+    const toHead = typeof targetHeading==="number"?targetHeading:fromHead;
+    // Shortest-path rotation
+    let dHead = toHead - fromHead;
+    if(dHead > 180) dHead -= 360;
+    if(dHead < -180) dHead += 360;
+    if(animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+    const step = (now)=>{
+      const t = Math.min(1,(now-startTs)/duration);
+      const ease = t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+      const curLng = startLng + (targetLng-startLng)*ease;
+      const curLat = startLat + (targetLat-startLat)*ease;
+      const curHead = fromHead + dHead*ease;
+      if(driverMarkerRef.current){
+        driverMarkerRef.current.setLngLat([curLng,curLat]);
+        const rot = document.getElementById("truck-rot");
+        if(rot) rot.style.transform = `rotate(${curHead}deg)`;
+      }else{
+        updateTruckMarker(curLng,curLat,curHead);
+      }
+      if(t<1) animFrameRef.current = requestAnimationFrame(step);
+      else lastRenderedPosRef.current = {lat:targetLat,lng:targetLng,heading:toHead};
+    };
+    animFrameRef.current = requestAnimationFrame(step);
+  };
+
+  // Computa heading si el GPS no lo provee (bearing entre últimas 2 posiciones)
+  const computeBearing = (lat1,lng1,lat2,lng2)=>{
+    const rad = Math.PI/180;
+    const y = Math.sin((lng2-lng1)*rad) * Math.cos(lat2*rad);
+    const x = Math.cos(lat1*rad)*Math.sin(lat2*rad) - Math.sin(lat1*rad)*Math.cos(lat2*rad)*Math.cos((lng2-lng1)*rad);
+    return (Math.atan2(y,x)*180/Math.PI + 360) % 360;
+  };
+
+  // Siguiente destino según fase y estado
+  const getSiguiente = ()=>{
+    if(!ruta) return null;
+    const stopStates = (ruta.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+    // Fase "camino-a-carga": siguiente es el ORIGEN
+    if(ruta.fase==="camino-a-carga"||ruta.status==="Camino a carga"){
+      const origen = (ruta.stops||[]).find(s=>s.isOrigin);
+      if(origen){
+        const p = (origen.puntos||[]).find(x=>x.lat&&x.lng);
+        if(p) return {lat:p.lat,lng:p.lng,city:origen.city,tipo:"pickup"};
+      }
+    }
+    // Fase "en-ruta" o cargando: primer destino no entregado
+    for(let ci=0;ci<(ruta.stops||[]).length;ci++){
+      const s = ruta.stops[ci];
+      if(s.isOrigin) continue;
+      const st = stopStates[ci];
+      if(st?.status==="entregado") continue;
+      const p = (s.puntos||[]).find(x=>x.lat&&x.lng);
+      if(p) return {lat:p.lat,lng:p.lng,city:s.city,tipo:"delivery",idx:ci};
+    }
+    return null;
+  };
+
+  // Fetch ETA con Mapbox Directions driving-traffic (incluye tráfico en vivo)
+  const fetchETA = async(fromLng,fromLat,toLng,toLat)=>{
+    if(!MAPBOX_TOKEN) return;
+    const now = Date.now();
+    if(now-etaFetchRef.current < 25000) return; // máx una vez cada 25s (ahorra requests)
+    etaFetchRef.current = now;
+    try{
+      const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${fromLng},${fromLat};${toLng},${toLat}?access_token=${MAPBOX_TOKEN}&geometries=geojson&overview=full&annotations=duration`;
+      const r = await fetch(url);
+      if(!r.ok) return;
+      const d = await r.json();
+      const rt = d.routes?.[0];
+      if(!rt) return;
+      setEtaMin(Math.max(1,Math.round(rt.duration/60)));
+      setEtaDistKm((rt.distance/1000).toFixed(1));
+      setRouteGeometry(rt.geometry);
+    }catch(e){console.warn("ETA fetch",e);}
+  };
+
+  // Driver marker + línea + ETA + AUTO-FOLLOW (estilo Uber/Rappi)
   useEffect(()=>{
-    if(!mapRef.current) return;
+    const m = mapRef.current;
+    if(!m) return;
     if(!driverLoc?.lat||!driverLoc?.lng){
       if(driverMarkerRef.current){driverMarkerRef.current.remove();driverMarkerRef.current=null;}
-      if(mapRef.current.isStyleLoaded()){
-        const s = mapRef.current.getSource("live-route");
+      if(m.isStyleLoaded()){
+        const s = m.getSource("live-route");
         if(s) s.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
       }
+      setEtaMin(null);setEtaDistKm(null);
       return;
     }
     const stale = Date.now()/1000-(driverLoc.ts?.seconds||0)>300;
     if(stale){
       if(driverMarkerRef.current){driverMarkerRef.current.remove();driverMarkerRef.current=null;}
-      if(mapRef.current.isStyleLoaded()){
-        const s = mapRef.current.getSource("live-route");
+      if(m.isStyleLoaded()){
+        const s = m.getSource("live-route");
         if(s) s.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
       }
       return;
     }
-    if(driverMarkerRef.current){
-      driverMarkerRef.current.setLngLat([driverLoc.lng,driverLoc.lat]);
-    }else{
-      const el = document.createElement("div");
-      el.style.cssText = `width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,${A},#fb923c);border:4px solid #fff;box-shadow:0 8px 24px ${A}90;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:26px;cursor:pointer;animation:pulse 2s ease infinite;z-index:100;`;
-      el.textContent = "🚚";
-      driverMarkerRef.current = new mapboxgl.Marker(el).setLngLat([driverLoc.lng,driverLoc.lat]).addTo(mapRef.current);
-    }
-    // AUTO-FOLLOW: centra en el chofer con transición suave
-    mapRef.current.easeTo({center:[driverLoc.lng,driverLoc.lat],zoom:Math.max(mapRef.current.getZoom(),13),duration:800});
-    // Línea azul al próximo punto
-    if(ruta&&mapRef.current.isStyleLoaded()){
-      const stopStates = (ruta.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
-      let siguiente = null;
-      (ruta.stops||[]).forEach((s,ci)=>{
-        if(siguiente||s.isOrigin) return;
-        const st=stopStates[ci];
-        if(st?.status==="entregado") return;
-        (s.puntos||[]).forEach(p=>{
-          if(!siguiente&&p.lat&&p.lng) siguiente = {lat:p.lat,lng:p.lng};
-        });
-      });
-      const src = mapRef.current.getSource("live-route");
-      if(src){
-        if(siguiente){
-          src.setData({type:"Feature",geometry:{type:"LineString",coordinates:[[driverLoc.lng,driverLoc.lat],[siguiente.lng,siguiente.lat]]}});
-        }else{
-          src.setData({type:"Feature",geometry:{type:"LineString",coordinates:[]}});
-        }
+    // Heading: usa el del GPS o calcula por bearing vs última posición
+    let heading = typeof driverLoc.heading==="number"&&driverLoc.heading>0?driverLoc.heading:null;
+    if(heading==null&&lastRenderedPosRef.current){
+      const p = lastRenderedPosRef.current;
+      if(Math.abs(p.lat-driverLoc.lat)>1e-5||Math.abs(p.lng-driverLoc.lng)>1e-5){
+        heading = computeBearing(p.lat,p.lng,driverLoc.lat,driverLoc.lng);
       }
     }
+    if(heading==null) heading = lastRenderedPosRef.current?.heading||0;
+
+    // Animación smooth
+    animateMarkerTo(driverLoc.lng,driverLoc.lat,heading);
+
+    // AUTO-FOLLOW con easing suave
+    m.easeTo({center:[driverLoc.lng,driverLoc.lat],zoom:Math.max(m.getZoom(),13),duration:800});
+
+    // Obtén próximo destino y calcula ETA + ruta real (tráfico)
+    const sig = getSiguiente();
+    if(sig){
+      fetchETA(driverLoc.lng,driverLoc.lat,sig.lng,sig.lat);
+    }
   },[driverLoc,ruta]);
+
+  // Pinta la línea de ruta (geometría real de Mapbox Directions) en el mapa
+  useEffect(()=>{
+    const m = mapRef.current;
+    if(!m||!m.isStyleLoaded()||!routeGeometry) return;
+    const src = m.getSource("live-route");
+    if(src) src.setData({type:"Feature",geometry:routeGeometry});
+  },[routeGeometry]);
 
   if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#f1f4fb"}}><Skeleton w={220} h={20}/></div>;
   if(notFound) return(
@@ -7524,9 +7787,17 @@ function ClientTracking({trackingId}){
   const totalStops = (ruta.stops||[]).filter(s=>!s.isOrigin).length;
   const done = Object.values(stopStates).filter(s=>s.status==="entregado").length;
   const pct = totalStops>0?Math.round(done/totalStops*100):0;
-  const etaEstado = ruta.status==="Completada"?"Completada":ruta.status==="En curso"?"En ruta":"Programada";
+  // Mapea fase + status a un indicador visual estilo Rappi
+  const fase = ruta.fase||ruta.status;
+  let faseConfig;
+  if(ruta.status==="Completada") faseConfig = {label:"Ruta completada",emoji:"🏁",color:GREEN,sub:"Revisa evidencias abajo"};
+  else if(fase==="camino-a-carga"||ruta.status==="Camino a carga") faseConfig = {label:"Camino al punto de carga",emoji:"🚚",color:VIOLET,sub:"El chofer va en camino a recoger el material"};
+  else if(fase==="cargando"||ruta.status==="Cargando") faseConfig = {label:"Cargando material",emoji:"📦",color:AMBER,sub:"El chofer está cargando la mercancía"};
+  else if(fase==="en-ruta"||ruta.status==="En curso") faseConfig = {label:"En ruta de entrega",emoji:"🚛",color:BLUE,sub:"Material cargado, en camino a destino"};
+  else faseConfig = {label:"Programada",emoji:"📅",color:MUTED,sub:"La ruta aún no ha iniciado"};
+  const etaEstado = faseConfig.label;
+  const estadoColor = faseConfig.color;
   const sc = {Completada:GREEN,"En curso":BLUE,Programada:VIOLET};
-  const estadoColor = sc[etaEstado]||MUTED;
 
   return(
     <div style={{minHeight:"100vh",background:"#f1f4fb",fontFamily:SANS,paddingBottom:20}}>
@@ -7552,10 +7823,28 @@ function ClientTracking({trackingId}){
         </div>
       </div>
 
-      {/* Progress bar */}
-      <div style={{background:"#fff",padding:"12px 20px",borderBottom:"1px solid "+BORDER}}>
+      {/* Banner de fase + ETA (estilo Rappi) */}
+      <div style={{background:"#fff",padding:"14px 18px",borderBottom:"1px solid "+BORDER,boxShadow:"0 2px 8px rgba(12,24,41,.04)"}}>
         <div style={{maxWidth:800,margin:"0 auto"}}>
-          <MiniBar pct={pct} color={GREEN} h={8}/>
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <div style={{width:54,height:54,borderRadius:16,background:faseConfig.color+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,flexShrink:0}} className="pulse">{faseConfig.emoji}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:DISP,fontWeight:800,fontSize:16,color:faseConfig.color,lineHeight:1.2}}>{faseConfig.label}</div>
+              <div style={{fontSize:12,color:MUTED,marginTop:2,lineHeight:1.4}}>{faseConfig.sub}</div>
+              {etaMin!==null&&ruta.status!=="Completada"&&<div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,flexWrap:"wrap"}}>
+                <div style={{background:faseConfig.color+"14",border:"1.5px solid "+faseConfig.color+"40",color:faseConfig.color,padding:"5px 12px",borderRadius:20,fontSize:12,fontWeight:800,display:"flex",alignItems:"center",gap:5}}>
+                  <Clock size={12}/>Llega en ~{etaMin} min
+                </div>
+                {etaDistKm&&<div style={{fontSize:11,color:MUTED,fontFamily:MONO}}>· {etaDistKm} km restantes</div>}
+                <div style={{fontSize:10,color:MUTED,fontStyle:"italic"}}>incluye tráfico en vivo</div>
+              </div>}
+            </div>
+          </div>
+          <div style={{marginTop:12}}><MiniBar pct={pct} color={GREEN} h={8}/></div>
+          <div style={{fontSize:10,color:MUTED,marginTop:4,display:"flex",justifyContent:"space-between"}}>
+            <span>{done}/{totalStops} entregas</span>
+            <span>{pct}% completado</span>
+          </div>
         </div>
       </div>
 
