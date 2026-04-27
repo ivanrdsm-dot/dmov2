@@ -173,6 +173,92 @@ const CITY_BBOX = {
   "Valladolid":[-88.35,20.55,-88.05,20.80],
   "Zacatecas":[-102.70,22.65,-102.40,22.95],
   "Zihuatanejo":[-101.70,17.50,-101.40,17.80],
+  /* Municipios EdoMex zona conurbada (todos abrazados al ZMVM) */
+  "Naucalpan":[-99.30,19.45,-99.13,19.55],
+  "Tlalnepantla":[-99.27,19.50,-99.13,19.60],
+  "Atizapán de Zaragoza":[-99.32,19.52,-99.20,19.62],
+  "Cuautitlán Izcalli":[-99.30,19.60,-99.16,19.72],
+  "Cuautitlán":[-99.22,19.65,-99.10,19.72],
+  "Tultitlán":[-99.22,19.62,-99.10,19.72],
+  "Coacalco":[-99.13,19.62,-99.04,19.70],
+  "Ecatepec":[-99.12,19.55,-98.95,19.70],
+  "Nezahualcóyotl":[-99.05,19.38,-98.95,19.46],
+  "Chimalhuacán":[-99.00,19.39,-98.88,19.48],
+  "Los Reyes La Paz":[-99.02,19.34,-98.92,19.40],
+  "Ixtapaluca":[-99.00,19.25,-98.82,19.35],
+  "Chalco":[-98.97,19.20,-98.82,19.32],
+  "Valle de Chalco":[-99.00,19.27,-98.92,19.34],
+  "Texcoco":[-98.95,19.45,-98.80,19.58],
+  "Nicolás Romero":[-99.36,19.60,-99.25,19.72],
+  "Tepotzotlán":[-99.30,19.66,-99.17,19.78],
+  "Huehuetoca":[-99.30,19.78,-99.10,19.92],
+  "Zumpango":[-99.18,19.75,-99.00,19.88],
+  "Tecámac":[-99.06,19.65,-98.92,19.76],
+  "Lerma":[-99.55,19.22,-99.40,19.40],
+  "Metepec":[-99.65,19.20,-99.50,19.32],
+  "Atlacomulco":[-99.95,19.75,-99.80,19.90],
+  "Tenancingo":[-99.65,18.93,-99.50,19.05],
+  "Valle de Bravo":[-100.20,19.13,-100.05,19.30],
+  "Ixtlahuaca":[-99.85,19.50,-99.70,19.65],
+  "Tejupilco":[-100.25,18.85,-100.05,19.05],
+  /* Otras ciudades nuevas con bbox para precisión geográfica */
+  "Cabo San Lucas":[-109.95,22.85,-109.85,22.95],
+  "San José del Cabo":[-109.78,23.02,-109.65,23.12],
+  "Loreto":[-111.40,25.95,-111.25,26.10],
+  "Manzanillo":[-104.40,19.00,-104.25,19.15],
+  "Uruapan":[-102.10,19.35,-101.95,19.50],
+  "Pátzcuaro":[-101.65,19.45,-101.55,19.58],
+  "Tehuacán":[-97.45,18.40,-97.30,18.55],
+  "Atlixco":[-98.50,18.85,-98.35,19.00],
+  "Cuautla":[-98.99,18.75,-98.85,18.90],
+  "Cholula":[-98.35,19.00,-98.20,19.12],
+  "Córdoba":[-97.05,18.85,-96.85,18.95],
+  "Tula":[-99.45,20.00,-99.30,20.13],
+  "Tulancingo":[-98.45,20.00,-98.30,20.15],
+  "Tuxpan":[-97.50,20.90,-97.30,21.05],
+  "Salamanca":[-101.25,20.50,-101.10,20.65],
+  "San Miguel de Allende":[-100.80,20.85,-100.65,20.98],
+  "Dolores Hidalgo":[-100.95,21.10,-100.80,21.25],
+  "Guanajuato (capital)":[-101.32,21.00,-101.20,21.10],
+  "Pénjamo":[-101.78,20.35,-101.65,20.50],
+  "Lagos de Moreno":[-101.95,21.30,-101.80,21.45],
+  "Tepatitlán":[-102.85,20.75,-102.70,20.90],
+  "Zapopan":[-103.50,20.65,-103.30,20.85],
+  "Tlaquepaque":[-103.40,20.55,-103.25,20.70],
+  "Lázaro Cárdenas":[-102.25,17.90,-102.10,18.05],
+  "Tehuantepec":[-95.30,16.27,-95.15,16.40],
+  "Salina Cruz":[-95.27,16.10,-95.10,16.25],
+  "Huatulco":[-96.20,15.70,-95.95,15.85],
+  "Puerto Escondido":[-97.13,15.80,-96.98,15.95],
+  "San Cristóbal de las Casas":[-92.70,16.68,-92.55,16.80],
+  "Comitán":[-92.20,16.18,-92.05,16.30],
+  "Palenque":[-92.10,17.45,-91.95,17.58],
+  "Tulum":[-87.50,20.10,-87.35,20.25],
+  "Playa del Carmen":[-87.15,20.55,-86.95,20.75],
+  "Bacalar":[-88.45,18.60,-88.30,18.75],
+  "Progreso":[-89.75,21.20,-89.60,21.35],
+  "Ciudad del Carmen":[-91.95,18.55,-91.75,18.70],
+  "Cabo San Lucas":[-109.95,22.85,-109.85,22.95],
+  "Nogales":[-111.05,31.25,-110.90,31.40],
+  "Nuevo Laredo":[-99.65,27.40,-99.45,27.60],
+  "San Pedro Garza García":[-100.43,25.62,-100.35,25.72],
+  "San Nicolás":[-100.32,25.72,-100.22,25.82],
+  "Apodaca":[-100.22,25.72,-100.10,25.85],
+  "Santa Catarina":[-100.55,25.62,-100.42,25.72],
+  "Guadalupe NL":[-100.30,25.65,-100.18,25.78],
+  "Linares":[-99.65,24.78,-99.50,24.92],
+  "Guasave":[-108.55,25.50,-108.40,25.65],
+  "Navojoa":[-109.50,27.00,-109.35,27.15],
+  "Guaymas":[-110.95,27.85,-110.80,28.05],
+  "Mante":[-99.05,22.65,-98.90,22.80],
+  "Ciudad Valles":[-99.10,21.95,-98.95,22.10],
+  "Matehuala":[-100.70,23.60,-100.55,23.75],
+  "Fresnillo":[-102.95,23.13,-102.80,23.25],
+  "Cuauhtémoc":[-106.95,28.35,-106.80,28.50],
+  "Delicias":[-105.55,28.13,-105.40,28.25],
+  "Tequila":[-103.90,20.85,-103.75,21.00],
+  "Tequisquiapan":[-99.95,20.45,-99.80,20.62],
+  "Bahía de Banderas":[-105.40,20.65,-105.25,20.85],
 };
 /* Geofencing: verifica si punto (lng,lat) está dentro de bbox [minLng,minLat,maxLng,maxLat] */
 function dentroBbox(lng,lat,bbox){
@@ -343,8 +429,67 @@ const LOC = {
 const AYUD_EXTRA = 500;
 
 /* ─── TARIFARIO FORÁNEO 2026 ─────────────────────────────────────────────── */
+/* Helper: calcula tarifas por km basado en estructura promedio del tarifario.
+   Usado para las ciudades que se agregan masivamente sin precio publicado.
+   - Local zone (<50km): usa estructura urbana CDMX
+   - Foráneo: tarifa = base + km * factor
+   Los precios pueden ajustarse manualmente después en el módulo de admin. */
+const _T = (km,zona="foraneo")=>{
+  if(zona==="local-edomex"){
+    // Zona conurbada CDMX/EdoMex (<50km) — usa estructura local CDMX con pequeño extra por km
+    return {km,eur:2500+km*30,cam:3200+km*45,kra:3600+km*50};
+  }
+  if(zona==="metro-edomex"){
+    // Edomex zona metro extendida 50-120km
+    return {km,eur:Math.round(2500+km*38),cam:Math.round(3200+km*60),kra:Math.round(3600+km*68)};
+  }
+  if(km<200){
+    // Foráneo cercano
+    return {km,eur:Math.round(2500+km*32),cam:Math.round(3500+km*55),kra:Math.round(4000+km*62)};
+  }
+  if(km<500){
+    return {km,eur:Math.round(km*32),cam:Math.round(km*48),kra:Math.round(km*54)};
+  }
+  if(km<1000){
+    return {km,eur:Math.round(km*30),cam:Math.round(km*42),kra:Math.round(km*46)};
+  }
+  // Largo
+  return {km,eur:Math.round(km*28),cam:Math.round(km*38),kra:Math.round(km*42)};
+};
+
 const TAR = [
+  /* ═══ CDMX Y ZONA METROPOLITANA ═══ */
   {c:"Ciudad de México",km:0,eur:2500,cam:3200,kra:3600,local:true},
+  {c:"Estado de México",km:30,eur:3400,cam:4500,kra:5100,local:true},
+  // Municipios EdoMex zona conurbada (servicio local extendido)
+  {c:"Naucalpan",...{..._T(15,"local-edomex"),km:15},local:true},
+  {c:"Tlalnepantla",...{..._T(18,"local-edomex"),km:18},local:true},
+  {c:"Atizapán de Zaragoza",...{..._T(25,"local-edomex"),km:25},local:true},
+  {c:"Cuautitlán Izcalli",...{..._T(30,"local-edomex"),km:30},local:true},
+  {c:"Cuautitlán",...{..._T(33,"local-edomex"),km:33},local:true},
+  {c:"Tultitlán",...{..._T(28,"local-edomex"),km:28},local:true},
+  {c:"Coacalco",...{..._T(28,"local-edomex"),km:28},local:true},
+  {c:"Ecatepec",...{..._T(20,"local-edomex"),km:20},local:true},
+  {c:"Nezahualcóyotl",...{..._T(15,"local-edomex"),km:15},local:true},
+  {c:"Chimalhuacán",...{..._T(22,"local-edomex"),km:22},local:true},
+  {c:"Los Reyes La Paz",...{..._T(23,"local-edomex"),km:23},local:true},
+  {c:"Ixtapaluca",...{..._T(35,"local-edomex"),km:35},local:true},
+  {c:"Chalco",...{..._T(38,"local-edomex"),km:38},local:true},
+  {c:"Valle de Chalco",...{..._T(32,"local-edomex"),km:32},local:true},
+  {c:"Texcoco",...{..._T(42,"local-edomex"),km:42},local:true},
+  {c:"Nicolás Romero",...{..._T(28,"local-edomex"),km:28},local:true},
+  {c:"Tepotzotlán",..._T(38,"metro-edomex")},
+  {c:"Huehuetoca",..._T(50,"metro-edomex")},
+  {c:"Zumpango",..._T(55,"metro-edomex")},
+  {c:"Tecámac",..._T(38,"metro-edomex")},
+  {c:"Lerma",..._T(55,"metro-edomex")},
+  {c:"Metepec",..._T(70,"metro-edomex")},
+  {c:"Atlacomulco",..._T(110,"metro-edomex")},
+  {c:"Tenancingo",..._T(95,"metro-edomex")},
+  {c:"Valle de Bravo",..._T(140,"metro-edomex")},
+  {c:"Ixtlahuaca",..._T(95,"metro-edomex")},
+  {c:"Tejupilco",..._T(160,"metro-edomex")},
+  // CDMX original cities ya en el tarifario
   {c:"Acapulco",km:395,eur:13310,cam:20086,kra:22082},
   {c:"Aguascalientes",km:513,eur:15178,cam:22215,kra:24437},
   {c:"Apizaco",km:145,eur:6899,cam:11540,kra:12858},
@@ -410,6 +555,170 @@ const TAR = [
   {c:"Villahermosa",km:768,eur:20698,cam:31874,kra:35062},
   {c:"Zacatecas",km:605,eur:19318,cam:26217,kra:28839},
   {c:"Zamora",km:430,eur:13108,cam:18628,kra:20491},
+
+  /* ═══ NUEVOS DESTINOS NACIONALES ═══ */
+  // Bajío y Centro
+  {c:"San Miguel de Allende",..._T(280)},
+  {c:"Dolores Hidalgo",..._T(290)},
+  {c:"Guanajuato (capital)",..._T(360)},
+  {c:"Salamanca",..._T(303)},
+  {c:"Pénjamo",..._T(345)},
+  {c:"Acámbaro",..._T(245)},
+  {c:"La Piedad",..._T(395)},
+  {c:"Lagos de Moreno",..._T(465)},
+  {c:"Tepatitlán",..._T(513)},
+  {c:"Ocotlán",..._T(515)},
+  {c:"Ciudad Guzmán",..._T(615)},
+  {c:"Tequila",..._T(605)},
+  // Morelos
+  {c:"Cuautla",..._T(106)},
+  {c:"Yautepec",..._T(105)},
+  {c:"Jojutla",..._T(125)},
+  {c:"Temixco",..._T(95)},
+  // Puebla
+  {c:"Cholula",..._T(125)},
+  {c:"Atlixco",..._T(150)},
+  {c:"Tehuacán",..._T(245)},
+  {c:"Teziutlán",..._T(235)},
+  {c:"Huejotzingo",..._T(110)},
+  // Hidalgo
+  {c:"Tula",..._T(85)},
+  {c:"Tulancingo",..._T(125)},
+  {c:"Actopan",..._T(140)},
+  {c:"Huejutla",..._T(345)},
+  // Querétaro adicional
+  {c:"El Marqués",..._T(220)},
+  {c:"Corregidora",..._T(215)},
+  {c:"Tequisquiapan",..._T(180)},
+  {c:"San Juan del Río Oeste",..._T(165)},
+  // Tlaxcala
+  {c:"Apetatitlán",..._T(118)},
+  {c:"Calpulalpan",..._T(145)},
+  // Veracruz
+  {c:"Córdoba",..._T(265)},
+  {c:"Cardel",..._T(385)},
+  {c:"Catemaco",..._T(495)},
+  {c:"Tuxtepec",..._T(530)},
+  {c:"Coatepec",..._T(335)},
+  // Oaxaca
+  {c:"Tehuantepec",..._T(720)},
+  {c:"Salina Cruz",..._T(740)},
+  {c:"Pinotepa Nacional",..._T(660)},
+  {c:"Huatulco",..._T(795)},
+  {c:"Puerto Escondido",..._T(745)},
+  {c:"Juchitán",..._T(735)},
+  // Chiapas
+  {c:"San Cristóbal de las Casas",..._T(1095)},
+  {c:"Comitán",..._T(1170)},
+  {c:"Palenque",..._T(1100)},
+  {c:"Tonalá",..._T(1095)},
+  // Guerrero
+  {c:"Zihuatanejo",..._T(645)},
+  {c:"Ixtapa",..._T(650)},
+  {c:"Cuajinicuilapa",..._T(540)},
+  // Michoacán
+  {c:"Uruapan",..._T(420)},
+  {c:"Pátzcuaro",..._T(370)},
+  {c:"Lázaro Cárdenas",..._T(625)},
+  {c:"Apatzingán",..._T(480)},
+  {c:"Sahuayo",..._T(465)},
+  {c:"Zitácuaro",..._T(155)},
+  // Jalisco adicional
+  {c:"Zapopan",..._T(545)},
+  {c:"Tlaquepaque",..._T(540)},
+  {c:"Tonalá Jal.",..._T(548)},
+  {c:"Chapala",..._T(595)},
+  // Colima adicional
+  {c:"Manzanillo",..._T(840)},
+  {c:"Tecomán",..._T(795)},
+  // Nayarit
+  {c:"Bahía de Banderas",..._T(885)},
+  {c:"Compostela",..._T(815)},
+  {c:"Acaponeta",..._T(900)},
+  // Sinaloa
+  {c:"Guasave",..._T(1395)},
+  {c:"Escuinapa",..._T(1015)},
+  {c:"El Rosario",..._T(1075)},
+  // Sonora
+  {c:"Navojoa",..._T(1735)},
+  {c:"Guaymas",..._T(1815)},
+  {c:"Empalme",..._T(1820)},
+  {c:"Nogales",..._T(2185)},
+  {c:"Agua Prieta",..._T(2100)},
+  {c:"Caborca",..._T(2295)},
+  {c:"San Luis Río Colorado",..._T(2470)},
+  // Baja California
+  {c:"Rosarito",..._T(2865)},
+  {c:"Tecate",..._T(2790)},
+  {c:"San Felipe",..._T(2845)},
+  // Baja California Sur
+  {c:"Cabo San Lucas",..._T(4360)},
+  {c:"San José del Cabo",..._T(4385)},
+  {c:"Loreto",..._T(3865)},
+  // Coahuila
+  {c:"Nueva Rosita",..._T(1120)},
+  {c:"Sabinas",..._T(1140)},
+  {c:"Acuña",..._T(1300)},
+  {c:"Frontera",..._T(1015)},
+  {c:"Parras",..._T(880)},
+  // Nuevo León adicional
+  {c:"San Pedro Garza García",..._T(940)},
+  {c:"San Nicolás",..._T(940)},
+  {c:"Guadalupe NL",..._T(940)},
+  {c:"Apodaca",..._T(950)},
+  {c:"Santa Catarina",..._T(945)},
+  {c:"Linares",..._T(1100)},
+  {c:"Sabinas Hidalgo",..._T(1015)},
+  {c:"Cadereyta NL",..._T(975)},
+  // Tamaulipas adicional
+  {c:"Nuevo Laredo",..._T(1120)},
+  {c:"Río Bravo",..._T(990)},
+  {c:"Altamira",..._T(485)},
+  {c:"Mante",..._T(635)},
+  {c:"Madero",..._T(490)},
+  {c:"Soto la Marina",..._T(800)},
+  // San Luis Potosí adicional
+  {c:"Ciudad Valles",..._T(625)},
+  {c:"Matehuala",..._T(615)},
+  {c:"Río Verde",..._T(545)},
+  // Zacatecas adicional
+  {c:"Fresnillo",..._T(660)},
+  {c:"Jerez",..._T(665)},
+  {c:"Sombrerete",..._T(770)},
+  // Chihuahua adicional
+  {c:"Cuauhtémoc",..._T(1640)},
+  {c:"Delicias",..._T(1430)},
+  {c:"Parral",..._T(1235)},
+  {c:"Camargo",..._T(1290)},
+  // Durango adicional
+  {c:"Santiago Papasquiaro",..._T(1075)},
+  {c:"El Salto",..._T(975)},
+  {c:"Lerdo",..._T(990)},
+  // Aguascalientes adicional
+  {c:"Jesús María",..._T(525)},
+  {c:"Calvillo",..._T(545)},
+  {c:"Rincón de Romos",..._T(550)},
+  // Yucatán
+  {c:"Progreso",..._T(1365)},
+  {c:"Valladolid",..._T(1480)},
+  {c:"Tizimín",..._T(1530)},
+  {c:"Umán",..._T(1340)},
+  // Quintana Roo
+  {c:"Playa del Carmen",..._T(1580)},
+  {c:"Tulum",..._T(1605)},
+  {c:"Bacalar",..._T(1395)},
+  {c:"Mahahual",..._T(1455)},
+  {c:"Holbox",..._T(1715)},
+  {c:"Isla Mujeres",..._T(1660)},
+  // Tabasco
+  {c:"Cárdenas",..._T(815)},
+  {c:"Comalcalco",..._T(845)},
+  {c:"Macuspana",..._T(810)},
+  {c:"Paraíso",..._T(820)},
+  // Campeche
+  {c:"Ciudad del Carmen",..._T(1075)},
+  {c:"Champotón",..._T(1110)},
+  {c:"Escárcega",..._T(1075)},
 ];
 
 const VEHK = [
