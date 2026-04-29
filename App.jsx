@@ -1888,22 +1888,37 @@ function downloadSolicitudFacturaXLSX(factura){
 function downloadTodasSolicitudesXLSX(facts, mesLabel){
   if(!facts||facts.length===0){alert("No hay facturas para exportar.");return;}
   const wb = XLSX.utils.book_new();
-  const usedNames = {};
+  const usedNames = new Set();
   let ok = 0;
-  facts.forEach(f=>{
-    const result = buildSolicitudWs(f);
-    if(!result) return;
-    // Evitar nombres de pestaña duplicados
-    let name = result.sheetName;
-    if(usedNames[name]){usedNames[name]++;name=name.slice(0,28)+` ${usedNames[name]}`;}
-    else usedNames[name]=1;
-    XLSX.utils.book_append_sheet(wb, result.ws, name);
-    ok++;
-  });
-  if(ok===0){alert("Ninguna factura pudo identificarse. Verifica los registros.");return;}
+  const skipped = [];
+  for(let i=0;i<facts.length;i++){
+    const f = facts[i];
+    try{
+      const result = buildSolicitudWs(f);
+      if(!result){skipped.push(f.folio||f.empresa||"?");continue;}
+      // Nombre único de pestaña, max 31 chars, sin chars inválidos Excel
+      let name = result.sheetName.replace(/[/\\?*[\]:]/g,"").trim().slice(0,31)||`Fac-${i+1}`;
+      if(usedNames.has(name)){
+        const base = name.slice(0,28);
+        let n=2; while(usedNames.has(base+` ${n}`)) n++;
+        name=base+` ${n}`;
+      }
+      usedNames.add(name);
+      XLSX.utils.book_append_sheet(wb, result.ws, name);
+      ok++;
+    }catch(err){
+      console.error("Error en factura",f.folio,err);
+      skipped.push(f.folio||"?");
+    }
+  }
+  if(ok===0){
+    alert("Ninguna factura pudo identificarse.\nVerifica que los registros tengan empresa o _clienteId reconocido.\nSkipped: "+skipped.join(", "));
+    return;
+  }
   const fecha = new Date().toISOString().slice(0,10);
-  const label = (mesLabel||"").replace(/\s+/g,"-")||"facturas";
+  const label = (mesLabel||"facturas").replace(/[\s/\\?*[\]:]/g,"-").slice(0,30);
   XLSX.writeFile(wb, `Solicitudes_${label}_${fecha}.xlsx`);
+  if(skipped.length>0) console.warn("Facturas sin cliente identificado (omitidas):",skipped);
 }
 
 // ═══════ REPORTE EJECUTIVO DE FACTURACIÓN — FORMATO OFICINA (Botmate-style) ═══════
