@@ -831,6 +831,23 @@ const CLIENTE_PLANES = [
     regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#65a30d",
   },
+  /* Hersheys — factura a Promociones America Latina (mismo razon social que Actnow)
+     pero con plan distinto (Hersheys Implementaciones) y plan DMOV especial 142805 */
+  {
+    id:"hersheys",
+    aliases:["HERSHEYS","HERSHEY","HERSHEY'S"],
+    cliente:"Hersheys",
+    empresa:"PROMOCIONES AMERICA LATINA SAPI DE CV",
+    plan:"222829 → Hersheys Implementaciones",
+    planSolicitud:"P-222829 Hersheys Implementaciones",
+    rfc:"PAL030731427",
+    domicilio1:"AV. INSURGENTES SUR 1814 INT 601, COL FLORIDA",
+    domicilio2:"ALVARO OBREGON, CIUDAD DE MEXICO CP. 01030",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
+    // Plan DMOV especial — Hersheys usa 142805 en lugar del default 142804
+    numeroPlanDmovimientoOverride:"PLAN 142805 (D EN MOVIMIENTO)",
+    color:"#a16207", // ámbar oscuro (color Hersheys)
+  },
 ];
 
 /* Constantes "siempre iguales" que aparecen en cada solicitud de factura.
@@ -1808,9 +1825,10 @@ function downloadSolicitudFacturaXLSX(factura){
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:17,c}),"",valStyle);
   merges.push({s:{r:17,c:1},e:{r:17,c:5}});
 
-  // ROW 19 — NUMERO DE PLAN DMOVIMIENTO
+  // ROW 19 — NUMERO DE PLAN DMOVIMIENTO (con override por cliente si aplica, ej. Hersheys=142805)
   setS("A19","NUMERO DE PLAN DMOVIMIENTO:",labelStyle);
-  setS("B19",cfg.numeroPlanDmovimiento,valStyle);
+  const planDmov = matched.numeroPlanDmovimientoOverride || cfg.numeroPlanDmovimiento;
+  setS("B19",planDmov,valStyle);
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:18,c}),"",valStyle);
   merges.push({s:{r:18,c:1},e:{r:18,c:5}});
 
