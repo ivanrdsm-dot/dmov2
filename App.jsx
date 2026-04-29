@@ -727,6 +727,72 @@ const VEHK = [
   {k:"kra",label:"Krafter",       cap:"20 m³",crew:1,icon:"🚐"},
 ];
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   MAPEO CLIENTE → EMPRESA QUE FACTURA → PLAN
+   Single source of truth. Editable desde aqui o desde el modulo Clientes
+   (la oficina pide que las facturas se emitan a la empresa correcta + plan).
+   ─────────────────────────────────────────────────────────────────────────── */
+const CLIENTE_PLANES = [
+  {
+    id:"actnow",
+    aliases:["ACTNOW","ACT NOW","CAMPARI","APEROL","APPEROL"],
+    cliente:"Actnow",
+    empresa:"Promociones America Latina SA de CV",
+    plan:"210201 PL → Campari Promotores",
+    color:"#dc2626",
+  },
+  {
+    id:"scj",
+    aliases:["SCJ","S.C.J.","SCJ PROMOTORES","SCJ JOHNSON"],
+    cliente:"SCJ",
+    empresa:"Marketing and Promotions SA de CV",
+    plan:"10344 MAP → SCJ Promotores Operación",
+    color:"#2563eb",
+  },
+  {
+    id:"canon",
+    aliases:["CANON","CANNON"],
+    cliente:"Canon",
+    empresa:"GMAP Operadora SA de CV",
+    plan:"202003 GMAP → Canon Promotores",
+    color:"#059669",
+  },
+  {
+    id:"robots",
+    aliases:["ROBOTS","BOTMATE","POD ROBOTS","ROBOT","BOT"],
+    cliente:"Robots / POD",
+    empresa:"Promotor On Demand SA de CV",
+    plan:"212802 POD Robots",
+    color:"#7c3aed",
+  },
+  {
+    id:"map_varios",
+    aliases:["MAP","SOFIA TRUEBA","SOFIA","TRUEBA","ALEJANDRA TRUEBA","VARIOS"],
+    cliente:"MAP / Sofía Trueba",
+    empresa:"Marketing and Promotion",
+    plan:"12801 MAP → Varios 2011",
+    color:"#d97706",
+  },
+];
+
+/* Quita acentos y normaliza para matching tolerante */
+const _norm = (s)=>(s||"").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").trim();
+/* Busca el plan correspondiente al cliente (matching fuzzy por alias) */
+function lookupPlanForCliente(rawCliente){
+  if(!rawCliente) return null;
+  const q = _norm(rawCliente);
+  // Match exacto o por alias contenido
+  for(const cp of CLIENTE_PLANES){
+    if(cp.aliases.some(a=>{
+      const an = _norm(a);
+      // Match si el query contiene el alias o viceversa (mínimo 3 chars para evitar falsos positivos)
+      if(an.length<3) return q===an;
+      return q===an||q.includes(an)||an.includes(q);
+    })) return cp;
+  }
+  return null;
+}
+
 /* ─── UTILS ──────────────────────────────────────────────────────────────── */
 const fmt  = n => "$"+Math.round(n).toLocaleString("es-MX");
 const fmtK = n => n>=1e6?"$"+(n/1e6).toFixed(2)+"M":n>=1e3?"$"+(n/1e3).toFixed(1)+"k":"$"+Math.round(n);
@@ -3222,11 +3288,23 @@ function Cotizador({onSaved}){
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
           {/* Cliente */}
           <S><SH>Información del cliente</SH>
+            {/* Quick-pick clientes conocidos */}
+            <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:10}}>
+              {CLIENTE_PLANES.map(cp=>{
+                const active = (cliente||"").toLowerCase().includes(cp.cliente.toLowerCase().slice(0,4));
+                return(
+                  <button key={cp.id} type="button" onClick={()=>setCliente(cp.empresa)} className="btn" style={{padding:"5px 10px",borderRadius:8,border:"1.5px solid "+(active?cp.color:BD2),background:active?cp.color+"14":"#fff",color:active?cp.color:MUTED,fontWeight:active?700:500,fontSize:10}}>
+                    <span style={{display:"inline-block",width:6,height:6,borderRadius:"50%",background:cp.color,marginRight:5,verticalAlign:"middle"}}/>{cp.cliente}
+                  </button>
+                );
+              })}
+            </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
-              <Inp label="Empresa / Cliente *" value={cliente} onChange={e=>setCliente(e.target.value)} placeholder="Ej: Walmart México"/>
+              <Inp label="Empresa / Cliente *" value={cliente} onChange={e=>setCliente(e.target.value)} placeholder="Escribe SCJ, Canon, Actnow… o nombre directo"/>
               <Inp label="Contacto" value={contacto} onChange={e=>setContacto(e.target.value)} placeholder="Nombre del contacto"/>
               <Spin label="Plazo de entrega (días)" value={plazo} onChange={setPlazo} min={1} max={90}/>
             </div>
+            {(()=>{const m=lookupPlanForCliente(cliente);return m?<div style={{marginTop:8,fontSize:11,color:m.color,fontWeight:700,padding:"6px 10px",background:m.color+"08",borderRadius:7,border:"1px solid "+m.color+"30",display:"flex",alignItems:"center",gap:5}}><CheckCircle size={11}/>Cliente identificado: <strong>{m.cliente}</strong> · {m.plan}</div>:null;})()}
           </S>
 
           {/* ══ LOCAL ══ */}
@@ -4964,9 +5042,293 @@ function PlanificadorNacional(){
 }
 
 /* ─── FACTURACIÓN ────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   BitacoraImport — lee un Excel operativo (FECHA/CHOFER/UNIDAD/CLIENTE/SERVICIO)
+   y clasifica cada renglón con CLIENTE_PLANES, agrupa por cliente y permite
+   crear facturas (o registros) en lote.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function BitacoraImport({onClose,showT}){
+  const [file,setFile]=useState(null);
+  const [rows,setRows]=useState([]);          // todos los renglones parseados
+  const [step,setStep]=useState(1);           // 1=upload, 2=preview, 3=done
+  const [grouped,setGrouped]=useState({});    // clienteId -> {info, items[], total}
+  const [unmapped,setUnmapped]=useState([]);  // renglones sin cliente mapeado
+  const [saving,setSaving]=useState(false);
+  const [defaultIVA,setDefaultIVA]=useState(true);
+
+  const handleFile = async(e)=>{
+    const f = e.target.files?.[0];
+    if(!f) return;
+    setFile(f);
+    try{
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(buf,{type:"array",cellDates:true});
+      const allRows = [];
+      wb.SheetNames.forEach(sheetName=>{
+        const ws = wb.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:false});
+        // Detecta fila de headers (la que tiene FECHA, CHOFER o CLIENTE)
+        let headerIdx = -1;
+        for(let i=0;i<Math.min(10,data.length);i++){
+          const r = data[i].map(c=>(c||"").toString().toUpperCase());
+          if(r.some(c=>c.includes("FECHA"))&&r.some(c=>c.includes("CLIENTE"))){
+            headerIdx = i; break;
+          }
+        }
+        if(headerIdx<0) return;
+        const headers = data[headerIdx].map(c=>(c||"").toString().toUpperCase().trim());
+        const idx = (k)=>headers.findIndex(h=>h.includes(k));
+        const iFecha = idx("FECHA");
+        const iChofer = idx("CHOFER");
+        const iUnidad = idx("UNIDAD");
+        const iKmRec = headers.findIndex(h=>h.includes("KM RECORRIDOS"));
+        const iCliente = idx("CLIENTE");
+        const iServicio = idx("SERVICIO");
+        // Última columna numérica como monto (tu archivo lo tiene así)
+        for(let i=headerIdx+1;i<data.length;i++){
+          const r = data[i];
+          if(!r||r.every(c=>c==null||c==="")) continue;
+          const cliente = (r[iCliente]||"").toString().trim();
+          if(!cliente) continue;
+          // Detecta monto: cualquier celda numérica >= 100 que NO sea km
+          let monto = null;
+          for(let c=0;c<r.length;c++){
+            if(c===iKmRec) continue;
+            const v = r[c];
+            const n = typeof v==="number"?v:parseFloat(v);
+            if(!isNaN(n)&&n>=100&&n<10000000){monto = n;}
+          }
+          const fecha = r[iFecha];
+          let fechaStr = "";
+          if(fecha instanceof Date) fechaStr = fecha.toISOString().slice(0,10);
+          else if(typeof fecha==="string"&&fecha) fechaStr = fecha;
+          const matched = lookupPlanForCliente(cliente);
+          allRows.push({
+            sheet: sheetName,
+            fecha: fechaStr,
+            chofer: (r[iChofer]||"").toString().trim(),
+            unidad: (r[iUnidad]||"").toString().trim(),
+            kmRecorridos: typeof r[iKmRec]==="number"?r[iKmRec]:parseFloat(r[iKmRec])||0,
+            clienteRaw: cliente,
+            servicio: (r[iServicio]||"").toString().trim(),
+            monto: monto||0,
+            mapped: matched,
+            include: !!matched&&!!monto, // por defecto incluye los mapeados con monto
+          });
+        }
+      });
+      setRows(allRows);
+      // Agrupa
+      const g = {};
+      const um = [];
+      allRows.forEach((r,i)=>{
+        if(r.mapped){
+          const id = r.mapped.id;
+          if(!g[id]) g[id] = {info:r.mapped,items:[],totalMonto:0,totalConMonto:0};
+          g[id].items.push({...r,_idx:i});
+          if(r.monto>0){g[id].totalMonto += r.monto; g[id].totalConMonto++;}
+        }else{
+          um.push({...r,_idx:i});
+        }
+      });
+      setGrouped(g);
+      setUnmapped(um);
+      setStep(2);
+    }catch(err){
+      showT("Error leyendo el archivo: "+err.message,"err");
+    }
+  };
+
+  const toggleRow = (idx)=>{
+    setRows(rs=>{
+      const next = rs.map((r,i)=>i===idx?{...r,include:!r.include}:r);
+      // Re-agrupa
+      const g = {};
+      next.forEach((r,i)=>{
+        if(r.mapped){
+          const id = r.mapped.id;
+          if(!g[id]) g[id] = {info:r.mapped,items:[],totalMonto:0,totalConMonto:0};
+          g[id].items.push({...r,_idx:i});
+          if(r.monto>0&&r.include){g[id].totalMonto += r.monto; g[id].totalConMonto++;}
+        }
+      });
+      setGrouped(g);
+      return next;
+    });
+  };
+
+  const crearFacturas = async()=>{
+    setSaving(true);
+    const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+    let created = 0;
+    try{
+      for(const id of Object.keys(grouped)){
+        const g = grouped[id];
+        const itemsConMonto = g.items.filter(it=>it.include&&it.monto>0);
+        if(itemsConMonto.length===0) continue;
+        // Una factura por cliente — agrega los servicios concatenados
+        const subtotal = itemsConMonto.reduce((a,it)=>a+it.monto,0);
+        const ivaAmt = defaultIVA?subtotal*.16:0;
+        const total = subtotal+ivaAmt;
+        const fechas = itemsConMonto.map(it=>it.fecha).filter(Boolean).sort();
+        const fechaIni = fechas[0]||new Date().toISOString().slice(0,10);
+        const fechaFin = fechas[fechas.length-1]||fechaIni;
+        const dIni = new Date(fechaIni); const dFin = new Date(fechaFin);
+        const mesOp = MESES[dFin.getMonth()];
+        const anio = dFin.getFullYear();
+        const venc = new Date(dFin.getTime()+30*86400000).toISOString().slice(0,10);
+        const servicios = itemsConMonto.map(it=>`${it.fecha?it.fecha+" - ":""}${it.servicio}`).join(" | ");
+        await addDoc(collection(db,"facturas"),{
+          mesOp, anio,
+          empresa: g.info.empresa,
+          plan: g.info.plan,
+          solicitante: g.info.cliente,
+          servicio: servicios.slice(0,500),
+          subtotal, ivaAmt, total,
+          iva: defaultIVA,
+          status: "Pendiente",
+          notas: `Generada desde bitácora · ${itemsConMonto.length} servicio(s) · ${fechaIni} a ${fechaFin}`,
+          fechaEmision: new Date().toISOString().slice(0,10),
+          fechaVenc: venc,
+          emailCliente: "",
+          folio: "FAC-"+uid(),
+          bitacoraImport: true,
+          bitacoraServicios: itemsConMonto.map(it=>({fecha:it.fecha,chofer:it.chofer,unidad:it.unidad,clienteRaw:it.clienteRaw,servicio:it.servicio,monto:it.monto})),
+          createdAt: serverTimestamp(),
+        });
+        created++;
+      }
+      showT(`✓ ${created} factura(s) creada(s) desde bitácora`);
+      setStep(3);
+      setTimeout(()=>onClose(),1500);
+    }catch(e){showT("Error guardando: "+e.message,"err");}
+    setSaving(false);
+  };
+
+  // PASO 1 — Upload
+  if(step===1) return(
+    <Modal title="Importar bitácora operativa" onClose={onClose} icon={Upload} iconColor={BLUE} wide>
+      <div style={{padding:"20px 0"}}>
+        <div style={{background:BLUE+"08",border:"1.5px solid "+BLUE+"30",borderRadius:11,padding:14,marginBottom:18,fontSize:12,color:TEXT,lineHeight:1.6}}>
+          <div style={{fontWeight:800,color:BLUE,marginBottom:6,display:"flex",alignItems:"center",gap:7}}>
+            <Zap size={14}/>Clasificación automática
+          </div>
+          El sistema lee tu bitácora (formato: FECHA / CHOFER / UNIDAD / CLIENTE / SERVICIO / MONTO) e identifica automáticamente la <strong>empresa que factura</strong> y el <strong>plan</strong> según el cliente:
+          <div style={{marginTop:10,display:"grid",gridTemplateColumns:"1fr",gap:6}}>
+            {CLIENTE_PLANES.map(cp=>(
+              <div key={cp.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"#fff",borderRadius:7,border:"1px solid "+cp.color+"30"}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:cp.color}}/>
+                <strong style={{color:cp.color,fontSize:11}}>{cp.cliente}</strong>
+                <span style={{fontSize:10,color:MUTED}}>→ {cp.empresa}</span>
+                <span style={{fontSize:10,color:MUTED,marginLeft:"auto",fontFamily:MONO}}>{cp.plan}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <label htmlFor="bit-file" style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:10,padding:"40px 20px",background:A+"06",border:"2px dashed "+A+"50",borderRadius:14,cursor:"pointer"}}>
+          <Upload size={32} color={A}/>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:15,color:A}}>Selecciona el archivo de bitácora</div>
+          <div style={{fontSize:11,color:MUTED}}>.xlsx o .xls — Funciona con tu formato mensual de operación</div>
+          <input id="bit-file" type="file" accept=".xlsx,.xls" onChange={handleFile} style={{display:"none"}}/>
+        </label>
+      </div>
+    </Modal>
+  );
+
+  // PASO 2 — Preview
+  if(step===2){
+    const groupedArr = Object.values(grouped);
+    const grandTotal = groupedArr.reduce((a,g)=>a+g.totalMonto,0);
+    const ivaTotal = defaultIVA?grandTotal*.16:0;
+    return(
+      <Modal title="Vista previa — clasificación" onClose={onClose} icon={Eye} iconColor={BLUE} wide>
+        <div style={{padding:"4px 0",maxHeight:"75vh",overflowY:"auto"}}>
+          <div style={{background:GREEN+"08",border:"1.5px solid "+GREEN+"30",borderRadius:11,padding:"10px 14px",marginBottom:14,display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+            <div style={{fontSize:12,color:TEXT}}><strong>{rows.length}</strong> renglones leídos · <strong>{rows.filter(r=>r.mapped).length}</strong> clasificados · <strong>{unmapped.length}</strong> sin mapear</div>
+            <div style={{fontSize:12,color:GREEN,fontWeight:700}}>{fmt(grandTotal)} subtotal · {fmt(ivaTotal)} IVA · {fmt(grandTotal+ivaTotal)} total</div>
+          </div>
+          <label style={{display:"flex",alignItems:"center",gap:7,fontSize:12,color:TEXT,marginBottom:14,cursor:"pointer"}}>
+            <input type="checkbox" checked={defaultIVA} onChange={e=>setDefaultIVA(e.target.checked)} style={{accentColor:A}}/>
+            Aplicar IVA 16% a todas las facturas generadas
+          </label>
+          {/* Grupos por cliente */}
+          {groupedArr.map(g=>(
+            <div key={g.info.id} style={{background:"#fff",border:"2px solid "+g.info.color+"40",borderRadius:12,marginBottom:12,overflow:"hidden"}}>
+              <div style={{padding:"11px 14px",background:g.info.color+"10",borderBottom:"1px solid "+g.info.color+"20",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <div style={{width:10,height:10,borderRadius:"50%",background:g.info.color}}/>
+                <div style={{flex:1,minWidth:200}}>
+                  <div style={{fontWeight:800,fontSize:14,color:g.info.color}}>{g.info.cliente} · {g.items.filter(it=>it.include&&it.monto>0).length} servicios facturables</div>
+                  <div style={{fontSize:11,color:MUTED,marginTop:1}}>{g.info.empresa} · <span style={{fontFamily:MONO}}>{g.info.plan}</span></div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontFamily:MONO,fontSize:16,fontWeight:800,color:g.info.color}}>{fmt(g.totalMonto)}</div>
+                  <div style={{fontSize:10,color:MUTED}}>+ IVA = {fmt(g.totalMonto*1.16)}</div>
+                </div>
+              </div>
+              <div style={{maxHeight:200,overflowY:"auto"}}>
+                {g.items.map((it)=>(
+                  <div key={it._idx} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 14px",borderBottom:"1px solid "+BORDER+"60",fontSize:11,opacity:it.include?1:.45}}>
+                    <input type="checkbox" checked={it.include} onChange={()=>toggleRow(it._idx)} style={{accentColor:g.info.color,marginTop:1}}/>
+                    <span style={{fontFamily:MONO,color:MUTED,width:80,flexShrink:0}}>{it.fecha||"—"}</span>
+                    <span style={{width:80,flexShrink:0,fontWeight:600}}>{it.chofer}</span>
+                    <span style={{width:70,flexShrink:0,fontFamily:MONO,fontSize:10,color:MUTED}}>{it.unidad}</span>
+                    <span style={{flex:1,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.servicio}</span>
+                    <span style={{fontFamily:MONO,fontWeight:800,color:it.monto>0?g.info.color:MUTED,width:90,textAlign:"right",flexShrink:0}}>{it.monto>0?fmt(it.monto):"—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {/* Sin mapear */}
+          {unmapped.length>0&&<div style={{background:"#fff",border:"2px dashed "+AMBER+"60",borderRadius:12,marginBottom:12,overflow:"hidden"}}>
+            <div style={{padding:"11px 14px",background:AMBER+"10",borderBottom:"1px solid "+AMBER+"30",display:"flex",alignItems:"center",gap:10}}>
+              <AlertCircle size={14} color={AMBER}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:800,fontSize:13,color:AMBER}}>{unmapped.length} renglones sin cliente conocido</div>
+                <div style={{fontSize:10,color:MUTED,marginTop:1}}>Estos NO se facturarán automáticamente. Agrégalos manualmente o registra el alias en CLIENTE_PLANES.</div>
+              </div>
+            </div>
+            <div style={{maxHeight:140,overflowY:"auto"}}>
+              {unmapped.slice(0,20).map(it=>(
+                <div key={it._idx} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 14px",borderBottom:"1px solid "+BORDER+"60",fontSize:11}}>
+                  <span style={{fontFamily:MONO,color:MUTED,width:80,flexShrink:0}}>{it.fecha||"—"}</span>
+                  <span style={{width:120,flexShrink:0,fontWeight:700,color:AMBER}}>{it.clienteRaw}</span>
+                  <span style={{flex:1,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.servicio}</span>
+                  <span style={{fontFamily:MONO,color:MUTED,width:80,textAlign:"right",flexShrink:0}}>{it.monto?fmt(it.monto):"—"}</span>
+                </div>
+              ))}
+              {unmapped.length>20&&<div style={{padding:8,textAlign:"center",fontSize:10,color:MUTED}}>+{unmapped.length-20} más…</div>}
+            </div>
+          </div>}
+        </div>
+        <div style={{display:"flex",gap:8,marginTop:14}}>
+          <button onClick={()=>{setStep(1);setRows([]);setGrouped({});setUnmapped([]);setFile(null);}} className="btn" style={{flex:1,padding:"12px 0",borderRadius:11,background:"#fff",border:"1.5px solid "+BD2,color:TEXT,fontWeight:700,fontSize:13}}>
+            ← Cambiar archivo
+          </button>
+          <button onClick={crearFacturas} disabled={saving||groupedArr.length===0} className="btn" style={{flex:2,padding:"12px 0",borderRadius:11,background:saving||groupedArr.length===0?"#e0e0e0":"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",fontFamily:DISP,fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+            {saving?<><div className="spin" style={{width:14,height:14,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Creando facturas…</>:<><CheckCircle size={15}/>Crear {groupedArr.length} factura(s)</>}
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+
+  // PASO 3 — Done
+  return(
+    <Modal title="Importación completada" onClose={onClose} icon={CheckCircle} iconColor={GREEN}>
+      <div style={{padding:"30px 20px",textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:14}}>🎉</div>
+        <div style={{fontFamily:DISP,fontWeight:800,fontSize:18,color:GREEN,marginBottom:8}}>Listo, facturas creadas</div>
+        <div style={{fontSize:13,color:MUTED}}>Las verás aparecer en la lista en un instante.</div>
+      </div>
+    </Modal>
+  );
+}
+
 function Facturas(){
   const [items,setItems]=useState([]);const [load,setLoad]=useState(true);
   const [modal,setModal]=useState(false);const [editItem,setEditItem]=useState(null);
+  const [showBitacora,setShowBitacora]=useState(false);
   const [toast,setToast]=useState(null);const [tab,setTab]=useState("registros");const [mesF,setMesF]=useState("todos");
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const ANIO=new Date().getFullYear();
@@ -5015,6 +5377,7 @@ function Facturas(){
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
         <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Facturación & Finanzas</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>Control mensual · PDF descargable · Proyecciones anuales</p></div>
         <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setShowBitacora(true)} className="btn" title="Importar bitácora operativa (Excel) y clasificar automáticamente" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Upload size={13}/>Importar bitácora</button>
           <button onClick={()=>exportFacturasXLSX(filt,mesF==="todos"?null:mesF)} className="btn" title="Exportar facturas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>XLSX Facturas</button>
           <button onClick={()=>exportFinancierosXLSX(items)} className="btn" title="Exportar financieros completos" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><BarChart2 size={13}/>XLSX Financiero</button>
           <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo registro</button>
@@ -5202,6 +5565,7 @@ function Facturas(){
         </div>
       </>}
 
+      {showBitacora&&<BitacoraImport onClose={()=>setShowBitacora(false)} showT={showT}/>}
       {modal&&<Modal title={editItem?"Editar registro":"Nuevo registro de facturación"} onClose={()=>{setModal(false);setEditItem(null);}} icon={FileText} iconColor={BLUE} wide>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <div>
@@ -5216,9 +5580,38 @@ function Facturas(){
               {[ANIO-1,ANIO,ANIO+1].map(y=><option key={y} value={y}>{y}</option>)}
             </select>
           </div>
-          <Inp label="Empresa a facturar *" value={form.empresa} onChange={sf("empresa")} placeholder="Nombre de la empresa"/>
+          {/* Quick-pick de cliente conocido — auto-llena empresa+plan */}
+          <div style={{gridColumn:"1/-1",background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:11,padding:"10px 12px"}}>
+            <div style={{fontSize:10,fontWeight:800,color:MUTED,marginBottom:7,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6}}><Zap size={11} color={A}/>Cliente conocido (auto-llena empresa + plan)</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {CLIENTE_PLANES.map(cp=>{
+                const active = (form.empresa||"").toLowerCase().trim()===cp.empresa.toLowerCase().trim();
+                return(
+                  <button key={cp.id} type="button" onClick={()=>setForm(f=>({...f,empresa:cp.empresa,plan:cp.plan,_clienteId:cp.id,solicitante:f.solicitante||cp.cliente}))} className="btn" style={{padding:"7px 12px",borderRadius:9,border:"1.5px solid "+(active?cp.color:BD2),background:active?cp.color+"14":"#fff",color:active?cp.color:TEXT,fontWeight:active?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}>
+                    <div style={{width:7,height:7,borderRadius:"50%",background:cp.color}}/>
+                    {cp.cliente}
+                  </button>
+                );
+              })}
+            </div>
+            {form.empresa&&(()=>{
+              const matched = CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim());
+              if(!matched) return null;
+              return(
+                <div style={{marginTop:8,fontSize:11,color:matched.color,fontWeight:700,display:"flex",alignItems:"center",gap:5,padding:"6px 10px",background:matched.color+"08",borderRadius:7,border:"1px solid "+matched.color+"30"}}>
+                  <CheckCircle size={11}/>Detectado: <strong>{matched.cliente}</strong> · {matched.plan}
+                </div>
+              );
+            })()}
+          </div>
+          <Inp label="Empresa a facturar *" value={form.empresa} onChange={e=>{
+            const v = e.target.value;
+            const matched = lookupPlanForCliente(v);
+            if(matched) setForm(f=>({...f,empresa:matched.empresa,plan:matched.plan,_clienteId:matched.id}));
+            else sf("empresa")(e);
+          }} placeholder="Escribe SCJ, Canon, Actnow, Sofia… o nombre directo"/>
           <Inp label="Quien solicita el servicio" value={form.solicitante} onChange={sf("solicitante")} placeholder="Nombre del contacto"/>
-          <Inp label="Plan / Cuenta" value={form.plan} onChange={sf("plan")} placeholder="Ej: Plan Básico MTY, Cuenta #4521"/>
+          <Inp label="Plan / Cuenta" value={form.plan} onChange={sf("plan")} placeholder="Ej: 210201 PL Campari Promotores"/>
           <div>
             <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado de pago</div>
             <select value={form.status} onChange={sf("status")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
