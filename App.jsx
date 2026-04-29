@@ -763,12 +763,12 @@ const CLIENTE_PLANES = [
     id:"canon",
     aliases:["CANON","CANNON"],
     cliente:"Canon",
-    empresa:"GMAP OPERADORA SA DE CV",
+    empresa:"G-MAP OPERADORA SA DE CV",
     plan:"202003 GMAP → Canon Promotores",
     planSolicitud:"P-202003 GMAP Canon Promotores",
-    rfc:"GMAP_RFC_PENDIENTE",
-    domicilio1:"PENDIENTE - CAPTURAR DOMICILIO",
-    domicilio2:"",
+    rfc:"GOP170407FV7",
+    domicilio1:"AV. INSURGENTES SUR 1814 PISO 7 INT 701, COL FLORIDA",
+    domicilio2:"ALVARO OBREGON, CIUDAD DE MEXICO CP. 01030",
     regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#059669",
   },
@@ -798,14 +798,19 @@ const CLIENTE_PLANES = [
     regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#d97706",
   },
-  /* TACRE — datos fiscales tomados de CSF marzo 2026 */
+  /* TACRE — datos fiscales tomados de CSF marzo 2026
+     Tiene 2 planes alternativos con el mismo numero pero diferente nombre */
   {
     id:"tacre",
     aliases:["TACRE","JBL"],
     cliente:"TACRE",
     empresa:"TACRE SA DE CV",
-    plan:"PENDIENTE - CAPTURAR PLAN",
-    planSolicitud:"PENDIENTE - CAPTURAR PLAN",
+    plan:"142804 → Servicios de Logística",
+    planSolicitud:"P-142804 SERVICIOS DE LOGISTICA",
+    planAlternativos:[
+      {label:"Servicios de Logística",value:"P-142804 SERVICIOS DE LOGISTICA"},
+      {label:"Mucha Chamba",value:"P-142804 MUCHA CHAMBA"},
+    ],
     rfc:"TAC200225LC3",
     domicilio1:"CALLE LIBERTAD 49, COL DEL RECREO",
     domicilio2:"AZCAPOTZALCO, CIUDAD DE MEXICO CP. 02070",
@@ -1810,8 +1815,10 @@ function downloadSolicitudFacturaXLSX(factura){
   merges.push({s:{r:18,c:1},e:{r:18,c:5}});
 
   // ROW 20 — ENTRE EMPRESAS AMBOS No. DE PLAN (← este es el plan del cliente)
+  // Si la factura tiene planOverride (ej: "Mucha Chamba" en TACRE) usa ese
   setS("A20","ENTRE EMPRESAS AMBOS No. DE PLAN:",labelStyle);
-  setS("B20",matched.planSolicitud||matched.plan,valBoldStyle);
+  const planFinal = factura.planOverride || matched.planSolicitud || matched.plan;
+  setS("B20",planFinal,valBoldStyle);
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:19,c}),"",valBoldStyle);
   merges.push({s:{r:19,c:1},e:{r:19,c:5}});
 
@@ -5634,7 +5641,7 @@ function Facturas(){
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const ANIO=new Date().getFullYear();
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
-  const empty={mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:new Date().toISOString().slice(0,10),fechaVenc:"",emailCliente:""};
+  const empty={mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:new Date().toISOString().slice(0,10),fechaVenc:"",emailCliente:"",planOverride:""};
   const [form,setForm]=useState(empty);
   const sf=k=>e=>setForm(f=>({...f,[k]:e.target.type==="checkbox"?e.target.checked:e.target.value}));
 
@@ -5903,9 +5910,26 @@ function Facturas(){
               const matched = CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim());
               if(!matched) return null;
               return(
-                <div style={{marginTop:8,fontSize:11,color:matched.color,fontWeight:700,display:"flex",alignItems:"center",gap:5,padding:"6px 10px",background:matched.color+"08",borderRadius:7,border:"1px solid "+matched.color+"30"}}>
-                  <CheckCircle size={11}/>Detectado: <strong>{matched.cliente}</strong> · {matched.plan}
-                </div>
+                <>
+                  <div style={{marginTop:8,fontSize:11,color:matched.color,fontWeight:700,display:"flex",alignItems:"center",gap:5,padding:"6px 10px",background:matched.color+"08",borderRadius:7,border:"1px solid "+matched.color+"30"}}>
+                    <CheckCircle size={11}/>Detectado: <strong>{matched.cliente}</strong> · {form.planOverride||matched.plan}
+                  </div>
+                  {/* Selector de plan alternativo (TACRE: Servicios Logística vs Mucha Chamba) */}
+                  {matched.planAlternativos&&matched.planAlternativos.length>1&&<div style={{marginTop:7,padding:"7px 10px",background:"#fff",border:"1.5px dashed "+matched.color+"40",borderRadius:8}}>
+                    <div style={{fontSize:10,fontWeight:800,color:matched.color,marginBottom:5,letterSpacing:"0.06em",textTransform:"uppercase"}}>Plan a facturar (selecciona):</div>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                      {matched.planAlternativos.map(p=>{
+                        const cur = form.planOverride||matched.planSolicitud;
+                        const active = cur===p.value;
+                        return(
+                          <button key={p.value} type="button" onClick={()=>setForm(f=>({...f,planOverride:p.value,plan:`${p.value.replace("P-","")}`}))} className="btn" style={{padding:"6px 12px",borderRadius:8,border:"1.5px solid "+(active?matched.color:BD2),background:active?matched.color+"14":"#fff",color:active?matched.color:TEXT,fontWeight:active?800:600,fontSize:11}}>
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>}
+                </>
               );
             })()}
           </div>
