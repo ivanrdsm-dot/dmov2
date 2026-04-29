@@ -1657,22 +1657,16 @@ function buildCostosOperativosSheet(viat, brand, year){
 
 /* ═══════════════════════════════════════════════════════════════════════════
    SOLICITUD DE FACTURA — formato exacto que pide la oficina
-   Replica 1:1 el template del cliente con datos auto-llenados desde
-   CLIENTE_PLANES + factura. La oficina solo recibe el XLSX y lo facturan.
    ═══════════════════════════════════════════════════════════════════════════ */
-function downloadSolicitudFacturaXLSX(factura){
-  const wb = XLSX.utils.book_new();
+
+// Construye la hoja (ws) de una sola factura. Retorna {ws, sheetName} o null.
+function buildSolicitudWs(factura){
   const ws = {};
-  // Identifica el cliente por empresa o por id guardado
   const matched = factura._clienteId
     ? CLIENTE_PLANES.find(cp=>cp.id===factura._clienteId)
     : (CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim())
        || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||""));
-
-  if(!matched){
-    alert("Cliente no identificado. Asegúrate de que la factura tenga una empresa conocida (Actnow, SCJ, Canon, Robots, MAP/Sofía).");
-    return;
-  }
+  if(!matched) return null;
   const cfg = SOLICITUD_FACTURA_CONFIG;
 
   // Estilos base
@@ -1859,17 +1853,13 @@ function downloadSolicitudFacturaXLSX(factura){
   setS("F26","Total",{...valBoldStyle,fill:{patternType:"solid",fgColor:{rgb:"FFFF00"}}});
   setS("G26",total,{...moneyBoldStyle,fill:{patternType:"solid",fgColor:{rgb:"FFFF00"}}},'"$"#,##0.00');
 
-  // Configura columnas y rows
+  // Nombre de pestaña: cliente + folio corto, max 31 chars, sin chars inválidos
+  const rawTab = `${matched.cliente||"Fac"} ${(factura.folio||"").slice(-8)}`;
+  const sheetName = rawTab.replace(/[\/\\?\*\[\]:]/g,"").slice(0,31);
+
   ws["!ref"] = "A1:H29";
   ws["!cols"] = [
-    {wch:34.5}, // A — labels
-    {wch:21},   // B — values
-    {wch:13.5}, // C
-    {wch:14.5}, // D
-    {wch:14},   // E
-    {wch:14},   // F — totals labels
-    {wch:21},   // G — fecha + montos
-    {wch:5},    // H
+    {wch:34.5},{wch:21},{wch:13.5},{wch:14.5},{wch:14},{wch:14},{wch:21},{wch:5},
   ];
   ws["!rows"] = [
     {hpt:20},{hpt:18},{hpt:16},{hpt:8},{hpt:18},{hpt:18},{hpt:18},{hpt:18},
@@ -1878,13 +1868,42 @@ function downloadSolicitudFacturaXLSX(factura){
     {hpt:18},{hpt:22},
   ];
   ws["!merges"] = merges;
+  return {ws, sheetName};
+}
 
-  XLSX.utils.book_append_sheet(wb,ws,(matched.cliente||"Solicitud").slice(0,30));
+// Descarga una sola factura como XLSX individual
+function downloadSolicitudFacturaXLSX(factura){
+  const result = buildSolicitudWs(factura);
+  if(!result){
+    alert("Cliente no identificado. Asegúrate de que la factura tenga una empresa conocida.");
+    return;
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, result.ws, result.sheetName);
+  const fecha = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `Solicitud_${(factura.folio||"sin-folio")}_${fecha}.xlsx`);
+}
 
-  // Descarga
-  const fechaTag = fechaSolicitud.toISOString().slice(0,10);
-  const filename = `Solicitud_${matched.cliente.replace(/\s+/g,"_")}_${factura.folio||"sin-folio"}_${fechaTag}.xlsx`;
-  XLSX.writeFile(wb, filename);
+// Descarga TODAS las facturas del arreglo en un solo XLSX con una pestaña por factura
+function downloadTodasSolicitudesXLSX(facts, mesLabel){
+  if(!facts||facts.length===0){alert("No hay facturas para exportar.");return;}
+  const wb = XLSX.utils.book_new();
+  const usedNames = {};
+  let ok = 0;
+  facts.forEach(f=>{
+    const result = buildSolicitudWs(f);
+    if(!result) return;
+    // Evitar nombres de pestaña duplicados
+    let name = result.sheetName;
+    if(usedNames[name]){usedNames[name]++;name=name.slice(0,28)+` ${usedNames[name]}`;}
+    else usedNames[name]=1;
+    XLSX.utils.book_append_sheet(wb, result.ws, name);
+    ok++;
+  });
+  if(ok===0){alert("Ninguna factura pudo identificarse. Verifica los registros.");return;}
+  const fecha = new Date().toISOString().slice(0,10);
+  const label = (mesLabel||"").replace(/\s+/g,"-")||"facturas";
+  XLSX.writeFile(wb, `Solicitudes_${label}_${fecha}.xlsx`);
 }
 
 // ═══════ REPORTE EJECUTIVO DE FACTURACIÓN — FORMATO OFICINA (Botmate-style) ═══════
@@ -5700,6 +5719,7 @@ function Facturas(){
         <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Facturación & Finanzas</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>Control mensual · PDF descargable · Proyecciones anuales</p></div>
         <div style={{display:"flex",gap:8}}>
           <button onClick={()=>setShowBitacora(true)} className="btn" title="Importar bitácora operativa (Excel) y clasificar automáticamente" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Upload size={13}/>Importar bitácora</button>
+          <button onClick={()=>downloadTodasSolicitudesXLSX(filt,mesF==="todos"?"Todas":mesF+"-"+(new Date().getFullYear()))} className="btn" title="Descargar TODAS las solicitudes de factura del mes en un solo XLSX (una pestaña por factura)" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><FileText size={13}/>Solicitudes (todas)</button>
           <button onClick={()=>exportFacturasXLSX(filt,mesF==="todos"?null:mesF)} className="btn" title="Exportar facturas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>XLSX Facturas</button>
           <button onClick={()=>exportFinancierosXLSX(items)} className="btn" title="Exportar financieros completos" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><BarChart2 size={13}/>XLSX Financiero</button>
           <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo registro</button>
