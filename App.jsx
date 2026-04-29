@@ -831,8 +831,6 @@ const CLIENTE_PLANES = [
     regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#65a30d",
   },
-  /* Hersheys — factura a Promociones America Latina (mismo razon social que Actnow)
-     pero con plan distinto (Hersheys Implementaciones) y plan DMOV especial 142805 */
   {
     id:"hersheys",
     aliases:["HERSHEYS","HERSHEY","HERSHEY'S"],
@@ -844,9 +842,7 @@ const CLIENTE_PLANES = [
     domicilio1:"AV. INSURGENTES SUR 1814 INT 601, COL FLORIDA",
     domicilio2:"ALVARO OBREGON, CIUDAD DE MEXICO CP. 01030",
     regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
-    // Plan DMOV especial — Hersheys usa 142805 en lugar del default 142804
-    numeroPlanDmovimientoOverride:"PLAN 142805 (D EN MOVIMIENTO)",
-    color:"#a16207", // ámbar oscuro (color Hersheys)
+    color:"#a16207",
   },
 ];
 
@@ -1668,10 +1664,10 @@ function downloadSolicitudFacturaXLSX(factura){
   const wb = XLSX.utils.book_new();
   const ws = {};
   // Identifica el cliente por empresa o por id guardado
-  const matched = CLIENTE_PLANES.find(cp=>
-    (factura._clienteId&&cp.id===factura._clienteId)||
-    cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim()
-  ) || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||"");
+  const matched = factura._clienteId
+    ? CLIENTE_PLANES.find(cp=>cp.id===factura._clienteId)
+    : (CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim())
+       || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||""));
 
   if(!matched){
     alert("Cliente no identificado. Asegúrate de que la factura tenga una empresa conocida (Actnow, SCJ, Canon, Robots, MAP/Sofía).");
