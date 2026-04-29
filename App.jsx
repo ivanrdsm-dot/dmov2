@@ -5686,6 +5686,10 @@ function Facturas(){
   const [modal,setModal]=useState(false);const [editItem,setEditItem]=useState(null);
   const [showBitacora,setShowBitacora]=useState(false);
   const [toast,setToast]=useState(null);const [tab,setTab]=useState("registros");const [mesF,setMesF]=useState("todos");
+  const [selected,setSelected]=useState(new Set());
+  const toggleSel=id=>setSelected(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n;});
+  const toggleAll=list=>{const ids=list.map(f=>f.id);const allOn=ids.every(id=>selected.has(id));setSelected(allOn?new Set():new Set(ids));};
+  const selList=filt=>filt.filter(f=>selected.has(f.id));
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const ANIO=new Date().getFullYear();
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
@@ -5741,6 +5745,18 @@ function Facturas(){
         </div>
       </div>
 
+      {selected.size>0&&(
+        <div style={{display:"flex",alignItems:"center",gap:10,background:GREEN,borderRadius:13,padding:"10px 18px",marginBottom:14,boxShadow:"0 4px 16px "+GREEN+"40"}}>
+          <CheckCircle size={16} color="#fff"/>
+          <span style={{color:"#fff",fontWeight:700,fontSize:14,flex:1}}>{selected.size} factura{selected.size>1?"s":""} seleccionada{selected.size>1?"s":""}</span>
+          <button onClick={()=>downloadTodasSolicitudesXLSX(selList(filt),`Sel-${mesF}`)} className="btn" style={{background:"#fff",color:GREEN,border:"none",borderRadius:9,padding:"7px 16px",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",gap:6}}>
+            <Download size={14}/>Descargar solicitudes ({selected.size})
+          </button>
+          <button onClick={()=>setSelected(new Set())} className="btn" style={{background:"rgba(255,255,255,0.2)",color:"#fff",border:"none",borderRadius:9,padding:"7px 12px",fontWeight:700,fontSize:13}}>
+            <X size={14}/>
+          </button>
+        </div>
+      )}
       <div className="g4" style={{marginBottom:18}}>
         <KpiCard icon={BarChart2} color={BLUE} label="Total facturado" value={fmtK(totTotal)} sub={filt.length+" registros"}/>
         <KpiCard icon={CheckCircle} color={GREEN} label="Cobrado" value={fmtK(cobrado)} sub={totTotal>0?Math.round(cobrado/totTotal*100)+"%":"0%"}/>
@@ -5830,10 +5846,12 @@ function Facturas(){
           {filt.length===0?<div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin registros. <button onClick={openNew} style={{color:A,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Crear →</button></div>
           :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:960}}>
             <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
+              <th style={{padding:"9px 12px"}}><input type="checkbox" checked={filt.length>0&&filt.every(f=>selected.has(f.id))} onChange={()=>toggleAll(filt)} style={{cursor:"pointer",width:15,height:15}}/></th>
               {["Folio","Mes/Año","Empresa","Solicitante","Plan","Servicio","Subtotal","IVA","Total","Estado","Acciones"].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
             </tr></thead>
             <tbody>{filt.map((f,i)=>(
-              <tr key={f.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
+              <tr key={f.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER,background:selected.has(f.id)?GREEN+"08":"transparent"}}>
+                <td style={{padding:"10px 12px"}}><input type="checkbox" checked={selected.has(f.id)} onChange={()=>toggleSel(f.id)} style={{cursor:"pointer",width:15,height:15}}/></td>
                 <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:10,color:MUTED,whiteSpace:"nowrap"}}>{f.folio||"—"}</td>
                 <td style={{padding:"10px 12px"}}><span style={{background:A+"12",color:A,borderRadius:6,padding:"2px 7px",fontSize:11,fontWeight:700}}>{f.mesOp||"—"} {f.anio||""}</span></td>
                 <td style={{padding:"10px 12px",fontWeight:700,fontSize:13}}>{f.empresa||f.cliente||"—"}</td>
