@@ -798,12 +798,46 @@ const CLIENTE_PLANES = [
     regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#d97706",
   },
+  /* TACRE — datos fiscales tomados de CSF marzo 2026 */
+  {
+    id:"tacre",
+    aliases:["TACRE","JBL"],
+    cliente:"TACRE",
+    empresa:"TACRE SA DE CV",
+    plan:"PENDIENTE - CAPTURAR PLAN",
+    planSolicitud:"PENDIENTE - CAPTURAR PLAN",
+    rfc:"TAC200225LC3",
+    domicilio1:"CALLE LIBERTAD 49, COL DEL RECREO",
+    domicilio2:"AZCAPOTZALCO, CIUDAD DE MEXICO CP. 02070",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
+    color:"#0891b2",
+  },
+  /* CCA - Compras Centrales y Administracion (cliente que aparecio en bitacora Botmate) */
+  {
+    id:"cca",
+    aliases:["CCA","COMPRAS CENTRALES","COMPRAS CENTRALES Y ADMIN","COMPRAS CENTRALES Y ADMINISTRACION"],
+    cliente:"Compras Centrales y Adm.",
+    empresa:"COMPRAS CENTRALES Y ADMINISTRACION SA DE CV",
+    plan:"212801 → Varios",
+    planSolicitud:"P-212801 Varios",
+    rfc:"CCA080602TM1",
+    domicilio1:"AV. INSURGENTES SUR 1814 PISO 7 INT 701, COL FLORIDA",
+    domicilio2:"ALVARO OBREGON, CIUDAD DE MEXICO CP. 01030",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
+    color:"#65a30d",
+  },
 ];
 
 /* Constantes "siempre iguales" que aparecen en cada solicitud de factura.
    Editables aquí si la oficina cambia algún catalogo SAT. */
 const SOLICITUD_FACTURA_CONFIG = {
   empresaEmisora: "D EN MOVIMIENTO",
+  // Datos fiscales completos del emisor DMOV (tomados de CSF marzo 2026)
+  emisorRFC: "DMS15102688A",
+  emisorRazonSocial: "D EN MOVIMIENTO SA DE CV",
+  emisorDomicilio1: "AV. INSURGENTES SUR 1814, ALT 702, COL FLORIDA",
+  emisorDomicilio2: "ALVARO OBREGON, CIUDAD DE MEXICO CP. 01030",
+  emisorRegimen: "(601) GENERAL DE LEY PERSONAS MORALES",
   ciudadExpedicion: "ESTA FACTURA SE EXPIDE EN LA CIUDAD DE MEXICO",
   metodoPago: "PPD (PAGO EN PARCIALIDADES O DIFERIDO)",
   formaPago: "99 (POR DEFINIR)",
@@ -5709,7 +5743,8 @@ function Facturas(){
                     <td style={{padding:"10px 14px",fontSize:12,color:MUTED}}>{new Date(f.fechaVenc).toLocaleDateString("es-MX")}</td>
                     <td style={{padding:"10px 14px"}}><span style={{background:urg+"18",color:urg,padding:"3px 10px",borderRadius:7,fontWeight:800,fontSize:12}}>{f.diasVencido} días</span></td>
                     <td style={{padding:"10px 14px"}}>
-                      <div style={{display:"flex",gap:5}}>
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                        <button onClick={()=>downloadSolicitudFacturaXLSX(f)} className="btn" title="Descargar solicitud de factura (XLSX)" style={{padding:"5px 10px",borderRadius:7,background:GREEN+"14",border:"1.5px solid "+GREEN+"40",color:GREEN,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><FileText size={11}/>Solicitud</button>
                         <button onClick={()=>recordarPago(f)} className="btn" style={{padding:"5px 10px",borderRadius:7,background:BLUE+"10",border:"1px solid "+BLUE+"30",color:BLUE,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Send size={11}/>Recordar</button>
                         <button onClick={()=>updStatus(f.id,"Pagada")} className="btn" style={{padding:"5px 10px",borderRadius:7,background:GREEN+"10",border:"1px solid "+GREEN+"30",color:GREEN,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Check size={11}/>Pagó</button>
                       </div>
