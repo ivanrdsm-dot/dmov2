@@ -737,43 +737,81 @@ const CLIENTE_PLANES = [
     id:"actnow",
     aliases:["ACTNOW","ACT NOW","CAMPARI","APEROL","APPEROL"],
     cliente:"Actnow",
-    empresa:"Promociones America Latina SA de CV",
+    empresa:"PROMOCIONES AMERICA LATINA SA DE CV",
     plan:"210201 PL → Campari Promotores",
+    planSolicitud:"P-210201 Campari Promotores",
+    rfc:"PAL030731427",
+    domicilio1:"AVENIDA INSURGENTES SUR 1814 INT 601, COL FLORIDA",
+    domicilio2:"ALVARO OBREGON, CIUDAD DE MEXICO CP. 01030",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#dc2626",
   },
   {
     id:"scj",
     aliases:["SCJ","S.C.J.","SCJ PROMOTORES","SCJ JOHNSON"],
     cliente:"SCJ",
-    empresa:"Marketing and Promotions SA de CV",
+    empresa:"MARKETING AND PROMOTIONS SA DE CV",
     plan:"10344 MAP → SCJ Promotores Operación",
+    planSolicitud:"P-10344 MAP SCJ Promotores Operación",
+    rfc:"MAP_RFC_PENDIENTE", // ⚠ pendiente capturar — editable desde admin
+    domicilio1:"PENDIENTE - CAPTURAR DOMICILIO",
+    domicilio2:"",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#2563eb",
   },
   {
     id:"canon",
     aliases:["CANON","CANNON"],
     cliente:"Canon",
-    empresa:"GMAP Operadora SA de CV",
+    empresa:"GMAP OPERADORA SA DE CV",
     plan:"202003 GMAP → Canon Promotores",
+    planSolicitud:"P-202003 GMAP Canon Promotores",
+    rfc:"GMAP_RFC_PENDIENTE",
+    domicilio1:"PENDIENTE - CAPTURAR DOMICILIO",
+    domicilio2:"",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#059669",
   },
   {
     id:"robots",
     aliases:["ROBOTS","BOTMATE","POD ROBOTS","ROBOT","BOT"],
     cliente:"Robots / POD",
-    empresa:"Promotor On Demand SA de CV",
+    empresa:"PROMOTOR ON DEMAND SA DE CV",
     plan:"212802 POD Robots",
+    planSolicitud:"P-212802 POD Robots",
+    rfc:"POD_RFC_PENDIENTE",
+    domicilio1:"PENDIENTE - CAPTURAR DOMICILIO",
+    domicilio2:"",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#7c3aed",
   },
   {
     id:"map_varios",
     aliases:["MAP","SOFIA TRUEBA","SOFIA","TRUEBA","ALEJANDRA TRUEBA","VARIOS"],
     cliente:"MAP / Sofía Trueba",
-    empresa:"Marketing and Promotion",
+    empresa:"MARKETING AND PROMOTION",
     plan:"12801 MAP → Varios 2011",
+    planSolicitud:"P-12801 MAP Varios 2011",
+    rfc:"MAP2_RFC_PENDIENTE",
+    domicilio1:"PENDIENTE - CAPTURAR DOMICILIO",
+    domicilio2:"",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#d97706",
   },
 ];
+
+/* Constantes "siempre iguales" que aparecen en cada solicitud de factura.
+   Editables aquí si la oficina cambia algún catalogo SAT. */
+const SOLICITUD_FACTURA_CONFIG = {
+  empresaEmisora: "D EN MOVIMIENTO",
+  ciudadExpedicion: "ESTA FACTURA SE EXPIDE EN LA CIUDAD DE MEXICO",
+  metodoPago: "PPD (PAGO EN PARCIALIDADES O DIFERIDO)",
+  formaPago: "99 (POR DEFINIR)",
+  usoCFDI: "G01 (ADQUISICION DE MERCANCIA)",
+  claveProductoServicio: "81141601 Logística Maniobras terrestre",
+  atn: "IVAN CADAVIECO",
+  numeroPlanDmovimiento: "PLAN 142804 SERVICIOS DE LOGISTICA",
+};
 
 /* Quita acentos y normaliza para matching tolerante */
 const _norm = (s)=>(s||"").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").trim();
@@ -1563,6 +1601,235 @@ function buildCostosOperativosSheet(viat, brand, year){
   ws["!rows"] = rowHeights.map(h=>({hpt:h||15}));
   ws["!freeze"] = {xSplit:0,ySplit:3};
   return ws;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SOLICITUD DE FACTURA — formato exacto que pide la oficina
+   Replica 1:1 el template del cliente con datos auto-llenados desde
+   CLIENTE_PLANES + factura. La oficina solo recibe el XLSX y lo facturan.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function downloadSolicitudFacturaXLSX(factura){
+  const wb = XLSX.utils.book_new();
+  const ws = {};
+  // Identifica el cliente por empresa o por id guardado
+  const matched = CLIENTE_PLANES.find(cp=>
+    (factura._clienteId&&cp.id===factura._clienteId)||
+    cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim()
+  ) || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||"");
+
+  if(!matched){
+    alert("Cliente no identificado. Asegúrate de que la factura tenga una empresa conocida (Actnow, SCJ, Canon, Robots, MAP/Sofía).");
+    return;
+  }
+  const cfg = SOLICITUD_FACTURA_CONFIG;
+
+  // Estilos base
+  const titleStyle = {
+    font:{name:"Calibri",sz:14,bold:true,color:{rgb:"FF0000"}},
+    fill:{patternType:"solid",fgColor:{rgb:"FFFF00"}},
+    alignment:{horizontal:"center",vertical:"center"},
+    border:{top:{style:"thin"},bottom:{style:"thin"},left:{style:"thin"},right:{style:"thin"}},
+  };
+  const labelStyle = {
+    font:{name:"Calibri",sz:11,bold:true,color:{rgb:"000000"}},
+    fill:{patternType:"solid",fgColor:{rgb:"92D050"}},
+    alignment:{horizontal:"center",vertical:"center",wrapText:true},
+    border:{top:{style:"thin"},bottom:{style:"thin"},left:{style:"thin"},right:{style:"thin"}},
+  };
+  const valStyle = {
+    font:{name:"Calibri",sz:11,bold:false,color:{rgb:"000000"}},
+    alignment:{horizontal:"left",vertical:"center",wrapText:true},
+    border:{top:{style:"thin"},bottom:{style:"thin"},left:{style:"thin"},right:{style:"thin"}},
+  };
+  const valBoldStyle = {...valStyle, font:{...valStyle.font, bold:true}};
+  const moneyStyle = {
+    ...valStyle,
+    alignment:{horizontal:"right",vertical:"center"},
+    numFmt:'"$"#,##0.00',
+  };
+  const moneyBoldStyle = {...moneyStyle, font:{...moneyStyle.font, bold:true}};
+  const dateStyle = {
+    ...valStyle,
+    alignment:{horizontal:"center",vertical:"center"},
+    numFmt:"dd/mm/yyyy",
+  };
+  const ciudadStyle = {
+    font:{name:"Calibri",sz:10,bold:true,italic:true,color:{rgb:"000000"}},
+    alignment:{horizontal:"center",vertical:"center"},
+  };
+  const importeHeaderStyle = {
+    font:{name:"Calibri",sz:11,bold:true},
+    fill:{patternType:"solid",fgColor:{rgb:"D9D9D9"}},
+    alignment:{horizontal:"center",vertical:"center"},
+    border:{top:{style:"thin"},bottom:{style:"thin"},left:{style:"thin"},right:{style:"thin"}},
+  };
+
+  const setS = (addr,val,style,nf)=>{
+    const isNum = typeof val==="number";
+    const isDate = val instanceof Date;
+    ws[addr] = {t: isNum?"n":(isDate?"d":"s"), v: val};
+    if(nf) ws[addr].z = nf;
+    if(style){
+      ws[addr].s = {...style};
+      if(nf) ws[addr].s.numFmt = nf;
+    }
+  };
+
+  const merges = [];
+  const subtotal = Number(factura.subtotal||factura.monto||0);
+  const ivaAmt = Number(factura.ivaAmt||factura.iva||0);
+  const total = Number(factura.total||subtotal+ivaAmt);
+  const periodo = `${factura.mesOp||""}-${factura.anio||new Date().getFullYear()}`.toUpperCase();
+  const fechaSolicitud = new Date(); // Hoy
+
+  // ROW 1 — TÍTULO (B1:F1 merged, amarillo + rojo)
+  setS("B1","REQUISITOS DE SOLICITUD DE FACTURAS",titleStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:0,c}),"",titleStyle);
+  merges.push({s:{r:0,c:1},e:{r:0,c:5}});
+
+  // ROW 2 — EMPRESA DE DONDE SE FACTURA (siempre "D EN MOVIMIENTO")
+  setS("A2","EMPRESA DE DONDE SE FACTURA:",labelStyle);
+  setS("B2",cfg.empresaEmisora,valBoldStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:1,c}),"",valBoldStyle);
+  merges.push({s:{r:1,c:1},e:{r:1,c:5}});
+
+  // ROW 3 — Ciudad expedición (col D)
+  setS("D3",cfg.ciudadExpedicion,ciudadStyle);
+
+  // ROW 4 — espaciador
+
+  // ROW 5 — RAZON SOCIAL CLIENTE | FECHA
+  setS("A5","RAZON SOCIAL CLIENTE:",labelStyle);
+  setS("B5",matched.empresa,valBoldStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:4,c}),"",valBoldStyle);
+  merges.push({s:{r:4,c:1},e:{r:4,c:5}});
+  setS("G5","FECHA",labelStyle);
+
+  // ROW 6 — fecha valor
+  setS("G6",fechaSolicitud,dateStyle,"dd/mm/yyyy");
+
+  // ROW 7 — DOMICILIO FISCAL (col A merged A7:A8)
+  setS("A7","DOMICILIO FISCAL:",labelStyle);
+  setS("A8","",labelStyle);
+  merges.push({s:{r:6,c:0},e:{r:7,c:0}});
+  setS("B7",matched.domicilio1||"",valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:6,c}),"",valStyle);
+  merges.push({s:{r:6,c:1},e:{r:6,c:5}});
+  setS("B8",matched.domicilio2||"",valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:7,c}),"",valStyle);
+  merges.push({s:{r:7,c:1},e:{r:7,c:5}});
+
+  // ROW 9 — REGIMEN FISCAL
+  setS("A9","REGIMEN FISCAL",labelStyle);
+  setS("B9",matched.regimenFiscal||"",valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:8,c}),"",valStyle);
+  merges.push({s:{r:8,c:1},e:{r:8,c:5}});
+
+  // ROW 10 — RFC
+  setS("A10","RFC:",labelStyle);
+  setS("B10",matched.rfc||"",valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:9,c}),"",valStyle);
+  merges.push({s:{r:9,c:1},e:{r:9,c:5}});
+
+  // ROW 11 — espaciador
+
+  // ROW 12 — METODO DE PAGO
+  setS("A12","METODO DE PAGO:",labelStyle);
+  setS("B12",cfg.metodoPago,valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:11,c}),"",valStyle);
+  merges.push({s:{r:11,c:1},e:{r:11,c:5}});
+
+  // ROW 13 — FORMA DE PAGO
+  setS("A13","FORMA DE PAGO:",labelStyle);
+  setS("B13",cfg.formaPago,valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:12,c}),"",valStyle);
+  merges.push({s:{r:12,c:1},e:{r:12,c:5}});
+
+  // ROW 14 — USO DE CFDI
+  setS("A14","USO DE CFDI:",labelStyle);
+  setS("B14",cfg.usoCFDI,valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:13,c}),"",valStyle);
+  merges.push({s:{r:13,c:1},e:{r:13,c:5}});
+
+  // ROW 15 — CLAVE DEL PRODUCTO O SERVICIO
+  setS("A15","\"CLAVE DEL PRODUCTO O SERVICIO\":",labelStyle);
+  setS("B15",cfg.claveProductoServicio,valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:14,c}),"",valStyle);
+  merges.push({s:{r:14,c:1},e:{r:14,c:5}});
+
+  // ROW 16 — espaciador
+
+  // ROW 17 — PRESUPUESTO + Importe header (col G)
+  setS("A17","PRESUPUESTO:",labelStyle);
+  setS("G17","Importe",importeHeaderStyle);
+
+  // ROW 18 — AT'N
+  setS("A18","AT´N:",labelStyle);
+  setS("B18",cfg.atn,valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:17,c}),"",valStyle);
+  merges.push({s:{r:17,c:1},e:{r:17,c:5}});
+
+  // ROW 19 — NUMERO DE PLAN DMOVIMIENTO
+  setS("A19","NUMERO DE PLAN DMOVIMIENTO:",labelStyle);
+  setS("B19",cfg.numeroPlanDmovimiento,valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:18,c}),"",valStyle);
+  merges.push({s:{r:18,c:1},e:{r:18,c:5}});
+
+  // ROW 20 — ENTRE EMPRESAS AMBOS No. DE PLAN (← este es el plan del cliente)
+  setS("A20","ENTRE EMPRESAS AMBOS No. DE PLAN:",labelStyle);
+  setS("B20",matched.planSolicitud||matched.plan,valBoldStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:19,c}),"",valBoldStyle);
+  merges.push({s:{r:19,c:1},e:{r:19,c:5}});
+
+  // ROW 21 — DESCRIPCION / CONCEPTO + monto en col G
+  setS("A21","DESCRIPCION / CONCEPTO:",labelStyle);
+  setS("B21",factura.servicio||"",valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:20,c}),"",valStyle);
+  merges.push({s:{r:20,c:1},e:{r:20,c:5}});
+  setS("G21",subtotal,moneyStyle,'"$"#,##0.00');
+
+  // ROW 22 — PERIODO
+  setS("A22","PERIODO:",labelStyle);
+  setS("B22",periodo,valStyle);
+  for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:21,c}),"",valStyle);
+  merges.push({s:{r:21,c:1},e:{r:21,c:5}});
+
+  // ROW 23 — espaciador
+
+  // ROWS 24-26 — Subtotal / IVA / Total
+  setS("F24","Subtotal",valBoldStyle);
+  setS("G24",subtotal,moneyBoldStyle,'"$"#,##0.00');
+  setS("F25","IVA",valBoldStyle);
+  setS("G25",ivaAmt,moneyBoldStyle,'"$"#,##0.00');
+  setS("F26","Total",{...valBoldStyle,fill:{patternType:"solid",fgColor:{rgb:"FFFF00"}}});
+  setS("G26",total,{...moneyBoldStyle,fill:{patternType:"solid",fgColor:{rgb:"FFFF00"}}},'"$"#,##0.00');
+
+  // Configura columnas y rows
+  ws["!ref"] = "A1:H29";
+  ws["!cols"] = [
+    {wch:34.5}, // A — labels
+    {wch:21},   // B — values
+    {wch:13.5}, // C
+    {wch:14.5}, // D
+    {wch:14},   // E
+    {wch:14},   // F — totals labels
+    {wch:21},   // G — fecha + montos
+    {wch:5},    // H
+  ];
+  ws["!rows"] = [
+    {hpt:20},{hpt:18},{hpt:16},{hpt:8},{hpt:18},{hpt:18},{hpt:18},{hpt:18},
+    {hpt:18},{hpt:18},{hpt:8},{hpt:18},{hpt:18},{hpt:18},{hpt:18},{hpt:8},
+    {hpt:18},{hpt:18},{hpt:18},{hpt:18},{hpt:22},{hpt:18},{hpt:8},{hpt:18},
+    {hpt:18},{hpt:22},
+  ];
+  ws["!merges"] = merges;
+
+  XLSX.utils.book_append_sheet(wb,ws,(matched.cliente||"Solicitud").slice(0,30));
+
+  // Descarga
+  const fechaTag = fechaSolicitud.toISOString().slice(0,10);
+  const filename = `Solicitud_${matched.cliente.replace(/\s+/g,"_")}_${factura.folio||"sin-folio"}_${fechaTag}.xlsx`;
+  XLSX.writeFile(wb, filename);
 }
 
 // ═══════ REPORTE EJECUTIVO DE FACTURACIÓN — FORMATO OFICINA (Botmate-style) ═══════
@@ -5492,7 +5759,10 @@ function Facturas(){
                 </td>
                 <td style={{padding:"10px 12px"}}>
                   <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                    <button onClick={()=>downloadFacturaPDF(f)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}>
+                    <button onClick={()=>downloadSolicitudFacturaXLSX(f)} className="btn" title="Descargar SOLICITUD DE FACTURA con formato oficial (XLSX) — para enviar a contabilidad" style={{color:GREEN,padding:"4px 8px",border:"1.5px solid "+GREEN+"40",background:GREEN+"10",borderRadius:6,display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}>
+                      <FileText size={12}/>Solicitud
+                    </button>
+                    <button onClick={()=>downloadFacturaPDF(f)} className="btn" title="Descargar PDF interno" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}>
                       <Download size={12}/>PDF
                     </button>
                     <button onClick={()=>{
