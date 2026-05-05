@@ -1,10 +1,14 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, Component } from "react";
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
   doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
 } from "firebase/firestore";
+import {
+  getAuth, signInWithPopup, GoogleAuthProvider, signOut as fbSignOut,
+  onAuthStateChanged, signInAnonymously,
+} from "firebase/auth";
 import {
   Truck, Package, FileText, LayoutDashboard, DollarSign, Plus,
   Search, X, Check, Minus, MapPin, Clock, CheckCircle, Send,
@@ -42,6 +46,15 @@ try{
 }catch(e){
   // Fallback si el navegador no soporta persistencia (modo incógnito estricto)
   db = getFirestore(fbApp);
+}
+const auth = getAuth(fbApp);
+const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({prompt:"select_account"});
+
+/* ─── SEGURIDAD: hash SHA-256 para PINs de acceso ─────────────────────────── */
+async function hashPin(pin){
+  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(pin).trim()));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
 }
 
 /* Helper: Comprime imagen en cliente a JPEG pequeño y retorna base64.
@@ -238,27 +251,89 @@ const CITY_BBOX = {
   "Bacalar":[-88.45,18.60,-88.30,18.75],
   "Progreso":[-89.75,21.20,-89.60,21.35],
   "Ciudad del Carmen":[-91.95,18.55,-91.75,18.70],
-  "Cabo San Lucas":[-109.95,22.85,-109.85,22.95],
-  "Nogales":[-111.05,31.25,-110.90,31.40],
-  "Nuevo Laredo":[-99.65,27.40,-99.45,27.60],
+  // duplicados eliminados (Cabo San Lucas, Nogales, Nuevo Laredo ya están arriba)
   "San Pedro Garza García":[-100.43,25.62,-100.35,25.72],
   "San Nicolás":[-100.32,25.72,-100.22,25.82],
   "Apodaca":[-100.22,25.72,-100.10,25.85],
   "Santa Catarina":[-100.55,25.62,-100.42,25.72],
   "Guadalupe NL":[-100.30,25.65,-100.18,25.78],
+  "General Escobedo":[-100.38,25.78,-100.26,25.88],
+  "García NL":[-100.72,25.80,-100.58,25.92],
+  "Juárez NL":[-100.15,25.60,-99.98,25.70],
   "Linares":[-99.65,24.78,-99.50,24.92],
   "Guasave":[-108.55,25.50,-108.40,25.65],
+  "Guamúchil":[-108.15,25.40,-107.95,25.55],
   "Navojoa":[-109.50,27.00,-109.35,27.15],
   "Guaymas":[-110.95,27.85,-110.80,28.05],
+  "Puerto Peñasco":[-113.60,31.25,-113.45,31.40],
+  "Cananea":[-110.35,30.95,-110.15,31.10],
+  "Nuevo Casas Grandes":[-107.95,30.32,-107.75,30.47],
+  "Jiménez Chih.":[-105.05,27.10,-104.85,27.25],
+  "Ramos Arizpe":[-100.97,25.52,-100.85,25.62],
   "Mante":[-99.05,22.65,-98.90,22.80],
   "Ciudad Valles":[-99.10,21.95,-98.95,22.10],
   "Matehuala":[-100.70,23.60,-100.55,23.75],
+  "Soledad de Graciano":[-100.95,22.15,-100.80,22.25],
+  "Tamazunchale":[-98.85,21.23,-98.68,21.38],
   "Fresnillo":[-102.95,23.13,-102.80,23.25],
   "Cuauhtémoc":[-106.95,28.35,-106.80,28.50],
   "Delicias":[-105.55,28.13,-105.40,28.25],
   "Tequila":[-103.90,20.85,-103.75,21.00],
   "Tequisquiapan":[-99.95,20.45,-99.80,20.62],
   "Bahía de Banderas":[-105.40,20.65,-105.25,20.85],
+  // Puebla adicional
+  "San Martín Texmelucan":[-98.50,19.25,-98.35,19.38],
+  "Izúcar de Matamoros":[-98.50,18.55,-98.35,18.70],
+  "Acatzingo":[-97.85,18.90,-97.70,19.05],
+  "Tecamachalco":[-97.80,18.85,-97.65,19.00],
+  // Hidalgo adicional
+  "Tizayuca":[-99.00,19.80,-98.85,19.95],
+  "Tepeji del Río":[-99.40,19.88,-99.25,20.00],
+  "Ixmiquilpan":[-99.30,20.43,-99.15,20.55],
+  // Morelos adicional
+  "Jiutepec":[-99.25,18.83,-99.10,18.95],
+  "Emiliano Zapata Mor.":[-99.25,18.82,-99.10,18.95],
+  "Zacatepec":[-99.25,18.65,-99.10,18.78],
+  // Tlaxcala adicional
+  "Huamantla":[-97.95,19.32,-97.80,19.47],
+  "Chiautempan":[-98.40,19.30,-98.25,19.42],
+  // Veracruz adicional
+  "Papantla":[-97.45,20.40,-97.25,20.55],
+  "Martínez de la Torre":[-97.20,20.00,-97.00,20.15],
+  "Alvarado":[-96.00,18.60,-95.80,18.80],
+  "Tierra Blanca":[-96.45,18.50,-96.25,18.70],
+  // Michoacán adicional
+  "Jiquilpan":[-102.75,19.95,-102.60,20.10],
+  "Los Reyes Mich.":[-102.55,19.55,-102.40,19.72],
+  "Tacámbaro":[-101.55,19.20,-101.40,19.35],
+  // Jalisco adicional
+  "Ameca":[-104.10,20.52,-103.95,20.65],
+  "Autlán":[-104.45,19.72,-104.30,19.88],
+  "San Juan de los Lagos":[-102.40,21.25,-102.25,21.38],
+  "Silao":[-101.50,20.90,-101.37,21.02],
+  // Guerrero adicional
+  "Tecpán de Galeana":[-100.80,17.15,-100.60,17.32],
+  "Ometepec":[-98.50,16.63,-98.30,16.78],
+  "Tlapa de Comonfort":[-98.65,17.52,-98.45,17.65],
+  // Chiapas adicional
+  "Arriaga":[-93.95,15.88,-93.75,16.02],
+  "Ocosingo":[-92.35,17.00,-92.15,17.15],
+  "Cintalapa":[-93.80,16.68,-93.60,16.82],
+  // Baja California Sur (corredor)
+  "Guerrero Negro":[-114.05,27.90,-113.85,28.05],
+  "Santa Rosalía":[-112.35,27.30,-112.15,27.45],
+  "Ciudad Constitución":[-111.75,25.05,-111.55,25.20],
+  "Mulegé":[-112.05,26.85,-111.85,27.00],
+  // Quintana Roo adicional
+  "Felipe Carrillo Puerto":[-88.15,19.50,-87.95,19.65],
+  // Oaxaca adicional
+  "Tlacolula":[-96.60,16.90,-96.45,17.05],
+  "Miahuatlán":[-96.65,16.30,-96.45,16.50],
+  // Tabasco adicional
+  "Tenosique":[-91.50,17.42,-91.30,17.58],
+  // Nayarit adicional
+  "Santiago Ixcuintla":[-105.25,21.78,-105.05,21.92],
+  "Ixtlán del Río":[-104.45,21.00,-104.30,21.15],
 };
 /* Geofencing: verifica si punto (lng,lat) está dentro de bbox [minLng,minLat,maxLng,maxLat] */
 function dentroBbox(lng,lat,bbox){
@@ -719,7 +794,204 @@ const TAR = [
   {c:"Ciudad del Carmen",..._T(1075)},
   {c:"Champotón",..._T(1110)},
   {c:"Escárcega",..._T(1075)},
+
+  /* ═══ DESTINOS ADICIONALES COMPLETADOS ═══ */
+  // Nuevo León metro (fuera de Monterrey)
+  {c:"General Escobedo",km:940,..._T(940)},
+  {c:"García NL",km:950,..._T(950)},
+  {c:"Juárez NL",km:938,..._T(938)},
+  // Sinaloa
+  {c:"Guamúchil",km:1380,..._T(1380)},
+  // Sonora
+  {c:"Puerto Peñasco",km:2350,..._T(2350)},
+  {c:"Cananea",km:2210,..._T(2210)},
+  // Chihuahua
+  {c:"Nuevo Casas Grandes",km:1710,..._T(1710)},
+  {c:"Jiménez Chih.",km:1220,..._T(1220)},
+  // Coahuila
+  {c:"Ramos Arizpe",km:852,..._T(852)},
+  // San Luis Potosí
+  {c:"Soledad de Graciano",km:417,..._T(417)},
+  {c:"Tamazunchale",km:420,..._T(420)},
+  // Guanajuato
+  {c:"Silao",km:365,..._T(365)},
+  {c:"San Francisco del Rincón",km:380,..._T(380)},
+  {c:"Villagrán",km:280,..._T(280)},
+  // Jalisco
+  {c:"Ameca",km:600,..._T(600)},
+  {c:"Autlán",km:680,..._T(680)},
+  {c:"San Juan de los Lagos",km:480,..._T(480)},
+  // Michoacán
+  {c:"Jiquilpan",km:440,..._T(440)},
+  {c:"Los Reyes Mich.",km:470,..._T(470)},
+  {c:"Tacámbaro",km:385,..._T(385)},
+  // Morelos
+  {c:"Jiutepec",km:93,..._T(93)},
+  {c:"Zacatepec",km:120,..._T(120)},
+  // Puebla
+  {c:"San Martín Texmelucan",km:85,..._T(85)},
+  {c:"Izúcar de Matamoros",km:195,..._T(195)},
+  {c:"Acatzingo",km:145,..._T(145)},
+  {c:"Tecamachalco",km:155,..._T(155)},
+  // Hidalgo
+  {c:"Tizayuca",km:55,..._T(55)},
+  {c:"Tepeji del Río",km:72,..._T(72)},
+  {c:"Ixmiquilpan",km:145,..._T(145)},
+  // Tlaxcala
+  {c:"Huamantla",km:148,..._T(148)},
+  {c:"Chiautempan",km:119,..._T(119)},
+  // Veracruz
+  {c:"Papantla",km:265,..._T(265)},
+  {c:"Martínez de la Torre",km:245,..._T(245)},
+  {c:"Alvarado",km:440,..._T(440)},
+  {c:"Tierra Blanca",km:350,..._T(350)},
+  // Guerrero
+  {c:"Tecpán de Galeana",km:355,..._T(355)},
+  {c:"Ometepec",km:540,..._T(540)},
+  {c:"Tlapa de Comonfort",km:440,..._T(440)},
+  // Oaxaca
+  {c:"Tlacolula",km:498,..._T(498)},
+  {c:"Miahuatlán",km:545,..._T(545)},
+  // Chiapas
+  {c:"Arriaga",km:1040,..._T(1040)},
+  {c:"Ocosingo",km:1100,..._T(1100)},
+  {c:"Cintalapa",km:1055,..._T(1055)},
+  // Tabasco
+  {c:"Tenosique",km:1020,..._T(1020)},
+  // Nayarit
+  {c:"Santiago Ixcuintla",km:825,..._T(825)},
+  {c:"Ixtlán del Río",km:730,..._T(730)},
+  // Quintana Roo
+  {c:"Felipe Carrillo Puerto",km:1620,..._T(1620)},
+  // Baja California Sur (corredor completo)
+  {c:"Guerrero Negro",km:3310,..._T(3310)},
+  {c:"Santa Rosalía",km:3500,..._T(3500)},
+  {c:"Mulegé",km:3600,..._T(3600)},
+  {c:"Ciudad Constitución",km:3880,..._T(3880)},
 ];
+
+/* ── Mapa ciudad → estado (para filtro por estado en cotizador) ── */
+const CIUDAD_ESTADO = {
+  // CDMX y Edo. México
+  "Ciudad de México":"CDMX","Estado de México":"Edo. México","Naucalpan":"Edo. México",
+  "Tlalnepantla":"Edo. México","Atizapán de Zaragoza":"Edo. México","Cuautitlán Izcalli":"Edo. México",
+  "Cuautitlán":"Edo. México","Tultitlán":"Edo. México","Coacalco":"Edo. México",
+  "Ecatepec":"Edo. México","Nezahualcóyotl":"Edo. México","Chimalhuacán":"Edo. México",
+  "Los Reyes La Paz":"Edo. México","Ixtapaluca":"Edo. México","Chalco":"Edo. México",
+  "Valle de Chalco":"Edo. México","Texcoco":"Edo. México","Nicolás Romero":"Edo. México",
+  "Tepotzotlán":"Edo. México","Huehuetoca":"Edo. México","Zumpango":"Edo. México",
+  "Tecámac":"Edo. México","Lerma":"Edo. México","Metepec":"Edo. México",
+  "Atlacomulco":"Edo. México","Tenancingo":"Edo. México","Valle de Bravo":"Edo. México",
+  "Ixtlahuaca":"Edo. México","Tejupilco":"Edo. México","Toluca":"Edo. México",
+  // Guerrero
+  "Acapulco":"Guerrero","Chilpancingo":"Guerrero","Iguala":"Guerrero","Taxco":"Guerrero",
+  "Zihuatanejo":"Guerrero","Ixtapa":"Guerrero","Cuajinicuilapa":"Guerrero",
+  "Tecpán de Galeana":"Guerrero","Ometepec":"Guerrero","Tlapa de Comonfort":"Guerrero",
+  // Aguascalientes
+  "Aguascalientes":"Aguascalientes","Jesús María":"Aguascalientes","Calvillo":"Aguascalientes","Rincón de Romos":"Aguascalientes",
+  // Campeche
+  "Campeche":"Campeche","Ciudad del Carmen":"Campeche","Champotón":"Campeche","Escárcega":"Campeche",
+  // Chiapas
+  "Chiapas":"Chiapas","Tapachula":"Chiapas","Tuxtla Gutiérrez":"Chiapas","San Cristóbal de las Casas":"Chiapas",
+  "Comitán":"Chiapas","Palenque":"Chiapas","Tonalá":"Chiapas","Arriaga":"Chiapas",
+  "Ocosingo":"Chiapas","Cintalapa":"Chiapas",
+  // Chihuahua
+  "Chihuahua":"Chihuahua","Cd. Juárez":"Chihuahua","Cuauhtémoc":"Chihuahua","Delicias":"Chihuahua",
+  "Parral":"Chihuahua","Camargo":"Chihuahua","Nuevo Casas Grandes":"Chihuahua","Jiménez Chih.":"Chihuahua",
+  // Coahuila
+  "Saltillo":"Coahuila","Torreón":"Coahuila","Monclova":"Coahuila","Piedras Negras":"Coahuila",
+  "Nueva Rosita":"Coahuila","Sabinas":"Coahuila","Acuña":"Coahuila","Frontera":"Coahuila",
+  "Parras":"Coahuila","Ramos Arizpe":"Coahuila",
+  // Colima
+  "Colima":"Colima","Manzanillo":"Colima","Tecomán":"Colima",
+  // Durango
+  "Durango":"Durango","Gómez Palacio":"Durango","Santiago Papasquiaro":"Durango","El Salto":"Durango","Lerdo":"Durango",
+  // Guanajuato
+  "León":"Guanajuato","Celaya":"Guanajuato","Irapuato":"Guanajuato","San Miguel de Allende":"Guanajuato",
+  "Dolores Hidalgo":"Guanajuato","Guanajuato (capital)":"Guanajuato","Salamanca":"Guanajuato",
+  "Pénjamo":"Guanajuato","Acámbaro":"Guanajuato","Lagos de Moreno":"Jalisco","Silao":"Guanajuato",
+  "San Francisco del Rincón":"Guanajuato","Villagrán":"Guanajuato",
+  // Hidalgo
+  "Pachuca":"Hidalgo","Tula":"Hidalgo","Tulancingo":"Hidalgo","Actopan":"Hidalgo","Huejutla":"Hidalgo",
+  "Tizayuca":"Hidalgo","Tepeji del Río":"Hidalgo","Ixmiquilpan":"Hidalgo",
+  // Jalisco
+  "Guadalajara":"Jalisco","Puerto Vallarta":"Jalisco","Zapopan":"Jalisco","Tlaquepaque":"Jalisco",
+  "Tonalá Jal.":"Jalisco","Chapala":"Jalisco","Tepatitlán":"Jalisco","Ocotlán":"Jalisco",
+  "Ciudad Guzmán":"Jalisco","Tequila":"Jalisco","Ameca":"Jalisco","Autlán":"Jalisco",
+  "San Juan de los Lagos":"Jalisco",
+  // Michoacán
+  "Morelia":"Michoacán","Zamora":"Michoacán","Uruapan":"Michoacán","Pátzcuaro":"Michoacán",
+  "Lázaro Cárdenas":"Michoacán","Apatzingán":"Michoacán","Sahuayo":"Michoacán","Zitácuaro":"Michoacán",
+  "La Piedad":"Michoacán","Jiquilpan":"Michoacán","Los Reyes Mich.":"Michoacán","Tacámbaro":"Michoacán",
+  // Morelos
+  "Cuernavaca":"Morelos","Cuautla":"Morelos","Yautepec":"Morelos","Jojutla":"Morelos",
+  "Temixco":"Morelos","Jiutepec":"Morelos","Zacatepec":"Morelos",
+  // Nayarit
+  "Tepic":"Nayarit","Bahía de Banderas":"Nayarit","Compostela":"Nayarit","Acaponeta":"Nayarit",
+  "Santiago Ixcuintla":"Nayarit","Ixtlán del Río":"Nayarit",
+  // Nuevo León
+  "Monterrey":"Nuevo León","San Pedro Garza García":"Nuevo León","San Nicolás":"Nuevo León",
+  "Guadalupe NL":"Nuevo León","Apodaca":"Nuevo León","Santa Catarina":"Nuevo León",
+  "Linares":"Nuevo León","Sabinas Hidalgo":"Nuevo León","Cadereyta NL":"Nuevo León",
+  "General Escobedo":"Nuevo León","García NL":"Nuevo León","Juárez NL":"Nuevo León",
+  // Oaxaca
+  "Oaxaca":"Oaxaca","Tehuantepec":"Oaxaca","Salina Cruz":"Oaxaca","Pinotepa Nacional":"Oaxaca",
+  "Huatulco":"Oaxaca","Puerto Escondido":"Oaxaca","Juchitán":"Oaxaca","Tlacolula":"Oaxaca","Miahuatlán":"Oaxaca",
+  // Puebla
+  "Puebla":"Puebla","Cholula":"Puebla","Atlixco":"Puebla","Tehuacán":"Puebla","Teziutlán":"Puebla",
+  "Huejotzingo":"Puebla","Apizaco":"Tlaxcala","San Martín Texmelucan":"Puebla",
+  "Izúcar de Matamoros":"Puebla","Acatzingo":"Puebla","Tecamachalco":"Puebla",
+  // Querétaro
+  "Querétaro":"Querétaro","San Juan del Río":"Querétaro","El Marqués":"Querétaro",
+  "Corregidora":"Querétaro","Tequisquiapan":"Querétaro","San Juan del Río Oeste":"Querétaro",
+  // Quintana Roo
+  "Cancún":"Quintana Roo","Chetumal":"Quintana Roo","Cozumel":"Quintana Roo",
+  "Playa del Carmen":"Quintana Roo","Tulum":"Quintana Roo","Bacalar":"Quintana Roo",
+  "Mahahual":"Quintana Roo","Holbox":"Quintana Roo","Isla Mujeres":"Quintana Roo",
+  "Felipe Carrillo Puerto":"Quintana Roo",
+  // San Luis Potosí
+  "San Luis Potosí":"San Luis Potosí","Ciudad Valles":"San Luis Potosí","Matehuala":"San Luis Potosí",
+  "Río Verde":"San Luis Potosí","Soledad de Graciano":"San Luis Potosí","Tamazunchale":"San Luis Potosí",
+  // Sinaloa
+  "Culiacán":"Sinaloa","Los Mochis":"Sinaloa","Mazatlán":"Sinaloa","Guasave":"Sinaloa",
+  "Escuinapa":"Sinaloa","El Rosario":"Sinaloa","Guamúchil":"Sinaloa",
+  // Sonora
+  "Hermosillo":"Sonora","Cd. Obregón":"Sonora","Navojoa":"Sonora","Guaymas":"Sonora",
+  "Empalme":"Sonora","Nogales":"Sonora","Agua Prieta":"Sonora","Caborca":"Sonora",
+  "San Luis Río Colorado":"Sonora","Puerto Peñasco":"Sonora","Cananea":"Sonora",
+  // Tabasco
+  "Villahermosa":"Tabasco","Cárdenas":"Tabasco","Comalcalco":"Tabasco",
+  "Macuspana":"Tabasco","Paraíso":"Tabasco","Tenosique":"Tabasco",
+  // Tamaulipas
+  "Reynosa":"Tamaulipas","Matamoros":"Tamaulipas","Cd. Victoria":"Tamaulipas",
+  "Nuevo Laredo":"Tamaulipas","Tampico":"Tamaulipas","Altamira":"Tamaulipas",
+  "Río Bravo":"Tamaulipas","Mante":"Tamaulipas","Madero":"Tamaulipas",
+  "Soto la Marina":"Tamaulipas","Laredo":"Tamaulipas",
+  // Tlaxcala
+  "Tlaxcala":"Tlaxcala","Apetatitlán":"Tlaxcala","Calpulalpan":"Tlaxcala",
+  "Huamantla":"Tlaxcala","Chiautempan":"Tlaxcala",
+  // Veracruz
+  "Veracruz":"Veracruz","Coatzacoalcos":"Veracruz","Poza Rica":"Veracruz",
+  "Jalapa/Xalapa":"Veracruz","Orizaba":"Veracruz","Río Blanco":"Veracruz",
+  "Minatitlán":"Veracruz","Tuxpan":"Veracruz","Córdoba":"Veracruz","Cardel":"Veracruz",
+  "Catemaco":"Veracruz","Tuxtepec":"Veracruz","Coatepec":"Veracruz",
+  "Papantla":"Veracruz","Martínez de la Torre":"Veracruz","Alvarado":"Veracruz","Tierra Blanca":"Veracruz",
+  // Yucatán
+  "Mérida":"Yucatán","Progreso":"Yucatán","Valladolid":"Yucatán","Tizimín":"Yucatán","Umán":"Yucatán",
+  // Zacatecas
+  "Zacatecas":"Zacatecas","Fresnillo":"Zacatecas","Jerez":"Zacatecas","Sombrerete":"Zacatecas",
+  // Baja California
+  "Tijuana":"Baja California","Mexicali":"Baja California","Ensenada":"Baja California",
+  "Rosarito":"Baja California","Tecate":"Baja California","San Felipe":"Baja California",
+  // Baja California Sur
+  "La Paz BCS":"Baja California Sur","Cabo San Lucas":"Baja California Sur",
+  "San José del Cabo":"Baja California Sur","Loreto":"Baja California Sur",
+  "Guerrero Negro":"Baja California Sur","Santa Rosalía":"Baja California Sur",
+  "Mulegé":"Baja California Sur","Ciudad Constitución":"Baja California Sur",
+  // Michoacán extra
+  "Orizaba":"Veracruz",
+};
+const ESTADOS_LIST = ["(Todos)",...[...new Set(Object.values(CIUDAD_ESTADO))].sort()];
 
 const VEHK = [
   {k:"eur",label:"Eurovan 1T",    cap:"8 m³", crew:1,icon:"🚐"},
@@ -1921,6 +2193,51 @@ function downloadTodasSolicitudesXLSX(facts, mesLabel){
   if(skipped.length>0) console.warn("Facturas sin cliente identificado (omitidas):",skipped);
 }
 
+/* ── Exportar cotización del Cotizador a Excel ── */
+function exportCotizadorXLSX({modo,cliente,notas,ciudades,veh,total,vehLabel,fecha}){
+  const wb = XLSX.utils.book_new();
+  const ws = {};
+  const s=(v,opts={})=>({v,...opts});
+  const H={font:{bold:true,color:{rgb:"FFFFFF"}},fill:{fgColor:{rgb:"D97706"}},alignment:{horizontal:"center",vertical:"center",wrapText:true},border:{bottom:{style:"thin",color:{rgb:"CCCCCC"}}}};
+  const SUB={font:{bold:true},fill:{fgColor:{rgb:"FFF7ED"}},alignment:{horizontal:"center"}};
+  const DAT={alignment:{horizontal:"left"},font:{name:"Calibri",sz:10}};
+  const MON={numFmt:"#,##0.00",font:{name:"Calibri",sz:10,bold:true,color:{rgb:"16A34A"}},alignment:{horizontal:"right"}};
+  ws["A1"]={...s("DMOV COTIZACIÓN"),s:{font:{bold:true,sz:14,color:{rgb:"D97706"}}}};
+  ws["A2"]={...s("Fecha: "+fecha),s:DAT};
+  ws["A3"]={...s("Cliente: "+(cliente||"–")),s:DAT};
+  ws["A4"]={...s("Modo: "+(modo==="foraneo"?"FORÁNEO":modo==="masivo"?"DISTRIBUCIÓN MASIVA":"LOCAL")),s:DAT};
+  ws["A5"]={...s("Notas: "+(notas||"–")),s:DAT};
+  ws["A7"]={...s("Ciudad"),s:{...H}};
+  ws["B7"]={...s("Estado"),s:{...H}};
+  ws["C7"]={...s("Km"),s:{...H}};
+  ws["D7"]={...s("Días tránsito"),s:{...H}};
+  ws["E7"]={...s("PDVs"),s:{...H}};
+  ws["F7"]={...s("Tarifa ("+vehLabel+")"),s:{...H}};
+  ws["G7"]={...s("$/km"),s:{...H}};
+  let row=8;
+  for(const c of (ciudades||[])){
+    const dias=c.km?Math.max(1,Math.ceil(c.km/550)):0;
+    const tarifa=c[veh]||c.tarifa||0;
+    const pxkm=c.km>0?Math.round(tarifa/c.km):0;
+    ws["A"+row]={...s(c.c),s:DAT};
+    ws["B"+row]={...s(CIUDAD_ESTADO[c.c]||"–"),s:DAT};
+    ws["C"+row]={...s(c.km||0),s:{numFmt:"#,##0",alignment:{horizontal:"center"}}};
+    ws["D"+row]={...s(dias+" día"+(dias>1?"s":"")),s:{alignment:{horizontal:"center"}}};
+    ws["E"+row]={...s(c.pdv||0),s:{numFmt:"#,##0",alignment:{horizontal:"center"}}};
+    ws["F"+row]={...s(tarifa),s:{numFmt:"$#,##0.00",alignment:{horizontal:"right"},font:{bold:true}}};
+    ws["G"+row]={...s(pxkm),s:{numFmt:"$#,##0",alignment:{horizontal:"right"},font:{color:{rgb:"7C3AED"}}}};
+    row++;
+  }
+  row++;
+  ws["E"+row]={...s("TOTAL"),s:{font:{bold:true}}};
+  ws["F"+row]={...s(total),s:{numFmt:"$#,##0.00",font:{bold:true,color:{rgb:"D97706"}},fill:{fgColor:{rgb:"FFF7ED"}}}};
+  ws["!ref"]="A1:G"+row;
+  ws["!cols"]=[{wch:22},{wch:16},{wch:8},{wch:12},{wch:8},{wch:16},{wch:10}];
+  ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:6}}];
+  XLSX.utils.book_append_sheet(wb,ws,"Cotización DMOV");
+  XLSX.writeFile(wb,`Cotizacion_DMOV_${(cliente||"sin-cliente").replace(/\s+/g,"-")}_${fecha}.xlsx`);
+}
+
 // ═══════ REPORTE EJECUTIVO DE FACTURACIÓN — FORMATO OFICINA (Botmate-style) ═══════
 // Reemplaza el export anterior con el formato exacto que pide la oficina:
 // 3 hojas con formato profesional, colores, merges, subtotales por mes, chips de status.
@@ -2465,41 +2782,49 @@ const CITY_ALIASES = {
   "Jalapa/Xalapa":["xalapa","jalapa","veracruz jalapa"],
   "Tuxtla":["tuxtla gutierrez","tuxtla gtz"],
 };
-function CitySearch({value,onChange,onSelect,veh,exclude=[]}){
+function CitySearch({value,onChange,onSelect,veh,exclude=[],estadoFilter="(Todos)"}){
   const [open,setOpen]=useState(false);
   const q = normTxt(value);
-  // Cities that match the query (without exclude filter) — acentos insensibles + aliases
   const allMatches = TAR.filter(t=>{
+    if(estadoFilter&&estadoFilter!=="(Todos)"&&CIUDAD_ESTADO[t.c]!==estadoFilter) return false;
+    if(!q&&estadoFilter&&estadoFilter!=="(Todos)") return true; // show all of state when typing
     if(!q) return false;
     if(normTxt(t.c).includes(q)) return true;
     const aliases = CITY_ALIASES[t.c]||[];
     return aliases.some(a=>normTxt(a).includes(q));
   });
   const filt = allMatches.filter(t=>!exclude.includes(t.c));
-  // Cities that match but are excluded (shown with greyed-out state + hint)
   const excludedMatches = allMatches.filter(t=>exclude.includes(t.c));
-  const showDropdown = open && value && (filt.length>0 || excludedMatches.length>0);
+  const showDropdown = open && (value||estadoFilter!=="(Todos)") && (filt.length>0 || excludedMatches.length>0);
   return(
     <div style={{position:"relative"}}>
       <div style={{position:"relative"}}>
         <Search size={13} color={MUTED} style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",pointerEvents:"none"}}/>
         <input value={value} onChange={e=>{onChange(e.target.value);setOpen(true);}} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),200)}
-          placeholder={"Busca entre "+TAR.length+" destinos (CDMX, Monterrey, Guadalajara…)"}
+          placeholder={estadoFilter!=="(Todos)"?`Busca en ${estadoFilter}...`:"Busca entre "+TAR.length+" destinos (CDMX, Monterrey, Guadalajara…)"}
           style={{width:"100%",paddingLeft:32,paddingRight:12,paddingTop:10,paddingBottom:10,background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,fontSize:14}}/>
       </div>
       {showDropdown&&(
-        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:260,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
-          {filt.slice(0,12).map(t=>(
+        <div style={{position:"absolute",top:"calc(100% + 5px)",left:0,right:0,background:"#fff",border:"1.5px solid "+BD2,borderRadius:13,zIndex:300,maxHeight:280,overflowY:"auto",boxShadow:"0 16px 50px rgba(0,0,0,.14)"}}>
+          {filt.slice(0,14).map(t=>{
+            const pxkm = t.km>0&&veh&&t[veh]?Math.round(t[veh]/t.km):null;
+            const dias = Math.max(1,Math.ceil(t.km/KM_DIA));
+            return(
             <button key={t.c} onMouseDown={()=>{onSelect(t);setOpen(false);onChange("");}} className="btn fr"
               style={{width:"100%",display:"flex",alignItems:"center",gap:11,padding:"9px 14px",borderBottom:"1px solid "+BORDER,background:"transparent",cursor:"pointer"}}>
               <MapPin size={11} color={A}/>
               <div style={{flex:1,textAlign:"left"}}>
-                <div style={{fontWeight:600,fontSize:13}}>{t.c}</div>
-                <div style={{fontFamily:MONO,fontSize:10,color:MUTED}}>{t.km.toLocaleString()} km · {Math.ceil(t.km/KM_DIA)} día(s)</div>
+                <div style={{fontWeight:600,fontSize:13}}>{t.c}{CIUDAD_ESTADO[t.c]&&<span style={{fontSize:9,color:MUTED,fontWeight:500,marginLeft:5}}>{CIUDAD_ESTADO[t.c]}</span>}</div>
+                <div style={{fontFamily:MONO,fontSize:10,color:MUTED,display:"flex",gap:8}}>
+                  <span>{t.km.toLocaleString()} km</span>
+                  <span style={{color:dias<=1?"#16a34a":dias<=2?"#d97706":"#dc2626",fontWeight:600}}>⏱ {dias} día{dias>1?"s":""}</span>
+                  {pxkm&&<span style={{color:VIOLET}}>≈${pxkm}/km</span>}
+                </div>
               </div>
               {veh&&<span style={{fontFamily:MONO,fontSize:12,color:A,fontWeight:700}}>{fmt(t[veh])}</span>}
             </button>
-          ))}
+          );
+          })}
           {excludedMatches.length>0&&<div style={{padding:"10px 14px",background:AMBER+"08",borderTop:filt.length>0?"1px solid "+AMBER+"30":"none"}}>
             <div style={{fontSize:10,fontWeight:700,color:AMBER,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>⚠ Ya agregada en esta lista</div>
             {excludedMatches.slice(0,3).map(t=>(
@@ -2528,7 +2853,7 @@ function SkeletonRows({n=5}){
   return <div style={{display:"flex",flexDirection:"column",gap:10,padding:16}}>{Array.from({length:n}).map((_,i)=><div key={i} style={{display:"flex",gap:12,alignItems:"center"}}><Skeleton w={40} h={40} r={10}/><div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}><Skeleton h={12} w="60%"/><Skeleton h={10} w="40%"/></div><Skeleton w={80} h={14}/></div>)}</div>;
 }
 function TopBar({view,setView,sidebarOpen,setSidebarOpen,setSearchOpen}){
-  const nav=NAV_SECTIONS.flatMap(s=>s.items);
+  const nav=getNavSections("admin").flatMap(s=>s.items);
   const cur=nav.find(n=>n.id===view)||{label:"Dashboard",icon:LayoutDashboard};
   const Icon=cur.icon;
   return(
@@ -2960,34 +3285,44 @@ function MiniBar({pct,color=A,h=4}){
   return <div style={{background:BORDER,borderRadius:4,height:h,overflow:"hidden"}}><div style={{background:color,width:Math.min(100,pct)+"%",height:"100%",borderRadius:4,transition:"width .4s"}}/></div>;
 }
 /* ─── SIDEBAR ────────────────────────────────────────────────────────────── */
-const NAV_SECTIONS=[
-  {section:"CORE",items:[
-    {id:"dashboard",    label:"Dashboard",     icon:LayoutDashboard},
-    {id:"cotizador",    label:"Cotizador Pro", icon:DollarSign, badge:"★"},
-    {id:"presupuestos", label:"Presupuestos",  icon:ClipboardList},
-    {id:"prospeccion",  label:"Prospección",   icon:Target, badge:"NEW"},
-  ]},
-  {section:"OPERACIONES",items:[
-    {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
-    {id:"rutas",    label:"Planificador Rutas",    icon:Map},
-    {id:"choferes", label:"Choferes",              icon:Users},
-    {id:"nacional", label:"Proyectos Nacionales",  icon:Target},
-    {id:"entregas", label:"Entregas",              icon:Package},
-  ]},
-  {section:"ADMINISTRACIÓN",items:[
-    {id:"facturas",    label:"Facturación",       icon:FileText},
-    {id:"viaticos",    label:"Viáticos & Gastos", icon:Zap},
-    {id:"gastosAdmin", label:"Gastos Choferes",   icon:DollarSign, badge:"NEW"},
-    {id:"jornadas",    label:"Jornadas & Horas",  icon:Clock, badge:"NEW"},
-    {id:"chat",        label:"Chat interno",      icon:Send, badge:"NEW"},
-    {id:"alertas",     label:"Centro de Alertas", icon:Bell, badge:"NEW"},
-    {id:"clientes",    label:"Clientes",          icon:Building2},
-  ]},
-];
-function Sidebar({view,setView,stats,open,setOpen}){
+function getNavSections(rol){
+  const isAdmin = rol==="admin";
+  const all=[
+    {section:"CORE",items:[
+      {id:"dashboard",    label:"Dashboard",         icon:LayoutDashboard},
+      {id:"cotizador",    label:"Cotizador Pro",     icon:DollarSign, badge:"★",  adminOnly:true},
+      {id:"presupuestos", label:"Presupuestos",      icon:ClipboardList,           adminOnly:true},
+      {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
+    ]},
+    {section:"OPERACIONES",items:[
+      {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
+      {id:"rutas",    label:"Planificador Rutas",    icon:Map},
+      {id:"choferes", label:"Choferes",              icon:Users},
+      {id:"nacional", label:"Proyectos Nacionales",  icon:Target, adminOnly:true},
+      {id:"entregas", label:"Entregas",              icon:Package},
+    ]},
+    {section:"ADMINISTRACIÓN",items:[
+      {id:"facturas",    label:isAdmin?"Facturación":"Registrar Servicio", icon:FileText},
+      {id:"reportes",    label:"Reportes & KPIs",   icon:BarChart2, adminOnly:true, badge:"NEW"},
+      {id:"viaticos",    label:"Viáticos & Gastos", icon:Zap,       adminOnly:true},
+      {id:"gastosAdmin", label:"Gastos Choferes",   icon:DollarSign, badge:"NEW"},
+      {id:"jornadas",    label:"Jornadas & Horas",  icon:Clock,      badge:"NEW"},
+      {id:"chat",        label:"Chat interno",      icon:Send,       badge:"NEW"},
+      {id:"alertas",     label:"Centro de Alertas", icon:Bell,       badge:"NEW"},
+      {id:"clientes",    label:"Clientes",          icon:Building2,  adminOnly:true},
+      {id:"usuarios",    label:"Usuarios & Roles",  icon:Shield,     adminOnly:true},
+    ]},
+  ];
+  return all.map(s=>({
+    ...s,
+    items:s.items.filter(item=>isAdmin||!item.adminOnly)
+  })).filter(s=>s.items.length>0);
+}
+function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout}){
   const isMobile = typeof window!=="undefined"&&window.innerWidth<768;
   const w = isMobile?260:(open?220:64);
   const showFull = open||isMobile;
+  const handleLogout=()=>{if(confirm("¿Cambiar de perfil?"))onLogout();};
   return(
     <aside className={"noprint sidebar-desktop"+(open?" open":"")} style={{width:w,flexShrink:0,background:"#0a1628",display:"flex",flexDirection:"column",minHeight:"100vh",padding:"0 "+(showFull?"10px":"6px")+" 16px",transition:"width .22s cubic-bezier(.22,1,.36,1),padding .22s",overflow:"hidden",paddingTop:"env(safe-area-inset-top,0)"}}>
       <div style={{padding:showFull?"20px 6px 14px":"20px 0 14px",borderBottom:"1px solid #ffffff14",marginBottom:6,display:"flex",alignItems:"center",gap:10,justifyContent:showFull?"flex-start":"center"}}>
@@ -2997,7 +3332,7 @@ function Sidebar({view,setView,stats,open,setOpen}){
       </div>
       {showFull&&<button onClick={()=>!isMobile&&setOpen(false)} className="btn" style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:"1px solid #ffffff14",marginBottom:10,color:"#ffffff60",fontSize:11,whiteSpace:"nowrap"}}><Search size={12}/><span style={{flex:1,textAlign:"left"}}>Buscar… ⌘K</span></button>}
       <nav style={{flex:1,overflowY:"auto"}}>
-        {NAV_SECTIONS.map(({section,items})=>(
+        {getNavSections(rol||"admin").map(({section,items})=>(
           <div key={section} style={{marginBottom:8}}>
             {showFull&&<div style={{fontSize:9,fontWeight:800,color:"#ffffff30",letterSpacing:"0.12em",padding:"6px 10px 4px",textTransform:"uppercase",whiteSpace:"nowrap"}}>{section}</div>}
             {items.map(({id,label,icon:Icon,badge})=>{
@@ -3016,6 +3351,26 @@ function Sidebar({view,setView,stats,open,setOpen}){
         ))}
       </nav>
       <div style={{borderTop:"1px solid #ffffff14",paddingTop:10,marginTop:4}}>
+        {/* Perfil activo */}
+        {userProfile&&showFull&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 6px",borderRadius:10,background:"rgba(255,255,255,.05)",marginBottom:8}}>
+            <div style={{width:28,height:28,borderRadius:"50%",background:userProfile.rol==="admin"?A:BLUE,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",flexShrink:0}}>
+              {(userProfile.nombre||userProfile.email||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase()}
+            </div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#fff",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{userProfile.nombre||(userProfile.email||"").split("@")[0]}</div>
+              <div style={{fontSize:9,color:"#ffffff50",textTransform:"uppercase",letterSpacing:"0.06em",fontWeight:600}}>{userProfile.rol}</div>
+            </div>
+            <button onClick={handleLogout} title="Cambiar perfil" className="btn" style={{width:24,height:24,borderRadius:6,background:"rgba(255,255,255,.08)",display:"flex",alignItems:"center",justifyContent:"center",color:"#ffffff60",flexShrink:0}}><LogOut size={12}/></button>
+          </div>
+        )}
+        {userProfile&&!showFull&&(
+          <div style={{display:"flex",justifyContent:"center",marginBottom:8}}>
+            <div onClick={handleLogout} title="Cambiar perfil" style={{width:28,height:28,borderRadius:"50%",background:userProfile.rol==="admin"?A:BLUE,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:"#fff",cursor:"pointer"}}>
+              {(userProfile.nombre||userProfile.email||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase()}
+            </div>
+          </div>
+        )}
         {showFull?<div style={{display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
           {[["",GREEN,"En línea",stats.fb],[stats.cot+"","#fff","cots",null],[stats.fac+"","#fff","facts",null]].map(([ic,c,l,blink])=>(
             <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
@@ -3033,7 +3388,8 @@ function Sidebar({view,setView,stats,open,setOpen}){
   );
 }
 /* ─── DASHBOARD ──────────────────────────────────────────────────────────── */
-function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospectos=[]}){
+function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospectos=[],choferes=[],rol="admin"}){
+  const isAdmin=rol==="admin";
   // KPIs operativos adicionales (gastos choferes, jornadas activas, SOS)
   const [gastosChofer,setGastosChofer]=useState([]);
   const [jornadas,setJornadas]=useState([]);
@@ -3094,14 +3450,22 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
     return all.sort((a,b)=>b.t-a.t).slice(0,10);
   },[cots,facts,rutas,entregas]);
   const quickActions=[
-    {icon:DollarSign,label:"Nueva cotización",color:A,v:"cotizador"},
-    {icon:ClipboardList,label:"Nuevo presupuesto",color:VIOLET,v:"presupuestos"},
+    ...(isAdmin?[
+      {icon:DollarSign,label:"Nueva cotización",color:A,v:"cotizador"},
+      {icon:ClipboardList,label:"Nuevo presupuesto",color:VIOLET,v:"presupuestos"},
+    ]:[]),
     {icon:Map,label:"Planificar ruta",color:BLUE,v:"rutas"},
-    {icon:FileText,label:"Registrar factura",color:GREEN,v:"facturas"},
+    {icon:FileText,label:isAdmin?"Registrar factura":"Registrar servicio",color:GREEN,v:"facturas"},
   ];
 
   return(
     <div className="slide-in" style={{flex:1,overflowY:"auto",padding:"24px 28px",background:"#f1f4fb"}}>
+      {!isAdmin&&(
+        <div style={{background:"linear-gradient(135deg,"+BLUE+"18,"+BLUE+"08)",border:"1.5px solid "+BLUE+"30",borderRadius:12,padding:"12px 18px",marginBottom:18,display:"flex",alignItems:"center",gap:10}}>
+          <Shield size={16} color={BLUE}/>
+          <span style={{fontSize:13,fontWeight:600,color:BLUE}}>Vista operaciones — KPIs financieros disponibles solo para el admin</span>
+        </div>
+      )}
       <div className="au" style={{marginBottom:20}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
           <div>
@@ -3117,18 +3481,29 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
         </div>
       </div>
 
-      <div className="g4 au2" style={{marginBottom:16}}>
-        <KpiCard icon={DollarSign} color={A} label="Cotizaciones" value={cots.length} sub="total generadas" onClick={()=>setView("cotizador")}/>
-        <KpiCard icon={TrendingUp} color={GREEN} label="Facturado total" value={fmtK(totalFac)} sub={pctCob+"% cobrado"} onClick={()=>setView("facturas")}/>
-        <KpiCard icon={Clock} color={AMBER} label="Por cobrar" value={fmtK(pendiente)} sub={facts.filter(f=>f.status==="Pendiente").length+" facturas"} onClick={()=>setView("facturas")}/>
-        <KpiCard icon={Zap} color={ROSE} label="Gastos operativos" value={fmtK(totalGastos)} sub={viat.length+" registros"} onClick={()=>setView("viaticos")}/>
-      </div>
-      <div className="g4" style={{marginBottom:16}}>
-        <KpiCard icon={Package} color={BLUE} label="Entregas completadas" value={entregados+"/"+entregas.length} sub={pctEnt+"% completado"} onClick={()=>setView("entregas")}/>
-        <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutasActivas} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
-        <KpiCard icon={TrendingUp} color={margen>=0?GREEN:ROSE} label="Margen neto" value={fmtK(margen)} sub="cobrado - gastos"/>
-        <KpiCard icon={Building2} color={BLUE} label="Clientes activos" value={clientes.length} sub="en la base" onClick={()=>setView("clientes")}/>
-      </div>
+      {isAdmin&&(
+        <div className="g4 au2" style={{marginBottom:16}}>
+          <KpiCard icon={DollarSign} color={A} label="Cotizaciones" value={cots.length} sub="total generadas" onClick={()=>setView("cotizador")}/>
+          <KpiCard icon={TrendingUp} color={GREEN} label="Facturado total" value={fmtK(totalFac)} sub={pctCob+"% cobrado"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={Clock} color={AMBER} label="Por cobrar" value={fmtK(pendiente)} sub={facts.filter(f=>f.status==="Pendiente").length+" facturas"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={Zap} color={ROSE} label="Gastos operativos" value={fmtK(totalGastos)} sub={viat.length+" registros"} onClick={()=>setView("viaticos")}/>
+        </div>
+      )}
+      {isAdmin?(
+        <div className="g4" style={{marginBottom:16}}>
+          <KpiCard icon={Package} color={BLUE} label="Entregas completadas" value={entregados+"/"+entregas.length} sub={pctEnt+"% completado"} onClick={()=>setView("entregas")}/>
+          <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutasActivas} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
+          <KpiCard icon={TrendingUp} color={margen>=0?GREEN:ROSE} label="Margen neto" value={fmtK(margen)} sub="cobrado - gastos"/>
+          <KpiCard icon={Building2} color={BLUE} label="Clientes activos" value={clientes.length} sub="en la base" onClick={()=>setView("clientes")}/>
+        </div>
+      ):(
+        <div className="g4 au2" style={{marginBottom:16}}>
+          <KpiCard icon={Package} color={BLUE} label="Entregas completadas" value={entregados+"/"+entregas.length} sub={pctEnt+"% completado"} onClick={()=>setView("entregas")}/>
+          <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutasActivas} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
+          <KpiCard icon={Users} color={A} label="Choferes en ruta" value={choferes?choferes.length:0} sub="registrados" onClick={()=>setView("choferes")}/>
+          <KpiCard icon={Clock} color={GREEN} label="Jornadas activas" value={jornadasActivas} sub="en curso ahora" onClick={()=>setView("jornadas")}/>
+        </div>
+      )}
 
       {/* Fila nueva: Operaciones choferes + alertas */}
       <div className="g4" style={{marginBottom:16}}>
@@ -3143,12 +3518,16 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
         </div>
         <KpiCard icon={DollarSign} color={AMBER} label="Gastos chofer pendientes" value={fmtK(gastosPendientes)} sub={gastosChofer.filter(g=>g.estado==="pendiente").length+" reembolsos"} onClick={()=>setView("gastosAdmin")}/>
         <KpiCard icon={Clock} color={GREEN} label="Jornadas activas" value={jornadasActivas} sub={jornadas.filter(j=>{const ts=j.inTs?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).length+" jornadas hoy"} onClick={()=>setView("jornadas")}/>
-        <KpiCard icon={AlertCircle} color={ROSE} label="Cartera vencida" value={fmtK(carteraVencida)} sub={cartera.length+" facturas"} onClick={()=>setView("facturas")}/>
+        {isAdmin
+          ?<KpiCard icon={AlertCircle} color={ROSE} label="Cartera vencida" value={fmtK(carteraVencida)} sub={cartera.length+" facturas"} onClick={()=>setView("facturas")}/>
+          :<KpiCard icon={Package} color={VIOLET} label="Entregas hoy" value={entregas.filter(e=>{const ts=e.createdAt?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).length} sub="registradas hoy" onClick={()=>setView("entregas")}/>
+        }
       </div>
 
       <div className="g2-side" style={{marginBottom:16}}>
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          {/* Chart */}
+          {/* Chart — solo admin */}
+          {isAdmin&&(
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:22}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
               <div>
@@ -3172,6 +3551,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
               ))}
             </div>
           </div>
+          )}
           {/* Pipeline de rutas */}
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"16px 18px"}}>
             <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,marginBottom:12}}>Pipeline de rutas</div>
@@ -3184,7 +3564,8 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
               ))}
             </div>
           </div>
-          {/* Top clientes */}
+          {/* Top clientes — solo admin */}
+          {isAdmin&&(
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"16px 18px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <span style={{fontFamily:DISP,fontWeight:700,fontSize:14}}>Top clientes por facturación</span>
@@ -3202,6 +3583,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
               </div>
             ))}
           </div>
+          )}
         </div>
 
         {/* Right column */}
@@ -3215,7 +3597,8 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
               <ChevronRight size={14} color={MUTED} style={{marginLeft:"auto"}}/>
             </button>
           ))}
-          {/* Financial summary */}
+          {/* Financial summary — visible solo para admin */}
+          {isAdmin&&(
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"14px 16px",marginTop:4}}>
             <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10}}>Resumen financiero</div>
             <RowItem l="Facturado" v={fmtK(totalFac)} c={TEXT}/>
@@ -3225,6 +3608,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
             <RowItem l="Margen neto" v={fmtK(margen)} c={margen>=0?GREEN:ROSE} bold/>
             <div style={{marginTop:8}}><MiniBar pct={pctCob} color={GREEN}/><div style={{fontSize:10,color:MUTED,marginTop:3}}>{pctCob}% cobrado del total facturado</div></div>
           </div>
+          )}
           {/* Activity feed */}
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"14px 16px"}}>
             <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10}}>Actividad reciente</div>
@@ -3370,7 +3754,16 @@ function Cotizador({onSaved}){
   const [plantillas,setPlantillas]=useState([]);
   const [showPlantillas,setShowPlantillas]=useState(false);
   const [showComparador,setShowComparador]=useState(false);
+  const [showHistorial,setShowHistorial]=useState(false);
+  const [showMapaRuta,setShowMapaRuta]=useState(false);
+  const [historial,setHistorial]=useState(()=>{try{return JSON.parse(localStorage.getItem("dmov_cot_hist")||"[]");}catch{return[];}});
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
+
+  // Guardar en historial localStorage (max 8)
+  const saveToHistorial=(data)=>{
+    const entry={...data,savedAt:new Date().toISOString(),id:uid()};
+    setHistorial(prev=>{const next=[entry,...prev].slice(0,8);localStorage.setItem("dmov_cot_hist",JSON.stringify(next));return next;});
+  };
 
   useEffect(()=>onSnapshot(collection(db,"plantillasCotizador"),s=>{
     setPlantillas(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
@@ -3390,6 +3783,7 @@ function Cotizador({onSaved}){
   const [fVeh,setFVeh]=useState("cam");
   const [fCiudades,setFCiudades]=useState([]);
   const [fSearch,setFSearch]=useState("");
+  const [fEstadoFil,setFEstadoFil]=useState("(Todos)");
   const [fUrg,setFUrg]=useState(false);
   const [fMani,setFMani]=useState(false);
   const [fNumAyud,setFNumAyud]=useState(1);
@@ -3408,6 +3802,7 @@ function Cotizador({onSaved}){
   const [mHotel,setMHotel]=useState(HOTEL);
   const [mCiudades,setMCiudades]=useState([]);
   const [mSearch,setMSearch]=useState("");
+  const [mEstadoFil,setMEstadoFil]=useState("(Todos)");
 
   const calcMVans=(pdv,dias,mpd)=>Math.max(1,Math.ceil(pdv/(Math.max(1,mpd)*Math.max(1,dias))));
   const addMCiudad=t=>{
@@ -3620,10 +4015,32 @@ function Cotizador({onSaved}){
             <button onClick={guardarPlantilla} className="btn" style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:11,fontWeight:700,fontSize:12}}>
               <Plus size={12}/>Guardar plantilla
             </button>
-            <button onClick={()=>setShowComparador(!showComparador)} className="btn" style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",background:showComparador?A:"#fff",border:"1.5px solid "+A+"40",color:showComparador?"#fff":A,borderRadius:11,fontWeight:700,fontSize:12}}>
-              <BarChart2 size={12}/>{showComparador?"Ocultar":"Comparar"} vehículos
+            <button onClick={()=>setShowHistorial(v=>!v)} className="btn" style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",background:showHistorial?AMBER+"15":"#fff",border:"1.5px solid "+AMBER+"40",color:AMBER,borderRadius:11,fontWeight:700,fontSize:12}}>
+              <Clock size={12}/>Historial {historial.length>0&&<span style={{background:AMBER,color:"#fff",borderRadius:"50%",width:16,height:16,display:"inline-flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800}}>{historial.length}</span>}
             </button>
           </div>
+          {/* Panel de historial de cotizaciones */}
+          {showHistorial&&(
+            <div style={{background:"#fff",border:"1.5px solid "+AMBER+"30",borderRadius:13,padding:14,marginBottom:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:800,color:AMBER,textTransform:"uppercase",letterSpacing:"0.08em"}}>Últimas cotizaciones</div>
+                {historial.length>0&&<button onClick={()=>{localStorage.removeItem("dmov_cot_hist");setHistorial([]);}} className="btn" style={{fontSize:10,color:ROSE,fontWeight:600}}>Limpiar</button>}
+              </div>
+              {historial.length===0?<div style={{fontSize:12,color:MUTED,fontStyle:"italic"}}>Sin cotizaciones guardadas aún. Usa el botón 📥 Excel en modo foráneo.</div>
+              :(historial.map((h,i)=>(
+                <div key={h.id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",background:AMBER+"06",border:"1px solid "+AMBER+"20",borderRadius:9,marginBottom:6}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:12,color:TEXT}}>{h.cliente||"Sin cliente"} <span style={{fontWeight:400,color:MUTED,fontSize:10}}>· {h.modo==="foraneo"?"Foráneo":h.modo==="masivo"?"Masivo":"Local"}</span></div>
+                    <div style={{fontSize:10,color:MUTED}}>{(h.ciudades||[]).slice(0,3).join(", ")}{(h.ciudades||[]).length>3&&" +más"}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontFamily:MONO,fontWeight:700,color:GREEN,fontSize:12}}>{h.total?fmt(h.total):"–"}</div>
+                    <div style={{fontSize:9,color:MUTED}}>{h.fecha||""}</div>
+                  </div>
+                </div>
+              )))}
+            </div>
+          )}
           <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 13px",background:"#fff8f3",borderRadius:20,border:"1px solid "+A+"22"}}>
             <div style={{width:6,height:6,borderRadius:"50%",background:GREEN,boxShadow:"0 0 6px "+GREEN}}/>
             <span style={{fontSize:10,fontWeight:700,color:A,fontFamily:MONO,letterSpacing:"0.04em"}}>ACTUALIZACIÓN EN VIVO</span>
@@ -3705,15 +4122,67 @@ function Cotizador({onSaved}){
           {/* ══ FORÁNEO ══ */}
           {modo==="foraneo"&&<>
             <S>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <SH>Ciudades de destino *</SH>
-                {fCiudades.length>0&&<Tag color={A}>{fCiudades.length} ciudad(es) · {fmt(fBaseTotal)}</Tag>}
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  {fCiudades.length>0&&<Tag color={A}>{fCiudades.length} ciudad(es) · {fmt(fBaseTotal)}</Tag>}
+                  {fCiudades.length>0&&<button onClick={()=>setShowComparador(v=>!v)} className="btn" style={{fontSize:10,fontWeight:700,color:showComparador?VIOLET:"#fff",background:showComparador?VIOLET+"15":"linear-gradient(135deg,"+VIOLET+","+VIOLET+"cc)",border:"1.5px solid "+VIOLET+(showComparador?"":"00"),borderRadius:8,padding:"4px 9px",cursor:"pointer"}}>⚖️ Comparar</button>}
+                  {fCiudades.length>0&&<button onClick={()=>{const f=new Date().toISOString().slice(0,10);exportCotizadorXLSX({modo,cliente,notas,ciudades:fCiudades,veh:fVeh,total:fTotal,vehLabel:fVD?.label||"",fecha:f});saveToHistorial({modo,cliente,notas,ciudades:fCiudades.map(c=>c.c),veh:fVeh,total:fTotal,fecha:f});showT("✓ Excel descargado");}} className="btn" style={{fontSize:10,fontWeight:700,color:"#fff",background:"linear-gradient(135deg,"+GREEN+","+GREEN+"cc)",border:"none",borderRadius:8,padding:"4px 9px",cursor:"pointer"}}>📥 Excel</button>}
+                </div>
               </div>
-              {fCiudades.map((c,i)=>(
+              {/* Comparador de vehículos */}
+              {showComparador&&fCiudades.length>0&&(
+                <div style={{background:VIOLET+"06",border:"1.5px solid "+VIOLET+"25",borderRadius:12,marginBottom:14,overflow:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead>
+                      <tr style={{background:VIOLET+"12"}}>
+                        <th style={{padding:"7px 10px",textAlign:"left",fontWeight:800,color:VIOLET,fontSize:10}}>Ciudad</th>
+                        <th style={{padding:"7px 8px",textAlign:"center",fontWeight:800,color:MUTED,fontSize:10}}>Km</th>
+                        <th style={{padding:"7px 8px",textAlign:"center",fontWeight:800,color:MUTED,fontSize:10}}>⏱ Días</th>
+                        {VEHK.map(v=><th key={v.k} style={{padding:"7px 8px",textAlign:"right",fontWeight:800,color:v.k===fVeh?VIOLET:MUTED,fontSize:10,background:v.k===fVeh?VIOLET+"18":"transparent"}}>{v.icon} {v.label.split(" ")[0]}</th>)}
+                        <th style={{padding:"7px 8px",textAlign:"right",fontWeight:800,color:MUTED,fontSize:10}}>$/km</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fCiudades.map(c=>{
+                        const dias=Math.max(1,Math.ceil((c.km||0)/KM_DIA));
+                        const pxkm=c.km>0&&c[fVeh]?Math.round(c[fVeh]/c.km):0;
+                        return(
+                        <tr key={c.id} style={{borderTop:"1px solid "+VIOLET+"15"}}>
+                          <td style={{padding:"6px 10px",fontWeight:600}}>{c.c}<br/><span style={{fontSize:9,color:MUTED,fontWeight:400}}>{CIUDAD_ESTADO[c.c]||""}</span></td>
+                          <td style={{padding:"6px 8px",textAlign:"center",fontFamily:MONO,color:MUTED,fontSize:10}}>{(c.km||0).toLocaleString()}</td>
+                          <td style={{padding:"6px 8px",textAlign:"center",fontFamily:MONO,fontSize:10,color:dias<=1?"#16a34a":dias<=2?"#d97706":"#dc2626",fontWeight:700}}>{dias}d</td>
+                          {VEHK.map(v=><td key={v.k} style={{padding:"6px 8px",textAlign:"right",fontFamily:MONO,fontWeight:v.k===fVeh?800:500,color:v.k===fVeh?VIOLET:TEXT,background:v.k===fVeh?VIOLET+"08":"transparent",fontSize:11}}>{fmt(c[v.k]||0)}</td>)}
+                          <td style={{padding:"6px 8px",textAlign:"right",fontFamily:MONO,fontSize:10,color:VIOLET}}>${pxkm.toLocaleString()}</td>
+                        </tr>);
+                      })}
+                      <tr style={{background:VIOLET+"10",borderTop:"2px solid "+VIOLET+"30"}}>
+                        <td colSpan={3} style={{padding:"7px 10px",fontWeight:800,fontSize:11}}>TOTALES</td>
+                        {VEHK.map(v=><td key={v.k} style={{padding:"7px 8px",textAlign:"right",fontFamily:MONO,fontWeight:800,color:v.k===fVeh?VIOLET:MUTED,fontSize:11}}>{fmt(fCiudades.reduce((a,c)=>a+(c[v.k]||0),0))}</td>)}
+                        <td/>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {fCiudades.map((c,i)=>{
+                const dias=Math.max(1,Math.ceil((c.km||0)/KM_DIA));
+                const pxkm=c.km>0&&c[fVeh]?Math.round(c[fVeh]/c.km):0;
+                return(
                 <div key={c.id} style={{background:A+"05",border:"1.5px solid "+A+"20",borderRadius:12,marginBottom:12,overflow:"hidden"}}>
                   <div style={{display:"flex",alignItems:"center",gap:9,padding:"10px 13px",borderBottom:"1px solid "+A+"15"}}>
                     <div style={{width:22,height:22,borderRadius:"50%",background:A,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
-                    <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13}}>{c.c}</div><div style={{fontFamily:MONO,fontSize:10,color:MUTED}}>{c.km.toLocaleString()} km · tarifa: {fmt(c[fVeh]||0)}</div></div>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,fontSize:13}}>{c.c}{CIUDAD_ESTADO[c.c]&&<span style={{fontSize:9,color:MUTED,fontWeight:500,marginLeft:5,background:MUTED+"15",padding:"1px 5px",borderRadius:4}}>{CIUDAD_ESTADO[c.c]}</span>}</div>
+                      <div style={{fontFamily:MONO,fontSize:10,color:MUTED,display:"flex",gap:8,marginTop:2}}>
+                        <span>{(c.km||0).toLocaleString()} km</span>
+                        <span style={{color:dias<=1?"#16a34a":dias<=2?"#d97706":"#dc2626",fontWeight:700}}>⏱ {dias}d tránsito</span>
+                        <span style={{color:VIOLET}}>≈${pxkm}/km</span>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right",marginRight:6}}>
+                      <div style={{fontFamily:MONO,fontWeight:800,fontSize:13,color:A}}>{fmt(c[fVeh]||0)}</div>
+                    </div>
                     <button onClick={()=>setFCiudades(p=>p.filter(x=>x.id!==c.id))} className="btn" style={{width:22,height:22,borderRadius:"50%",border:"1px solid "+ROSE+"28",background:ROSE+"08",display:"flex",alignItems:"center",justifyContent:"center",color:ROSE}}><X size={10}/></button>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:"10px 13px"}}>
@@ -3730,13 +4199,18 @@ function Cotizador({onSaved}){
                   </div>
                   {(c.pdv>0||c.dias>0)&&<div style={{padding:"0 13px 10px",display:"flex",gap:12}}>
                     {c.pdv>0&&c.dias>0&&<span style={{fontSize:10,color:MUTED}}>📦 {Math.ceil(c.pdv/c.dias)} PDVs/día</span>}
-                    <span style={{fontSize:10,color:MUTED}}>⏱️ {c.dias||1} día(s) en {c.c}</span>
+                    <span style={{fontSize:10,color:MUTED}}>⏱️ {c.dias||1} día(s) en destino + {dias} día(s) tránsito</span>
                   </div>}
                 </div>
-              ))}
+              );})}
               <div style={{padding:"10px 12px",background:A+"04",border:"1.5px dashed "+A+"30",borderRadius:10}}>
-                <div style={{fontSize:10,fontWeight:700,color:A,marginBottom:7,letterSpacing:"0.05em"}}>+ AGREGAR CIUDAD</div>
-                <CitySearch value={fSearch} onChange={setFSearch} onSelect={t=>{setFCiudades(p=>[...p,{...t,id:uid(),pdv:0,dias:1}]);setFSearch("");}} veh={fVeh} exclude={fCiudades.map(c=>c.c)}/>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
+                  <span style={{fontSize:10,fontWeight:700,color:A,letterSpacing:"0.05em"}}>+ AGREGAR CIUDAD</span>
+                  <select value={fEstadoFil} onChange={e=>{setFEstadoFil(e.target.value);setFSearch("");}} style={{fontSize:10,fontWeight:600,color:fEstadoFil!=="(Todos)"?VIOLET:MUTED,background:"#fff",border:"1.5px solid "+(fEstadoFil!=="(Todos)"?VIOLET:BD2),borderRadius:7,padding:"3px 7px",cursor:"pointer"}}>
+                    {ESTADOS_LIST.map(e=><option key={e} value={e}>{e}</option>)}
+                  </select>
+                </div>
+                <CitySearch value={fSearch} onChange={setFSearch} onSelect={t=>{setFCiudades(p=>[...p,{...t,id:uid(),pdv:0,dias:1}]);setFSearch("");}} veh={fVeh} exclude={fCiudades.map(c=>c.c)} estadoFilter={fEstadoFil}/>
               </div>
             </S>
             <S><SH>Vehículo</SH>
@@ -3854,8 +4328,13 @@ function Cotizador({onSaved}){
                 </div>
               ))}
               <div style={{padding:"10px 12px",background:A+"04",border:"1.5px dashed "+A+"30",borderRadius:10}}>
-                <div style={{fontSize:10,fontWeight:700,color:A,marginBottom:7,letterSpacing:"0.05em"}}>+ AGREGAR CIUDAD</div>
-                <CitySearch value={mSearch} onChange={setMSearch} onSelect={addMCiudad} veh={mVeh} exclude={mCiudades.map(c=>c.c)}/>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:7}}>
+                  <span style={{fontSize:10,fontWeight:700,color:A,letterSpacing:"0.05em"}}>+ AGREGAR CIUDAD</span>
+                  <select value={mEstadoFil} onChange={e=>{setMEstadoFil(e.target.value);setMSearch("");}} style={{fontSize:10,fontWeight:600,color:mEstadoFil!=="(Todos)"?VIOLET:MUTED,background:"#fff",border:"1.5px solid "+(mEstadoFil!=="(Todos)"?VIOLET:BD2),borderRadius:7,padding:"3px 7px",cursor:"pointer"}}>
+                    {ESTADOS_LIST.map(e=><option key={e} value={e}>{e}</option>)}
+                  </select>
+                </div>
+                <CitySearch value={mSearch} onChange={setMSearch} onSelect={addMCiudad} veh={mVeh} exclude={mCiudades.map(c=>c.c)} estadoFilter={mEstadoFil}/>
               </div>
               {mCiudades.length===0&&<div style={{marginTop:10,fontSize:11,color:MUTED,fontStyle:"italic"}}>💡 Agrega las ciudades donde harás entregas simultáneas</div>}
             </S>
@@ -5681,7 +6160,8 @@ function BitacoraImport({onClose,showT}){
   );
 }
 
-function Facturas(){
+function Facturas({rol="admin"}){
+  const isAdmin=rol==="admin";
   const [items,setItems]=useState([]);const [load,setLoad]=useState(true);
   const [modal,setModal]=useState(false);const [editItem,setEditItem]=useState(null);
   const [showBitacora,setShowBitacora]=useState(false);
@@ -5735,13 +6215,17 @@ function Facturas(){
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
-        <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Facturación & Finanzas</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>Control mensual · PDF descargable · Proyecciones anuales</p></div>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>{isAdmin?"Facturación & Finanzas":"Registrar Servicio"}</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>{isAdmin?"Control mensual · PDF descargable · Proyecciones anuales":"Registro de servicios prestados"}</p>
+          {!isAdmin&&<p style={{color:BLUE,fontSize:12,fontWeight:600,marginTop:4,display:"flex",alignItems:"center",gap:5}}><Shield size={12}/>Los totales son visibles solo para administradores</p>}
+        </div>
         <div style={{display:"flex",gap:8}}>
-          <button onClick={()=>setShowBitacora(true)} className="btn" title="Importar bitácora operativa (Excel) y clasificar automáticamente" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Upload size={13}/>Importar bitácora</button>
-          <button onClick={()=>downloadTodasSolicitudesXLSX(filt,mesF==="todos"?"Todas":mesF+"-"+(new Date().getFullYear()))} className="btn" title="Descargar TODAS las solicitudes de factura del mes en un solo XLSX (una pestaña por factura)" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><FileText size={13}/>Solicitudes (todas)</button>
-          <button onClick={()=>exportFacturasXLSX(filt,mesF==="todos"?null:mesF)} className="btn" title="Exportar facturas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>XLSX Facturas</button>
-          <button onClick={()=>exportFinancierosXLSX(items)} className="btn" title="Exportar financieros completos" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><BarChart2 size={13}/>XLSX Financiero</button>
-          <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo registro</button>
+          {isAdmin&&<button onClick={()=>setShowBitacora(true)} className="btn" title="Importar bitácora operativa (Excel) y clasificar automáticamente" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Upload size={13}/>Importar bitácora</button>}
+          {isAdmin&&<button onClick={()=>downloadTodasSolicitudesXLSX(filt,mesF==="todos"?"Todas":mesF+"-"+(new Date().getFullYear()))} className="btn" title="Descargar TODAS las solicitudes de factura del mes en un solo XLSX (una pestaña por factura)" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><FileText size={13}/>Solicitudes (todas)</button>}
+          {isAdmin&&<button onClick={()=>exportFacturasXLSX(filt,mesF==="todos"?null:mesF)} className="btn" title="Exportar facturas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>XLSX Facturas</button>}
+          {isAdmin&&<button onClick={()=>exportFinancierosXLSX(items)} className="btn" title="Exportar financieros completos" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><BarChart2 size={13}/>XLSX Financiero</button>}
+          <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>{isAdmin?"Nuevo registro":"Nuevo servicio"}</button>
         </div>
       </div>
 
@@ -5758,14 +6242,14 @@ function Facturas(){
         </div>
       )}
       <div className="g4" style={{marginBottom:18}}>
-        <KpiCard icon={BarChart2} color={BLUE} label="Total facturado" value={fmtK(totTotal)} sub={filt.length+" registros"}/>
-        <KpiCard icon={CheckCircle} color={GREEN} label="Cobrado" value={fmtK(cobrado)} sub={totTotal>0?Math.round(cobrado/totTotal*100)+"%":"0%"}/>
-        <KpiCard icon={Clock} color={AMBER} label="Por cobrar" value={fmtK(pendiente)}/>
-        <KpiCard icon={AlertCircle} color={ROSE} label="Vencido" value={fmtK(vencido)}/>
+        <KpiCard icon={BarChart2} color={BLUE} label="Total facturado" value={isAdmin?fmtK(totTotal):"—"} sub={filt.length+" registros"}/>
+        <KpiCard icon={CheckCircle} color={GREEN} label="Cobrado" value={isAdmin?fmtK(cobrado):"—"} sub={isAdmin&&totTotal>0?Math.round(cobrado/totTotal*100)+"%":"0%"}/>
+        <KpiCard icon={Clock} color={AMBER} label="Por cobrar" value={isAdmin?fmtK(pendiente):"—"}/>
+        <KpiCard icon={AlertCircle} color={ROSE} label="Vencido" value={isAdmin?fmtK(vencido):"—"}/>
       </div>
 
       <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
-        {[["registros","📋 Registros"],["cartera","💰 Cartera vencida"],["proyecciones","📈 Proyecciones"]].map(([k,l])=>(
+        {[["registros","📋 Registros"],...(isAdmin?[["cartera","💰 Cartera vencida"],["proyecciones","📈 Proyecciones"]]:[])].map(([k,l])=>(
           <button key={k} onClick={()=>setTab(k)} className="btn" style={{padding:"7px 18px",borderRadius:10,border:"1.5px solid "+(tab===k?A:BD2),background:tab===k?A+"10":"#fff",color:tab===k?A:MUTED,fontWeight:tab===k?700:500,fontSize:13,cursor:"pointer"}}>{l}</button>
         ))}
       </div>
@@ -5833,7 +6317,7 @@ function Facturas(){
         <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
           {["todos",...MESES].map(m=><button key={m} onClick={()=>setMesF(m)} className="btn" style={{padding:"5px 13px",borderRadius:8,border:"1.5px solid "+(mesF===m?A:BD2),background:mesF===m?A+"10":"#fff",color:mesF===m?A:MUTED,fontSize:12,fontWeight:mesF===m?700:500,cursor:"pointer"}}>{m==="todos"?"Todos":m}</button>)}
         </div>
-        {mesF!=="todos"&&totTotal>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
+        {isAdmin&&mesF!=="todos"&&totTotal>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
           {[[MUTED,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt||f.iva||0),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v])=>(
             <div key={l} style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"12px 16px"}}>
               <div style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>{l}</div>
@@ -5847,7 +6331,7 @@ function Facturas(){
           :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:960}}>
             <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
               <th style={{padding:"9px 12px"}}><input type="checkbox" checked={filt.length>0&&filt.every(f=>selected.has(f.id))} onChange={()=>toggleAll(filt)} style={{cursor:"pointer",width:15,height:15}}/></th>
-              {["Folio","Mes/Año","Empresa","Solicitante","Plan","Servicio","Subtotal","IVA","Total","Estado","Acciones"].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+              {["Folio","Mes/Año","Empresa","Solicitante","Plan","Servicio",...(isAdmin?["Subtotal","IVA","Total"]:[]),"Estado","Acciones"].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
             </tr></thead>
             <tbody>{filt.map((f,i)=>(
               <tr key={f.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER,background:selected.has(f.id)?GREEN+"08":"transparent"}}>
@@ -5858,9 +6342,9 @@ function Facturas(){
                 <td style={{padding:"10px 12px",fontSize:12,color:MUTED}}>{f.solicitante||"—"}</td>
                 <td style={{padding:"10px 12px"}}>{f.plan&&<span style={{background:VIOLET+"12",color:VIOLET,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700}}>{f.plan}</span>}</td>
                 <td style={{padding:"10px 12px",fontSize:12,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.servicio||"—"}</td>
-                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12}}>{fmt(f.subtotal||f.monto||0)}</td>
-                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12,color:MUTED}}>{fmt(f.ivaAmt||f.iva||0)}</td>
-                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:13,fontWeight:800}}>{fmt(f.total||0)}</td>
+                {isAdmin&&<td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12}}>{fmt(f.subtotal||f.monto||0)}</td>}
+                {isAdmin&&<td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12,color:MUTED}}>{fmt(f.ivaAmt||f.iva||0)}</td>}
+                {isAdmin?<td style={{padding:"10px 12px",fontFamily:MONO,fontSize:13,fontWeight:800}}>{fmt(f.total||0)}</td>:<td style={{padding:"10px 12px",fontSize:12,color:MUTED}}>🔒</td>}
                 <td style={{padding:"10px 12px"}}>
                   <select value={f.status||"Pendiente"} onChange={e=>updStatus(f.id,e.target.value)} style={{background:"transparent",border:"1.5px solid "+(sc[f.status]||MUTED)+"28",borderRadius:8,padding:"3px 7px",color:sc[f.status]||MUTED,fontSize:11,fontWeight:700,cursor:"pointer"}}>
                     {["Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s}</option>)}
@@ -6125,6 +6609,551 @@ function Clientes(){
 }
 
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+   MÓDULO: REPORTES — P&L por Período · KPIs Medibles · Descarga por Mes/Rango
+══════════════════════════════════════════════════════════════════════════ */
+const MESES_REP  = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const MESES_FULL_REP = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO","JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"];
+const CATS_COSTO = ["Nómina","Subcontrato","Transporte","Viáticos","Operación","Administración","Comunicación","Fiscal","Bancario","Otro"];
+const CATS_COLOR = {
+  "Nómina":"#2563eb","Subcontrato":"#7c3aed","Transporte":"#0891b2",
+  "Viáticos":"#d97706","Operación":"#16a34a","Administración":"#db2777",
+  "Comunicación":"#0f766e","Fiscal":"#b45309","Bancario":"#64748b","Otro":"#9ca3af"
+};
+
+function getCategoria(concepto=""){
+  for(const c of CATS_COSTO){ if(concepto.startsWith(c)) return c; }
+  return "Otro";
+}
+
+function buildPLData(facts, viat, mesDesde, mesHasta, anio="2026"){
+  const idxD = MESES_REP.indexOf(mesDesde);
+  const idxH = MESES_REP.indexOf(mesHasta);
+  const mesesRange = MESES_REP.slice(idxD, idxH+1);
+  return mesesRange.map(m=>{
+    const mFacts = facts.filter(f=>(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(anio));
+    const mViat  = viat.filter(v=>v.mes===m&&String(v.anio||"")===String(anio));
+    const ingresos = mFacts.reduce((a,f)=>a+(f.total||0),0);
+    const subtotal = mFacts.reduce((a,f)=>a+(f.subtotal||0),0);
+    const cobrado  = mFacts.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
+    const pendiente= mFacts.filter(f=>f.status!=="Pagada"&&f.status!=="Cancelada").reduce((a,f)=>a+(f.total||0),0);
+    const costosCat={};
+    CATS_COSTO.forEach(c=>costosCat[c]=0);
+    mViat.forEach(v=>{ const c=getCategoria(v.concepto||""); costosCat[c]=(costosCat[c]||0)+(v.monto||0); });
+    const totalCostos = Object.values(costosCat).reduce((a,b)=>a+b,0);
+    const utilidad   = ingresos - totalCostos;
+    const margen     = ingresos>0?utilidad/ingresos:null;
+    return {mes:m, mesFull:MESES_FULL_REP[MESES_REP.indexOf(m)], ingresos, subtotal, cobrado, pendiente,
+            costosCat, totalCostos, utilidad, margen,
+            nFacts:mFacts.length, nViat:mViat.length};
+  });
+}
+
+function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
+  const pl   = buildPLData(facts, viat, mesDesde, mesHasta, anio);
+  const tag  = mesDesde===mesHasta?mesDesde:`${mesDesde}-${mesHasta}`;
+  const fecha= new Date().toISOString().slice(0,10);
+  const wb   = XLSX.utils.book_new();
+
+  /* ── HOJA 1: P&L Mensual ─────────────────────────────────────────── */
+  const ws1  = {};
+  const merges1 = [];
+  let r = 0;
+
+  // Título
+  const titulo = `P&L — D EN MOVIMIENTO SA DE CV | ${tag} ${anio}`;
+  setCell(ws1,"A"+(r+1), titulo, styleTitle);
+  merges1.push({s:{r,c:0},e:{r,c:15}}); r++;
+  setCell(ws1,"A"+(r+1), `Generado: ${fecha}  ·  Período: ${mesDesde} a ${mesHasta} ${anio}  ·  Sistema DMOV`, styleSubtitle);
+  merges1.push({s:{r,c:0},e:{r,c:15}}); r++;
+
+  // Headers
+  const hdrs = ["MES","INGRESOS\n(c/IVA)","SUBTOTAL\n(sin IVA)","COBRADO","POR COBRAR",
+                 "NÓMINA","SUBCONTRATO","TRANSPORTE","VIÁTICOS","OPERACIÓN","ADMIN","COMUNIC.","FISCAL","OTROS",
+                 "TOTAL\nCOSTOS","UTILIDAD","MARGEN %"];
+  hdrs.forEach((h,i)=>setCell(ws1, XLSX.utils.encode_cell({r,c:i}), h, styleColHeader));
+  r++;
+
+  let gI=0,gC=0,gU=0,gCob=0,gPend=0;
+  const gCat={}; CATS_COSTO.forEach(c=>gCat[c]=0);
+
+  pl.forEach((d,idx)=>{
+    const bg = idx%2===0?XC.ROW_WHITE:XC.ROW_ALT;
+    const sc = (col,val,nf)=>setCell(ws1, XLSX.utils.encode_cell({r,c:col}), val, styleCell(r,{bg,align:col===0?"left":"right",color:col===0?XC.TOTAL_TX:undefined}), nf);
+    sc(0,  d.mesFull);
+    sc(1,  d.ingresos,  NUM_FMT);
+    sc(2,  d.subtotal,  NUM_FMT);
+    sc(3,  d.cobrado,   NUM_FMT);
+    sc(4,  d.pendiente, NUM_FMT);
+    const catKeys=["Nómina","Subcontrato","Transporte","Viáticos","Operación","Administración","Comunicación","Fiscal"];
+    catKeys.forEach((c,ci)=>sc(5+ci, d.costosCat[c]||0, NUM_FMT));
+    const otros=(d.costosCat["Bancario"]||0)+(d.costosCat["Otro"]||0);
+    sc(13, otros, NUM_FMT);
+    sc(14, d.totalCostos, NUM_FMT);
+    // Utilidad con color
+    const uStyle = d.utilidad>=0
+      ? {...styleCell(r,{bg:XC.OK_BG, align:"right", color:XC.OK_TX})}
+      : {...styleCell(r,{bg:XC.BAD_BG,align:"right", color:XC.BAD_TX})};
+    setCell(ws1, XLSX.utils.encode_cell({r,c:15}), d.utilidad, uStyle, NUM_FMT);
+    // Margen %
+    if(d.margen===null){
+      setCell(ws1, XLSX.utils.encode_cell({r,c:16}), "N/A", styleCell(r,{bg,align:"center",color:XC.MUTED_TX}));
+    } else {
+      const mStyle = d.margen>=0
+        ? {...styleCell(r,{bg:XC.OK_BG, align:"right", color:XC.OK_TX})}
+        : {...styleCell(r,{bg:XC.BAD_BG,align:"right", color:XC.BAD_TX})};
+      setCell(ws1, XLSX.utils.encode_cell({r,c:16}), d.margen, mStyle, PCT_FMT);
+    }
+    gI+=d.ingresos; gC+=d.totalCostos; gU+=d.utilidad; gCob+=d.cobrado; gPend+=d.pendiente;
+    CATS_COSTO.forEach(c=>gCat[c]=(gCat[c]||0)+(d.costosCat[c]||0));
+    r++;
+  });
+
+  // Totales
+  setCell(ws1, XLSX.utils.encode_cell({r,c:0}), `TOTAL ${tag} ${anio}`, styleGrandTotalLabel);
+  [gI, gI-(gI*0.16/1.16), gCob, gPend,
+   gCat["Nómina"],gCat["Subcontrato"],gCat["Transporte"],gCat["Viáticos"],
+   gCat["Operación"],gCat["Administración"],gCat["Comunicación"],gCat["Fiscal"],
+   (gCat["Bancario"]||0)+(gCat["Otro"]||0), gC, gU
+  ].forEach((v,i)=>setCell(ws1, XLSX.utils.encode_cell({r,c:i+1}), v, styleGrandTotal, NUM_FMT));
+  const mT = gI>0?gU/gI:0;
+  setCell(ws1, XLSX.utils.encode_cell({r,c:16}), mT, styleGrandTotal, PCT_FMT);
+  r++;
+
+  // Nota al pie
+  setCell(ws1,"A"+(r+1),"* Ingresos = total CFDI c/IVA  |  Costos = registros viaticos/nomina  |  Margen = Utilidad/Ingresos",styleSubtitle);
+  merges1.push({s:{r,c:0},e:{r,c:16}});
+
+  ws1["!ref"]    = `A1:Q${r+1}`;
+  ws1["!cols"]   = [{wch:16},{wch:14},{wch:13},{wch:13},{wch:13},{wch:13},{wch:14},{wch:13},{wch:12},{wch:12},{wch:12},{wch:12},{wch:10},{wch:10},{wch:13},{wch:13},{wch:10}];
+  ws1["!merges"] = merges1;
+  ws1["!rows"]   = Array(r+1).fill({hpt:20});
+  ws1["!rows"][0]= {hpt:24}; ws1["!rows"][1]={hpt:13}; ws1["!rows"][2]={hpt:30};
+  ws1["!freeze"] = {xSplit:1,ySplit:3};
+  XLSX.utils.book_append_sheet(wb, ws1, "P&L Mensual");
+
+  /* ── HOJA 2: Ingresos Detallados ─────────────────────────────────── */
+  const idxD=MESES_REP.indexOf(mesDesde), idxH=MESES_REP.indexOf(mesHasta);
+  const mesesRange=MESES_REP.slice(idxD,idxH+1);
+  const factsF=facts.filter(f=>mesesRange.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(anio));
+  const ws2 = {};
+  const merges2=[];
+  let r2=0;
+  setCell(ws2,"A"+(r2+1),`INGRESOS DETALLADOS — ${tag} ${anio}`,styleTitle);
+  merges2.push({s:{r:r2,c:0},e:{r:r2,c:7}}); r2++;
+  const h2=["FOLIO","EMPRESA/CLIENTE","PLAN","SERVICIO","MES","SUBTOTAL","IVA","TOTAL","STATUS","NOTAS"];
+  h2.forEach((h,i)=>setCell(ws2,XLSX.utils.encode_cell({r:r2,c:i}),h,styleColHeader));
+  r2++;
+  factsF.sort((a,b)=>(MESES_REP.indexOf(a.mesOp||a.mes))-(MESES_REP.indexOf(b.mesOp||b.mes))).forEach((f,idx)=>{
+    const bg=idx%2===0?XC.ROW_WHITE:XC.ROW_ALT;
+    const s=(col,val,nf)=>setCell(ws2,XLSX.utils.encode_cell({r:r2,c:col}),val,styleCell(r2,{bg,align:col>=5?"right":"left"}),nf);
+    s(0,f.folio||""); s(1,f.empresa||f.cliente||""); s(2,f.plan||""); s(3,f.servicio||f.descripcion||"");
+    s(4,f.mesOp||f.mes||""); s(5,f.subtotal||0,NUM_FMT); s(6,(f.ivaAmt||0),NUM_FMT); s(7,f.total||0,NUM_FMT);
+    const chip=styleStatusChip(f.status||"");
+    setCell(ws2,XLSX.utils.encode_cell({r:r2,c:8}),chip.text,{font:{name:"Arial",sz:9,bold:true,color:{rgb:chip.color}},fill:{patternType:"solid",fgColor:{rgb:chip.bg}},alignment:{horizontal:"center",vertical:"center"},border:BORDER_THIN});
+    s(9,f.notas||""); r2++;
+  });
+  ws2["!ref"]=`A1:J${r2+1}`; ws2["!cols"]=[{wch:18},{wch:30},{wch:16},{wch:20},{wch:8},{wch:13},{wch:12},{wch:13},{wch:12},{wch:35}];
+  ws2["!merges"]=merges2; ws2["!rows"]=Array(r2+1).fill({hpt:18}); ws2["!rows"][0]={hpt:22}; ws2["!rows"][1]={hpt:28}; ws2["!freeze"]={xSplit:0,ySplit:2};
+  XLSX.utils.book_append_sheet(wb,ws2,"Ingresos");
+
+  /* ── HOJA 3: Costos Detallados ───────────────────────────────────── */
+  const viatF=viat.filter(v=>mesesRange.includes(v.mes)&&String(v.anio||"")===String(anio));
+  const ws3 = {};
+  const merges3=[];
+  let r3=0;
+  setCell(ws3,"A"+(r3+1),`COSTOS DETALLADOS — ${tag} ${anio}`,styleTitle);
+  merges3.push({s:{r:r3,c:0},e:{r:r3,c:7}}); r3++;
+  const h3=["FOLIO","CATEGORÍA","CONCEPTO","MONTO","PROYECTO/RUTA","MES","OPERADOR","NOTAS"];
+  h3.forEach((h,i)=>setCell(ws3,XLSX.utils.encode_cell({r:r3,c:i}),h,styleColHeader));
+  r3++;
+  viatF.sort((a,b)=>(MESES_REP.indexOf(a.mes))-(MESES_REP.indexOf(b.mes))).forEach((v,idx)=>{
+    const bg=idx%2===0?XC.ROW_WHITE:XC.ROW_ALT;
+    const cat=getCategoria(v.concepto||"");
+    const catColor=CATS_COLOR[cat]||"#888";
+    const catHex=catColor.replace("#","").toUpperCase();
+    setCell(ws3,XLSX.utils.encode_cell({r:r3,c:0}),v.folio||"",styleCell(r3,{bg}));
+    setCell(ws3,XLSX.utils.encode_cell({r:r3,c:1}),cat,{font:{name:"Arial",sz:9,bold:true,color:{rgb:catHex}},fill:{patternType:"solid",fgColor:{rgb:bg}},alignment:{horizontal:"center",vertical:"center"},border:BORDER_THIN});
+    setCell(ws3,XLSX.utils.encode_cell({r:r3,c:2}),v.concepto||"",styleCell(r3,{bg}));
+    setCell(ws3,XLSX.utils.encode_cell({r:r3,c:3}),v.monto||0,styleCell(r3,{bg,align:"right",color:XC.COST_TX}),NUM_FMT);
+    setCell(ws3,XLSX.utils.encode_cell({r:r3,c:4}),v.ruta||"",styleCell(r3,{bg}));
+    setCell(ws3,XLSX.utils.encode_cell({r:r3,c:5}),v.mes||"",styleCell(r3,{bg,align:"center"}));
+    setCell(ws3,XLSX.utils.encode_cell({r:r3,c:6}),v.operador||"",styleCell(r3,{bg}));
+    setCell(ws3,XLSX.utils.encode_cell({r:r3,c:7}),v.notas||"",styleCell(r3,{bg}));
+    r3++;
+  });
+  ws3["!ref"]=`A1:H${r3+1}`; ws3["!cols"]=[{wch:18},{wch:16},{wch:42},{wch:14},{wch:28},{wch:7},{wch:22},{wch:45}];
+  ws3["!merges"]=merges3; ws3["!rows"]=Array(r3+1).fill({hpt:18}); ws3["!rows"][0]={hpt:22}; ws3["!rows"][1]={hpt:28}; ws3["!freeze"]={xSplit:0,ySplit:2};
+  XLSX.utils.book_append_sheet(wb,ws3,"Costos");
+
+  /* ── HOJA 4: KPIs Ejecutivos ─────────────────────────────────────── */
+  const ws4={};
+  const merges4=[];
+  let r4=0;
+  setCell(ws4,"A"+(r4+1),`KPIs EJECUTIVOS — ${tag} ${anio}`,styleTitle);
+  merges4.push({s:{r:r4,c:0},e:{r:r4,c:3}}); r4++;
+  setCell(ws4,"A"+(r4+1),"Métricas clave del período para toma de decisiones",styleSubtitle);
+  merges4.push({s:{r:r4,c:0},e:{r:r4,c:3}}); r4++;
+  // Headers
+  ["KPI","VALOR","REFERENCIA","ESTADO"].forEach((h,i)=>setCell(ws4,XLSX.utils.encode_cell({r:r4,c:i}),h,styleColHeader)); r4++;
+  const kpiRows=[
+    ["Ingresos totales (c/IVA)",                     gI,          "Meta mensual",""],
+    ["Subtotal facturado (sin IVA)",                 gI-(gI*0.16/1.16),"",""],
+    ["Total costos operativos",                      gC,          "",""],
+    ["Utilidad bruta",                               gU,          "",""],
+    ["Margen de utilidad %",                         gI>0?gU/gI:0,"≥ 15% óptimo",""],
+    ["Facturas emitidas",                            factsF.length,"",""],
+    ["Facturas cobradas (Pagadas)",                  factsF.filter(f=>f.status==="Pagada").length,"",""],
+    ["% Cobro sobre facturado",                      gI>0?gCob/gI:0,"≥ 80% objetivo",""],
+    ["Cartera por cobrar",                           gPend,       "",""],
+    ["Nómina total",                                 gCat["Nómina"]||0,"",""],
+    ["Subcontratos RESICO",                          gCat["Subcontrato"]||0,"",""],
+    ["Costos de transporte",                         gCat["Transporte"]||0,"",""],
+    ["Viáticos de campo",                            gCat["Viáticos"]||0,"",""],
+    ["Gastos operación/admin",                       (gCat["Operación"]||0)+(gCat["Administración"]||0),"",""],
+    ["Costo/ingreso: Nómina %",                      gI>0?(gCat["Nómina"]||0)/gI:0,"< 40% saludable",""],
+    ["Costo/ingreso: Total %",                       gI>0?gC/gI:0,"< 85% objetivo",""],
+    ["Clientes con factura",                         [...new Set(factsF.map(f=>f.empresa||f.cliente))].filter(Boolean).length,"",""],
+    ["Meses en el período",                          pl.length,"",""],
+    ["Promedio ingreso/mes",                         pl.length?gI/pl.length:0,"",""],
+    ["Promedio costo/mes",                           pl.length?gC/pl.length:0,"",""],
+  ];
+  kpiRows.forEach(([kpi,val,ref],idx)=>{
+    const bg=idx%2===0?XC.ROW_WHITE:XC.ROW_ALT;
+    setCell(ws4,XLSX.utils.encode_cell({r:r4,c:0}),kpi,styleCell(r4,{bg,bold:true}));
+    const isPct=kpi.includes("%");
+    setCell(ws4,XLSX.utils.encode_cell({r:r4,c:1}),val,styleCell(r4,{bg,align:"right",color:typeof val==="number"&&val<0?XC.BAD_TX:XC.INCOME_TX}),isPct?PCT_FMT:NUM_FMT);
+    setCell(ws4,XLSX.utils.encode_cell({r:r4,c:2}),ref,styleCell(r4,{bg,color:XC.MUTED_TX}));
+    // Estado
+    let estado=""; let estBg=bg; let estTx="222222";
+    if(kpi==="Margen de utilidad %"){
+      if(typeof val==="number"){estado=val>=0.15?"✅ Óptimo":val>=0?"⚠️ Bajo":"🔴 Negativo"; estBg=val>=0.15?XC.OK_BG:val>=0?XC.WARN_BG:XC.BAD_BG; estTx=val>=0.15?XC.OK_TX:val>=0?XC.WARN_TX:XC.BAD_TX;}
+    } else if(kpi==="% Cobro sobre facturado"){
+      if(typeof val==="number"){estado=val>=0.8?"✅ Bien":val>=0.5?"⚠️ Regular":"🔴 Bajo"; estBg=val>=0.8?XC.OK_BG:val>=0.5?XC.WARN_BG:XC.BAD_BG; estTx=val>=0.8?XC.OK_TX:val>=0.5?XC.WARN_TX:XC.BAD_TX;}
+    } else if(kpi==="Costo/ingreso: Total %"){
+      if(typeof val==="number"){estado=val<=0.85?"✅ OK":val<=1?"⚠️ Alto":"🔴 >100%"; estBg=val<=0.85?XC.OK_BG:val<=1?XC.WARN_BG:XC.BAD_BG; estTx=val<=0.85?XC.OK_TX:val<=1?XC.WARN_TX:XC.BAD_TX;}
+    } else if(kpi==="Utilidad bruta"){
+      if(typeof val==="number"){estado=val>=0?"✅ Positiva":"🔴 Negativa"; estBg=val>=0?XC.OK_BG:XC.BAD_BG; estTx=val>=0?XC.OK_TX:XC.BAD_TX;}
+    }
+    if(estado) setCell(ws4,XLSX.utils.encode_cell({r:r4,c:3}),estado,{font:{name:"Arial",sz:9,bold:true,color:{rgb:estTx}},fill:{patternType:"solid",fgColor:{rgb:estBg}},alignment:{horizontal:"center",vertical:"center"},border:BORDER_THIN});
+    else setCell(ws4,XLSX.utils.encode_cell({r:r4,c:3}),"",styleCell(r4,{bg}));
+    r4++;
+  });
+  // Top clientes
+  r4++;
+  setCell(ws4,"A"+(r4+1),"TOP CLIENTES POR INGRESO",{...styleMonthRow,alignment:{horizontal:"left",vertical:"center"}});
+  [{r:r4,c:0},{r:r4,c:1},{r:r4,c:2},{r:r4,c:3}].slice(1).forEach(({r:ri,c:ci})=>setCell(ws4,XLSX.utils.encode_cell({r:ri,c:ci}),"",{...styleMonthRow}));
+  merges4.push({s:{r:r4,c:0},e:{r:r4,c:3}}); r4++;
+  ["CLIENTE","INGRESOS","% DEL TOTAL","FACTURAS"].forEach((h,i)=>setCell(ws4,XLSX.utils.encode_cell({r:r4,c:i}),h,styleColHeader)); r4++;
+  const clienteMap={};
+  factsF.forEach(f=>{const k=f.empresa||f.cliente||"—";if(!clienteMap[k])clienteMap[k]={ing:0,n:0};clienteMap[k].ing+=f.total||0;clienteMap[k].n++;});
+  Object.entries(clienteMap).sort((a,b)=>b[1].ing-a[1].ing).slice(0,8).forEach(([cli,d],idx)=>{
+    const bg=idx%2===0?XC.ROW_WHITE:XC.ROW_ALT;
+    setCell(ws4,XLSX.utils.encode_cell({r:r4,c:0}),cli,styleCell(r4,{bg,bold:true}));
+    setCell(ws4,XLSX.utils.encode_cell({r:r4,c:1}),d.ing,styleCell(r4,{bg,align:"right",color:XC.INCOME_TX}),NUM_FMT);
+    setCell(ws4,XLSX.utils.encode_cell({r:r4,c:2}),gI>0?d.ing/gI:0,styleCell(r4,{bg,align:"right"}),PCT_FMT);
+    setCell(ws4,XLSX.utils.encode_cell({r:r4,c:3}),d.n,styleCell(r4,{bg,align:"center"}));
+    r4++;
+  });
+  ws4["!ref"]=`A1:D${r4+1}`; ws4["!cols"]=[{wch:36},{wch:16},{wch:18},{wch:16}];
+  ws4["!merges"]=merges4; ws4["!rows"]=Array(r4+1).fill({hpt:20}); ws4["!rows"][0]={hpt:24}; ws4["!rows"][1]={hpt:13}; ws4["!rows"][2]={hpt:28}; ws4["!freeze"]={xSplit:0,ySplit:3};
+  XLSX.utils.book_append_sheet(wb,ws4,"KPIs Ejecutivos");
+
+  XLSX.writeFile(wb, `DMOV_Reporte_${tag}_${anio}_${fecha}.xlsx`);
+}
+
+/* ── Componente Reportes ───────────────────────────────────────────────── */
+function Reportes(){
+  const ANIO = "2026";
+  const mesActual = MESES_REP[new Date().getMonth()];
+  const [facts, setFacts]       = useState([]);
+  const [viat,  setViat]        = useState([]);
+  const [load,  setLoad]        = useState(true);
+  const [modo,  setModo]        = useState("mes");       // "mes" | "rango" | "anual"
+  const [mesSel,setMesSel]      = useState(mesActual);
+  const [mesDesde,setMesDesde]  = useState("Ene");
+  const [mesHasta,setMesHasta]  = useState(mesActual);
+  const [toast,  setToast]      = useState(null);
+  const showT = (m,t="ok")=>setToast({msg:m,type:t});
+
+  useEffect(()=>{
+    let n1=null,n2=null;
+    n1=onSnapshot(collection(db,"facturas"),s=>{
+      setFacts(s.docs.map(d=>({id:d.id,...d.data()})));
+      if(n2!==null)setLoad(false);
+    });
+    n2=onSnapshot(collection(db,"viaticos"),s=>{
+      setViat(s.docs.map(d=>({id:d.id,...d.data()})));
+      setLoad(false);
+    });
+    return()=>{n1&&n1();n2&&n2();};
+  },[]);
+
+  // Filtros activos
+  const desde = modo==="mes"?mesSel:modo==="anual"?"Ene":mesDesde;
+  const hasta  = modo==="mes"?mesSel:modo==="anual"?mesActual:mesHasta;
+
+  const pl = useMemo(()=>buildPLData(facts,viat,desde,hasta,ANIO),[facts,viat,desde,hasta]);
+
+  const totalIng   = pl.reduce((a,d)=>a+d.ingresos,0);
+  const totalCos   = pl.reduce((a,d)=>a+d.totalCostos,0);
+  const totalUtil  = totalIng-totalCos;
+  const margenGral = totalIng>0?totalUtil/totalIng:null;
+  const totalCob   = pl.reduce((a,d)=>a+d.cobrado,0);
+  const totalPend  = pl.reduce((a,d)=>a+d.pendiente,0);
+  const pctCob     = totalIng>0?Math.round(totalCob/totalIng*100):0;
+
+  // Costos por categoría (acumulado del período)
+  const catAcum = useMemo(()=>{
+    const acc={};
+    CATS_COSTO.forEach(c=>acc[c]=0);
+    pl.forEach(d=>CATS_COSTO.forEach(c=>acc[c]+=d.costosCat[c]||0));
+    return acc;
+  },[pl]);
+  const maxCat = Math.max(...Object.values(catAcum),1);
+
+  // Top clientes
+  const topClientes = useMemo(()=>{
+    const idxD=MESES_REP.indexOf(desde),idxH=MESES_REP.indexOf(hasta);
+    const mesesR=MESES_REP.slice(idxD,idxH+1);
+    const mp={};
+    facts.filter(f=>mesesR.includes(f.mesOp||f.mes)&&String(f.anio||"")===ANIO)
+         .forEach(f=>{const k=f.empresa||f.cliente||"—";if(!mp[k])mp[k]=0;mp[k]+=f.total||0;});
+    return Object.entries(mp).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  },[facts,desde,hasta]);
+  const topMax = topClientes[0]?topClientes[0][1]:1;
+
+  const periodoLabel = modo==="mes"?`${mesSel} ${ANIO}`:modo==="anual"?`Año ${ANIO}`:`${desde} – ${hasta} ${ANIO}`;
+  const margenColor  = margenGral===null?MUTED:margenGral>=0.15?GREEN:margenGral>=0?AMBER:ROSE;
+
+  if(load) return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:MUTED,fontSize:14}}>Cargando datos...</div>;
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,flexWrap:"wrap",gap:12}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:28,color:TEXT,letterSpacing:"-0.03em",marginBottom:4}}>
+            📊 Reportes & KPIs
+          </h1>
+          <p style={{color:MUTED,fontSize:13}}>Estado de resultados · Desglose por categoría · Descarga por período</p>
+        </div>
+        <button
+          onClick={()=>{exportReporteXLSX(facts,viat,desde,hasta,ANIO);showT("✓ Reporte descargado — "+periodoLabel);}}
+          className="btn"
+          style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#16a34a,#15803d)",color:"#fff",borderRadius:12,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px #16a34a40"}}>
+          <Download size={15}/>Descargar Excel
+        </button>
+      </div>
+
+      {/* Selector de período */}
+      <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <span style={{fontFamily:DISP,fontWeight:700,fontSize:13,color:TEXT}}>Período:</span>
+        {[["mes","📅 Un mes"],["rango","📆 Rango"],["anual","📈 Año completo"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setModo(id)} className="btn"
+            style={{padding:"7px 16px",borderRadius:20,fontSize:13,fontWeight:700,border:"1.5px solid "+(modo===id?BLUE:"#e2e8f0"),background:modo===id?BLUE+"14":"transparent",color:modo===id?BLUE:MUTED,transition:"all .15s"}}>
+            {label}
+          </button>
+        ))}
+        <div style={{width:1,height:24,background:BORDER,margin:"0 4px"}}/>
+        {modo==="mes"&&(
+          <select value={mesSel} onChange={e=>setMesSel(e.target.value)}
+            style={{borderRadius:8,border:"1.5px solid "+BLUE+"40",padding:"6px 12px",fontSize:13,fontWeight:600,color:TEXT,background:"#fff"}}>
+            {MESES_REP.map(m=><option key={m} value={m}>{m} {ANIO}</option>)}
+          </select>
+        )}
+        {modo==="rango"&&(<>
+          <select value={mesDesde} onChange={e=>setMesDesde(e.target.value)}
+            style={{borderRadius:8,border:"1.5px solid "+BLUE+"40",padding:"6px 12px",fontSize:13,fontWeight:600,color:TEXT,background:"#fff"}}>
+            {MESES_REP.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+          <span style={{color:MUTED,fontWeight:700}}>→</span>
+          <select value={mesHasta} onChange={e=>setMesHasta(e.target.value)}
+            style={{borderRadius:8,border:"1.5px solid "+BLUE+"40",padding:"6px 12px",fontSize:13,fontWeight:600,color:TEXT,background:"#fff"}}>
+            {MESES_REP.map(m=><option key={m} value={m}>{m}</option>)}
+          </select>
+        </>)}
+        {modo==="anual"&&(
+          <span style={{fontSize:13,fontWeight:700,color:BLUE}}>Ene → {mesActual} {ANIO}</span>
+        )}
+        <div style={{marginLeft:"auto",fontSize:12,fontWeight:700,color:MUTED,background:"#f8fafc",border:"1px solid "+BORDER,borderRadius:8,padding:"5px 12px"}}>
+          {periodoLabel}
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="g4" style={{marginBottom:20}}>
+        <KpiCard icon={TrendingUp} color={GREEN} label="Ingresos" value={fmtK(totalIng)} sub={pl.reduce((a,d)=>a+d.nFacts,0)+" facturas emitidas"}/>
+        <KpiCard icon={Zap} color={ROSE} label="Costos" value={fmtK(totalCos)} sub={pl.reduce((a,d)=>a+d.nViat,0)+" registros"}/>
+        <KpiCard icon={BarChart2} color={margenColor} label="Utilidad" value={fmtK(totalUtil)} sub={margenGral!==null?(Math.round(margenGral*100))+"% margen":"—"}/>
+        <KpiCard icon={DollarSign} color={BLUE} label="Cobrado" value={fmtK(totalCob)} sub={pctCob+"% del facturado · $"+Math.round(totalPend/1000)+"k pendiente"}/>
+      </div>
+
+      {/* Fila de KPIs secundarios */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:20}}>
+        {[
+          {label:"Margen %", val:margenGral!==null?Math.round(margenGral*100)+"%":"—", ok:margenGral!==null&&margenGral>=0.15, warn:margenGral!==null&&margenGral>=0&&margenGral<0.15, ref:"≥ 15% óptimo"},
+          {label:"% Cobrado", val:pctCob+"%", ok:pctCob>=80, warn:pctCob>=50&&pctCob<80, ref:"≥ 80% objetivo"},
+          {label:"Costo / Ingreso", val:totalIng>0?Math.round(totalCos/totalIng*100)+"%":"—", ok:totalIng>0&&totalCos/totalIng<=0.85, warn:totalIng>0&&totalCos/totalIng>0.85&&totalCos<=totalIng, ref:"< 85% objetivo"},
+          {label:"Nómina / Ingreso", val:totalIng>0?Math.round((catAcum["Nómina"]||0)/totalIng*100)+"%":"—", ok:totalIng>0&&(catAcum["Nómina"]||0)/totalIng<=0.4, warn:totalIng>0&&(catAcum["Nómina"]||0)/totalIng>0.4&&(catAcum["Nómina"]||0)/totalIng<=0.6, ref:"< 40% saludable"},
+        ].map(({label,val,ok,warn,ref})=>{
+          const c=ok?GREEN:warn?AMBER:ROSE;
+          return(
+            <div key={label} style={{background:"#fff",border:"1.5px solid "+(ok?GREEN:warn?AMBER:ROSE)+"30",borderRadius:12,padding:"14px 16px",textAlign:"center"}}>
+              <div style={{fontSize:22,fontWeight:900,fontFamily:MONO,color:c,marginBottom:4}}>{val}</div>
+              <div style={{fontSize:12,fontWeight:700,color:TEXT,marginBottom:2}}>{label}</div>
+              <div style={{fontSize:10,color:MUTED}}>{ref}</div>
+              <div style={{marginTop:6,fontSize:10,fontWeight:700,color:"#fff",background:c,borderRadius:4,padding:"1px 8px",display:"inline-block"}}>{ok?"✅ OK":warn?"⚠️ Revisar":"🔴 Atención"}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 340px",gap:16,marginBottom:16}}>
+        {/* Gráfica Ingresos vs Costos */}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22}}>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:4,color:TEXT}}>Ingresos vs Costos por mes</div>
+          <div style={{fontSize:11,color:MUTED,marginBottom:16}}>
+            <span style={{display:"inline-flex",alignItems:"center",gap:5,marginRight:16}}><span style={{width:10,height:10,borderRadius:2,background:GREEN,display:"inline-block"}}/> Ingresos</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:2,background:ROSE,display:"inline-block"}}/> Costos</span>
+          </div>
+          {pl.length===0?<div style={{color:MUTED,textAlign:"center",padding:30,fontSize:13}}>Sin datos para este período</div>:(()=>{
+            const maxV=Math.max(...pl.map(d=>Math.max(d.ingresos,d.totalCostos)),1);
+            return(
+              <div style={{display:"flex",alignItems:"flex-end",gap:pl.length>6?6:10,height:140,paddingBottom:20,position:"relative",borderBottom:"1px solid "+BORDER+"60"}}>
+                {pl.map(d=>(
+                  <div key={d.mes} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2,minWidth:0}}>
+                    {/* Valor utilidad encima */}
+                    <div style={{fontSize:8,fontFamily:MONO,color:d.utilidad>=0?GREEN:ROSE,fontWeight:700,whiteSpace:"nowrap"}}>
+                      {d.utilidad>=0?"+":""}{Math.round(d.utilidad/1000)}k
+                    </div>
+                    <div style={{width:"100%",display:"flex",gap:2,alignItems:"flex-end",height:110}}>
+                      <div style={{flex:1,background:GREEN+"cc",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round(d.ingresos/maxV*100))+"%",minHeight:3,transition:"height .4s"}}/>
+                      <div style={{flex:1,background:ROSE+"cc",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round(d.totalCostos/maxV*100))+"%",minHeight:3,transition:"height .4s"}}/>
+                    </div>
+                    <div style={{fontSize:9,fontWeight:700,color:TEXT,marginTop:2}}>{d.mes}</div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Top Clientes */}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22}}>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:14,color:TEXT}}>Top clientes</div>
+          {topClientes.length===0?<div style={{color:MUTED,fontSize:12,textAlign:"center",padding:20}}>Sin datos</div>:
+            topClientes.map(([cli,ing])=>(
+              <div key={cli} style={{marginBottom:11}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:4}}>
+                  <span style={{color:TEXT,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"60%"}}>{cli}</span>
+                  <span style={{fontFamily:MONO,fontWeight:700,color:GREEN,flexShrink:0}}>{fmt(ing)}</span>
+                </div>
+                <MiniBar pct={ing/topMax*100} color={GREEN} h={5}/>
+                <div style={{fontSize:9,color:MUTED,marginTop:2,textAlign:"right"}}>{totalIng>0?Math.round(ing/totalIng*100):0}% del total</div>
+              </div>
+            ))
+          }
+        </div>
+      </div>
+
+      {/* Desglose de costos por categoría */}
+      <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT}}>Desglose de costos por categoría</div>
+            <div style={{fontSize:11,color:MUTED,marginTop:2}}>Total período: {fmt(totalCos)}</div>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:10}}>
+          {CATS_COSTO.filter(c=>catAcum[c]>0).sort((a,b)=>catAcum[b]-catAcum[a]).map(cat=>{
+            const monto=catAcum[cat]||0;
+            const pct=totalCos>0?monto/totalCos*100:0;
+            const color=CATS_COLOR[cat]||MUTED;
+            return(
+              <div key={cat} style={{background:"#f8fafc",border:"1.5px solid "+color+"25",borderRadius:10,padding:"12px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <span style={{fontSize:12,fontWeight:700,color:color}}>{cat}</span>
+                  <span style={{fontSize:10,color:MUTED,fontWeight:600}}>{Math.round(pct)}%</span>
+                </div>
+                <div style={{fontFamily:MONO,fontSize:16,fontWeight:800,color:TEXT,marginBottom:6}}>{fmt(monto)}</div>
+                <MiniBar pct={monto/maxCat*100} color={color} h={4}/>
+              </div>
+            );
+          })}
+          {Object.values(catAcum).every(v=>v===0)&&<div style={{color:MUTED,fontSize:12,gridColumn:"1/-1",textAlign:"center",padding:20}}>Sin costos registrados para este período</div>}
+        </div>
+      </div>
+
+      {/* Tabla P&L por mes (solo si hay más de un mes) */}
+      {pl.length>1&&(
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22,marginBottom:16}}>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:16,color:TEXT}}>P&L detallado por mes</div>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead>
+                <tr style={{background:BLUE+"08"}}>
+                  {["Mes","Ingresos","Nómina","Subcontrato","Transporte","Viáticos","Operación","Otros","Total Costos","Utilidad","Margen"].map(h=>(
+                    <th key={h} style={{padding:"10px 12px",textAlign:h==="Mes"?"left":"right",fontWeight:700,color:BLUE,borderBottom:"2px solid "+BLUE+"20",whiteSpace:"nowrap",fontSize:11}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pl.map((d,i)=>{
+                  const bg=i%2===0?"#fff":"#f8fafc";
+                  const uColor=d.utilidad>=0?GREEN:ROSE;
+                  const otros=(d.costosCat["Bancario"]||0)+(d.costosCat["Otro"]||0)+(d.costosCat["Administración"]||0)+(d.costosCat["Comunicación"]||0)+(d.costosCat["Fiscal"]||0);
+                  return(
+                    <tr key={d.mes} style={{background:bg}}>
+                      <td style={{padding:"9px 12px",fontWeight:700,color:TEXT,borderBottom:"1px solid "+BORDER+"50"}}>{d.mesFull}</td>
+                      {[d.ingresos,d.costosCat["Nómina"]||0,d.costosCat["Subcontrato"]||0,d.costosCat["Transporte"]||0,d.costosCat["Viáticos"]||0,d.costosCat["Operación"]||0,otros,d.totalCostos].map((v,ci)=>(
+                        <td key={ci} style={{padding:"9px 12px",textAlign:"right",fontFamily:MONO,fontSize:11,color:ci===0?GREEN:ci===7?ROSE:TEXT,fontWeight:ci===0||ci===7?700:400,borderBottom:"1px solid "+BORDER+"50"}}>{v>0?fmt(v):"—"}</td>
+                      ))}
+                      <td style={{padding:"9px 12px",textAlign:"right",fontFamily:MONO,fontSize:11,fontWeight:800,color:uColor,borderBottom:"1px solid "+BORDER+"50"}}>{fmt(d.utilidad)}</td>
+                      <td style={{padding:"9px 12px",textAlign:"right",fontSize:11,fontWeight:700,color:uColor,borderBottom:"1px solid "+BORDER+"50"}}>{d.margen!==null?Math.round(d.margen*100)+"%":"—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{background:BLUE+"10",borderTop:"2px solid "+BLUE+"30"}}>
+                  <td style={{padding:"10px 12px",fontWeight:800,color:BLUE,fontSize:12}}>TOTAL</td>
+                  {[totalIng,catAcum["Nómina"]||0,catAcum["Subcontrato"]||0,catAcum["Transporte"]||0,catAcum["Viáticos"]||0,catAcum["Operación"]||0,(catAcum["Bancario"]||0)+(catAcum["Otro"]||0)+(catAcum["Administración"]||0)+(catAcum["Comunicación"]||0)+(catAcum["Fiscal"]||0),totalCos].map((v,ci)=>(
+                    <td key={ci} style={{padding:"10px 12px",textAlign:"right",fontFamily:MONO,fontSize:12,color:ci===0?GREEN:ci===7?ROSE:BLUE,fontWeight:800}}>{fmt(v)}</td>
+                  ))}
+                  <td style={{padding:"10px 12px",textAlign:"right",fontFamily:MONO,fontSize:12,fontWeight:900,color:totalUtil>=0?GREEN:ROSE}}>{fmt(totalUtil)}</td>
+                  <td style={{padding:"10px 12px",textAlign:"right",fontSize:12,fontWeight:800,color:margenColor}}>{margenGral!==null?Math.round(margenGral*100)+"%":"—"}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Botón de descarga inferior */}
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",justifyContent:"flex-end",paddingTop:8}}>
+        <div style={{fontSize:11,color:MUTED,alignSelf:"center",flex:1}}>
+          El Excel incluye 4 hojas: P&L Mensual · Ingresos detallados · Costos detallados · KPIs ejecutivos
+        </div>
+        <button
+          onClick={()=>{exportReporteXLSX(facts,viat,"Ene",mesActual,ANIO);showT("✓ Reporte año completo descargado");}}
+          className="btn"
+          style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:13}}>
+          <Download size={13}/>Año completo
+        </button>
+        <button
+          onClick={()=>{exportReporteXLSX(facts,viat,desde,hasta,ANIO);showT("✓ Reporte "+periodoLabel+" descargado");}}
+          className="btn"
+          style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#16a34a,#15803d)",color:"#fff",borderRadius:12,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px #16a34a40"}}>
+          <Download size={15}/>Descargar {periodoLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /* ─── VIÁTICOS & GASTOS OPERATIVOS ──────────────────────────────────────── */
 function Viaticos(){
@@ -7197,6 +8226,13 @@ function ChoferApp(){
   const [toast,setToast]=useState(null);
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
 
+  // ── Autenticar anónimamente al cargar la app del chofer
+  // Necesario para que las reglas de Firestore permitan las consultas
+  // (el login de teléfono+código es adicional, por encima de Firebase Auth anónimo)
+  useEffect(()=>{
+    signInAnonymously(auth).catch(()=>{});
+  },[]);
+
   // Marca body para dark mode automático en app chofer
   useEffect(()=>{
     document.body.classList.add("chofer-mode");
@@ -7212,7 +8248,8 @@ function ChoferApp(){
 
   const logout=()=>{
     localStorage.removeItem("dmov_chofer");
-    localStorage.removeItem("dmov_chofer_last_code"); // borra credencial guardada
+    localStorage.removeItem("dmov_chofer_last_code");
+    fbSignOut(auth).catch(()=>{});
     setChofer(null);
   };
 
@@ -7226,6 +8263,8 @@ function ChoferApp(){
       if(!match){showT("Código incorrecto","err");return false;}
       const chof = {id:match.id,...match.data()};
       localStorage.setItem("dmov_chofer",JSON.stringify(chof));
+      // Autenticar con Firebase Auth (anónimo) para que reglas de Firestore funcionen
+      await signInAnonymously(auth).catch(()=>{});
       setChofer(chof);
       showT("✓ Bienvenido "+chof.nombre);
       return true;
@@ -7487,6 +8526,24 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
     );
   };
 
+  // Finalizar ruta directamente desde la lista (sin entrar al modo activo)
+  const finalizarRutaDirecta = async(r)=>{
+    if(!confirm(`¿Marcar "${r.nombre}" como completada?\nSe moverá al historial.`)) return;
+    try{
+      await updateDoc(doc(db,"rutas",r.id),{status:"Completada",fase:"completada",completadaEn:serverTimestamp(),progreso:100});
+      showT("✓ Ruta finalizada · Revisa tu historial","ok");
+    }catch(e){showT("Error al finalizar","err");}
+  };
+
+  // Archivar/ocultar ruta de la vista del chofer sin eliminarla
+  const archivarRuta = async(r)=>{
+    if(!confirm(`¿Ocultar "${r.nombre}" de tu pantalla?\nPuedes pedirle al administrador que la reactive.`)) return;
+    try{
+      await updateDoc(doc(db,"rutas",r.id),{archivadaChofer:true});
+      showT("Ruta ocultada de tu vista","ok");
+    }catch(e){showT("Error","err");}
+  };
+
   const stopTracking = async()=>{
     if(watchIdRef.current!==null){navigator.geolocation.clearWatch(watchIdRef.current);watchIdRef.current=null;}
     setTracking(false);
@@ -7513,9 +8570,11 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   },[chofer]);
 
   const [tabChofer,setTabChofer]=useState("hoy");
+  const [horaAhora, setHoraAhora] = useState(()=>new Date());
+  useEffect(()=>{const t=setInterval(()=>setHoraAhora(new Date()),30000);return()=>clearInterval(t);},[]);
   const hoy = new Date().toISOString().slice(0,10);
-  const rutasActivas = misRutas.filter(r=>r.status!=="Completada"&&r.status!=="Cancelada");
-  const rutasCompletadas = misRutas.filter(r=>r.status==="Completada");
+  const rutasActivas = misRutas.filter(r=>r.status!=="Completada"&&r.status!=="Cancelada"&&!r.archivadaChofer);
+  const rutasCompletadas = misRutas.filter(r=>r.status==="Completada"&&!r.archivadaChofer);
   const completadas = rutasCompletadas.length;
 
   // Completadas hoy (filtradas por día local)
@@ -7553,200 +8612,341 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   // Elige la próxima ruta pendiente (útil cuando termina una)
   const siguienteRuta = rutasActivas.find(r=>r.status!=="En curso")||rutasActivas[0]||null;
 
+  const bottomNavH = "calc(env(safe-area-inset-bottom,0px) + 64px)";
   return(
-    <div style={{minHeight:"100vh",background:"#f1f4fb",fontFamily:SANS}}>
+    <div style={{minHeight:"100vh",background:"#f0f4fb",fontFamily:SANS,paddingBottom:!activeRuta&&!justFinished?bottomNavH:"0"}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
-      {/* Header */}
-      <div style={{background:"#0a1628",color:"#fff",padding:"calc(env(safe-area-inset-top,0) + 14px) 16px 14px",position:"sticky",top:0,zIndex:50}}>
+
+      {/* ── HEADER ── */}
+      <div style={{
+        background:"linear-gradient(160deg,#0a1628 0%,#0e1f3e 100%)",
+        color:"#fff",
+        padding:"calc(env(safe-area-inset-top,0px) + 10px) 16px 12px",
+        position:"sticky",top:0,zIndex:50,
+        boxShadow:"0 2px 20px rgba(0,0,0,.35)"
+      }}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <div style={{width:42,height:42,borderRadius:14,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:15,flexShrink:0}}>{(chofer.nombre||"?").slice(0,2).toUpperCase()}</div>
+          <div style={{
+            width:44,height:44,borderRadius:14,flexShrink:0,
+            background:"linear-gradient(135deg,"+A+",#fb923c)",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            fontFamily:DISP,fontWeight:900,fontSize:16,
+            boxShadow:"0 0 0 2.5px rgba(249,115,22,.4)"
+          }}>{(chofer.nombre||"?").slice(0,2).toUpperCase()}</div>
+
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontFamily:DISP,fontWeight:800,fontSize:16}}>{chofer.nombre}</div>
-            <div style={{fontSize:11,color:"#ffffff70",display:"flex",alignItems:"center",gap:8}}>
-              {tracking&&<span className="pulse" style={{display:"flex",alignItems:"center",gap:4,color:GREEN,fontWeight:700}}><Radio size={10}/>EN VIVO</span>}
-              <span>{chofer.placa||"Sin placa"}</span>
+            <div style={{fontFamily:DISP,fontWeight:800,fontSize:15,lineHeight:1.2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{chofer.nombre}</div>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,flexWrap:"wrap"}}>
+              {tracking&&<span style={{display:"flex",alignItems:"center",gap:3,color:"#34d399",fontWeight:800,fontSize:10}}>
+                <Radio size={9} style={{animation:"pulse 1.5s infinite"}}/> GPS ACTIVO
+              </span>}
+              <span style={{background:"rgba(255,255,255,.12)",color:"#ffffff90",borderRadius:6,padding:"1px 7px",fontSize:10,fontWeight:600}}>{chofer.placa||"Sin placa"}</span>
+              {rutasActivas.length>0&&<span style={{background:A+"30",color:"#fdba74",borderRadius:6,padding:"1px 7px",fontSize:10,fontWeight:700}}>{rutasActivas.length} ruta{rutasActivas.length>1?"s":""} activa{rutasActivas.length>1?"s":""}</span>}
             </div>
           </div>
-          <button onClick={onLogout} className="btn" style={{color:"#fff",background:"rgba(255,255,255,.1)",borderRadius:10,padding:"8px 10px",display:"flex",alignItems:"center",gap:5,fontSize:11}}><LogOut size={13}/></button>
+
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontFamily:MONO,fontWeight:800,fontSize:16,color:"#fff",lineHeight:1.1}}>
+              {horaAhora.toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"})}
+            </div>
+            <div style={{fontSize:9,color:"rgba(255,255,255,.5)",textTransform:"capitalize",marginTop:1}}>
+              {horaAhora.toLocaleDateString("es-MX",{weekday:"short",day:"numeric",month:"short"})}
+            </div>
+            <button onClick={onLogout} className="btn" style={{
+              marginTop:3,color:"rgba(255,255,255,.7)",background:"rgba(255,255,255,.08)",
+              border:"1px solid rgba(255,255,255,.12)",
+              borderRadius:8,padding:"2px 7px",display:"inline-flex",alignItems:"center",gap:3,fontSize:9,
+            }}><LogOut size={9}/>Salir</button>
+          </div>
         </div>
       </div>
 
-      {/* Pantalla de celebración: "¡Ruta completada!" con CTAs */}
+      {/* ── PANTALLA CELEBRACIÓN ── */}
       {justFinished&&!activeRuta&&<ChoferRutaCompletada ruta={justFinished} siguienteRuta={siguienteRuta} onIniciarSiguiente={()=>{setJustFinished(null);if(siguienteRuta)startTracking(siguienteRuta);}} onDescansar={()=>{setJustFinished(null);setTabChofer("historial");}} onVolverHoy={()=>{setJustFinished(null);setTabChofer("hoy");}}/>}
 
-      {/* Active route view */}
-      {activeRuta?<ChoferRutaActiva ruta={activeRuta} chofer={chofer} tracking={tracking} onStop={stopTracking} showT={showT}/>
-      :!justFinished&&<div style={{padding:"18px 16px"}}>
-        {/* KPIs */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
-          <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Pendientes hoy</div>
-            <div style={{fontFamily:MONO,fontSize:28,fontWeight:800,color:A}}>{paradasPendientes.length}</div>
-            <div style={{fontSize:10,color:MUTED,marginTop:2}}>{rutasActivas.length} ruta{rutasActivas.length===1?"":"s"}</div>
-          </div>
-          <div style={{background:"#fff",borderRadius:14,padding:"14px 16px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-            <div style={{fontSize:10,color:MUTED,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>Rutas hoy ✓</div>
-            <div style={{fontFamily:MONO,fontSize:28,fontWeight:800,color:GREEN}}>{rutasHoyCompl.length}</div>
-            <div style={{fontSize:10,color:MUTED,marginTop:2}}>{completadas} totales</div>
-          </div>
-        </div>
+      {/* ── RUTA ACTIVA ── */}
+      {activeRuta&&<ChoferRutaActiva ruta={activeRuta} chofer={chofer} tracking={tracking} onStop={stopTracking} showT={showT}/>}
 
-        {/* Tabs: Hoy · Rutas · Gastos · Historial · Perfil */}
-        <div style={{display:"flex",gap:2,marginBottom:12,background:"#fff",padding:3,borderRadius:12,boxShadow:"0 1px 4px rgba(12,24,41,.04)",overflowX:"auto"}}>
-          <button onClick={()=>setTabChofer("hoy")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="hoy"?BLUE:"transparent",color:tabChofer==="hoy"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
-            <Calendar size={10}/>Hoy ({paradasPendientes.length})
-          </button>
-          <button onClick={()=>setTabChofer("activas")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="activas"?A:"transparent",color:tabChofer==="activas"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
-            <Play size={10}/>Rutas ({rutasActivas.length})
-          </button>
-          <button onClick={()=>setTabChofer("gastos")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="gastos"?AMBER:"transparent",color:tabChofer==="gastos"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
-            <DollarSign size={10}/>Gastos
-          </button>
-          <button onClick={()=>setTabChofer("chat")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="chat"?BLUE:"transparent",color:tabChofer==="chat"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap",position:"relative"}}>
-            <Send size={10}/>Chat{chatUnread>0&&<span style={{background:ROSE,color:"#fff",borderRadius:10,padding:"1px 5px",fontSize:8,fontWeight:900,marginLeft:2}}>{chatUnread}</span>}
-          </button>
-          <button onClick={()=>setTabChofer("historial")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="historial"?GREEN:"transparent",color:tabChofer==="historial"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
-            <CheckCircle size={10}/>Hist. ({rutasCompletadas.length})
-          </button>
-          <button onClick={()=>setTabChofer("perfil")} className="btn" style={{flex:"1 0 auto",padding:"9px 8px",borderRadius:9,background:tabChofer==="perfil"?VIOLET:"transparent",color:tabChofer==="perfil"?"#fff":MUTED,fontWeight:700,fontSize:10,display:"flex",alignItems:"center",justifyContent:"center",gap:3,whiteSpace:"nowrap"}}>
-            <Shield size={10}/>Perfil
-          </button>
-        </div>
+      {/* ── DASHBOARD PRINCIPAL ── */}
+      {!activeRuta&&!justFinished&&<>
 
-        {/* TAB: HOY — vista consolidada de todas las entregas del día */}
-        {tabChofer==="hoy"&&(paradasHoy.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-          <Calendar size={32} color={BD2} style={{marginBottom:8}}/>
-          <div style={{fontWeight:700,color:TEXT,fontSize:14,marginBottom:3}}>No tienes entregas hoy</div>
-          <div style={{fontSize:11,marginTop:4}}>Cuando admin te asigne una ruta aparecerá aquí automáticamente</div>
-        </div>
-        :<>
-          {/* Resumen del día */}
-          <div style={{background:"linear-gradient(135deg,"+BLUE+","+VIOLET+")",borderRadius:14,padding:16,marginBottom:12,color:"#fff",boxShadow:"0 4px 16px "+BLUE+"30"}}>
-            <div style={{fontSize:10,fontWeight:800,letterSpacing:"0.08em",textTransform:"uppercase",opacity:.75,marginBottom:10}}>📅 Tu día hoy · {new Date().toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long"})}</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-              <div>
-                <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{paradasPendientes.length}</div>
-                <div style={{fontSize:10,opacity:.85,marginTop:3}}>Por entregar</div>
-              </div>
-              <div>
-                <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{paradasEntregadas.length}</div>
-                <div style={{fontSize:10,opacity:.85,marginTop:3}}>Entregadas</div>
-              </div>
-              <div>
-                <div style={{fontFamily:MONO,fontSize:22,fontWeight:900,lineHeight:1}}>{totalPDVHoy.toLocaleString()}</div>
-                <div style={{fontSize:10,opacity:.85,marginTop:3}}>PDVs totales</div>
-              </div>
+        {/* KPI HERO CARD */}
+        <div style={{padding:"14px 14px 4px"}}>
+          <div style={{
+            background:"linear-gradient(135deg,"+BLUE+" 0%,"+VIOLET+" 100%)",
+            borderRadius:20,padding:"15px 16px",color:"#fff",
+            boxShadow:"0 8px 32px "+BLUE+"50"
+          }}>
+            <div style={{fontSize:9,fontWeight:800,letterSpacing:"0.1em",opacity:.75,textTransform:"uppercase",marginBottom:12}}>
+              📅 {horaAhora.toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
             </div>
-            {totalKmHoy>0&&<div style={{fontSize:11,marginTop:12,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.2)",opacity:.9,display:"flex",alignItems:"center",gap:6}}>
-              <Globe size={11}/>{totalKmHoy.toLocaleString()} km totales · {rutasActivas.length} ruta{rutasActivas.length===1?"":"s"} asignada{rutasActivas.length===1?"":"s"}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:4}}>
+              {[
+                {val:paradasPendientes.length,lbl:"Por entregar",color:paradasPendientes.length>0?"#fde68a":"#86efac"},
+                {val:paradasEntregadas.length,lbl:"Entregadas",color:"#fff"},
+                {val:rutasActivas.length,lbl:"Rutas activas",color:"#fff"},
+                {val:rutasHoyCompl.length,lbl:"✓ Completadas",color:rutasHoyCompl.length>0?"#86efac":"#fff"},
+              ].map((k,i)=>(
+                <div key={i} style={{textAlign:"center",padding:"2px 0",borderLeft:i>0?"1px solid rgba(255,255,255,.15)":"none"}}>
+                  <div style={{fontFamily:MONO,fontSize:24,fontWeight:900,lineHeight:1,color:k.color}}>{k.val}</div>
+                  <div style={{fontSize:9,opacity:.8,marginTop:3,lineHeight:1.3}}>{k.lbl}</div>
+                </div>
+              ))}
+            </div>
+            {(totalKmHoy>0||totalPDVHoy>0)&&<div style={{
+              marginTop:12,paddingTop:10,borderTop:"1px solid rgba(255,255,255,.15)",
+              fontSize:10,opacity:.85,display:"flex",alignItems:"center",gap:8
+            }}>
+              {totalKmHoy>0&&<span style={{display:"flex",alignItems:"center",gap:4}}><Globe size={10}/>{totalKmHoy.toLocaleString()} km</span>}
+              {totalPDVHoy>0&&<span style={{display:"flex",alignItems:"center",gap:4}}><Package size={10}/>{totalPDVHoy.toLocaleString()} PDVs</span>}
             </div>}
           </div>
+        </div>
 
-          {/* Agrupa por ruta para que se vea claro qué entregas son de cuál ruta */}
-          {rutasActivas.map(r=>{
-            const estados = (r.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
-            const stopsEntrega = (r.stops||[]).map((s,idx)=>({...s,idx,status:estados[idx]?.status||"pendiente"})).filter(s=>!s.isOrigin);
-            const pendCount = stopsEntrega.filter(s=>s.status!=="entregado").length;
-            const sc={Programada:VIOLET,"En curso":BLUE,Completada:GREEN};
-            const rc = sc[r.status]||MUTED;
-            return(
-              <div key={r.id} style={{background:"#fff",borderRadius:14,marginBottom:10,boxShadow:"0 1px 4px rgba(12,24,41,.04)",overflow:"hidden",border:"1px solid "+BORDER}}>
-                {/* Header de la ruta */}
-                <div style={{padding:"12px 14px",background:rc+"08",borderBottom:"1px solid "+rc+"15",display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:30,height:30,borderRadius:9,background:rc+"18",display:"flex",alignItems:"center",justifyContent:"center"}}><Navigation size={14} color={rc}/></div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontWeight:800,fontSize:13,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.nombre}</div>
-                    {r.cliente&&<div style={{fontSize:10,color:MUTED,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.cliente} · {pendCount} por entregar</div>}
+        {/* ── TAB CONTENT ── */}
+        <div style={{padding:"12px 14px 8px"}}>
+
+          {/* TAB: HOY */}
+          {tabChofer==="hoy"&&(rutasActivas.length===0
+            ?<div style={{background:"#fff",borderRadius:18,padding:"44px 24px",textAlign:"center",boxShadow:"0 2px 16px rgba(12,24,41,.05)"}}>
+              <div style={{fontSize:48,marginBottom:14}}>🌅</div>
+              <div style={{fontFamily:DISP,fontWeight:800,fontSize:17,color:TEXT,marginBottom:8}}>Sin rutas para hoy</div>
+              <div style={{fontSize:12,color:MUTED,lineHeight:1.6}}>Cuando administración te asigne una ruta,<br/>aparecerá aquí de inmediato</div>
+            </div>
+            :<>{rutasActivas.map(r=>{
+              const SC={Programada:VIOLET,"En curso":BLUE,Completada:GREEN,"Camino a carga":"#0891b2"};
+              const rc=SC[r.status]||MUTED;
+              const estados=(r.stopsStatus||[]).reduce((a,s)=>{a[s.idx]=s;return a;},{});
+              const stopsE=(r.stops||[]).map((s,idx)=>({...s,idx,status:estados[idx]?.status||"pendiente"})).filter(s=>!s.isOrigin);
+              const doneN=stopsE.filter(s=>s.status==="entregado").length;
+              const pct=stopsE.length>0?Math.round(doneN/stopsE.length*100):0;
+              return(
+                <div key={r.id} style={{background:"#fff",borderRadius:18,marginBottom:14,boxShadow:"0 2px 16px rgba(12,24,41,.07)",overflow:"hidden",borderLeft:"5px solid "+rc}}>
+                  {/* Card header */}
+                  <div style={{padding:"13px 14px 11px"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:3}}>
+                      <div style={{fontFamily:DISP,fontWeight:800,fontSize:15,color:TEXT,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:10}}>{r.nombre}</div>
+                      <span style={{background:rc+"18",color:rc,borderRadius:8,padding:"3px 9px",fontSize:9,fontWeight:800,flexShrink:0,letterSpacing:"0.03em"}}>{r.status||"Programada"}</span>
+                    </div>
+                    {r.cliente&&<div style={{fontSize:11,color:MUTED,marginBottom:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.cliente}</div>}
+                    {/* Progress bar */}
+                    {stopsE.length>0&&<>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                        <div style={{fontSize:10,color:MUTED,fontWeight:600}}>Progreso de entregas</div>
+                        <div style={{fontFamily:MONO,fontSize:10,color:pct===100?GREEN:rc,fontWeight:800}}>{doneN}/{stopsE.length} · {pct}%</div>
+                      </div>
+                      <div style={{height:5,background:BORDER,borderRadius:10,overflow:"hidden"}}>
+                        <div style={{
+                          height:"100%",borderRadius:10,
+                          background:pct===100?"linear-gradient(90deg,"+GREEN+",#34d399)":"linear-gradient(90deg,"+rc+","+rc+"bb)",
+                          width:pct+"%",transition:"width .6s ease"
+                        }}/>
+                      </div>
+                    </>}
                   </div>
-                  <Tag color={rc} sm>{r.status||"Programada"}</Tag>
-                </div>
-                {/* Lista de paradas con status */}
-                <div style={{padding:"4px 0"}}>
-                  {stopsEntrega.map((s,i)=>{
-                    const c = s.status==="entregado"?GREEN:s.status==="llegue"?BLUE:s.status==="problema"?ROSE:A;
-                    return(
-                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:i<stopsEntrega.length-1?"1px solid "+BORDER+"80":"none"}}>
-                        <div style={{width:26,height:26,borderRadius:"50%",background:c+"14",border:"2px solid "+c,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:c,flexShrink:0}}>{i+1}</div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:700,fontSize:13,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.city}</div>
-                          <div style={{fontSize:10,color:MUTED}}>
-                            {s.pdv>0?s.pdv+" PDVs":""}{s.puntos?.length>0?" · "+s.puntos.length+" punto"+(s.puntos.length===1?"":"s"):""}
+                  {/* Stops */}
+                  {stopsE.length>0&&<div style={{borderTop:"1px solid "+BORDER}}>
+                    {stopsE.map((s,i)=>{
+                      const sc2=s.status==="entregado"?GREEN:s.status==="llegue"?BLUE:s.status==="problema"?ROSE:MUTED;
+                      return(
+                        <div key={i} style={{
+                          display:"flex",alignItems:"center",gap:10,padding:"10px 14px",
+                          borderBottom:i<stopsE.length-1?"1px solid "+BORDER+"70":"none",
+                          background:s.status==="entregado"?"#f0fdf4":"transparent"
+                        }}>
+                          <div style={{width:26,height:26,borderRadius:"50%",flexShrink:0,background:sc2+"18",border:"2px solid "+sc2,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:900,color:sc2}}>
+                            {s.status==="entregado"?"✓":i+1}
                           </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontWeight:700,fontSize:13,color:s.status==="entregado"?MUTED:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textDecoration:s.status==="entregado"?"line-through":"none"}}>{s.city}</div>
+                            {(s.pdv>0||s.puntos?.length>0)&&<div style={{fontSize:10,color:MUTED}}>{s.pdv>0&&s.pdv+" PDVs"}{s.puntos?.length>0&&" · "+s.puntos.length+" punto"+(s.puntos.length===1?"":"s")}</div>}
+                          </div>
+                          <span style={{fontSize:9,color:sc2,fontWeight:700,flexShrink:0}}>
+                            {s.status==="entregado"?"✅":s.status==="llegue"?"📍 En sitio":s.status==="problema"?"⚠️":"⏳"}
+                          </span>
                         </div>
-                        <Tag color={c} sm>{s.status==="entregado"?"✓":s.status==="llegue"?"En sitio":s.status==="problema"?"⚠":"Pendiente"}</Tag>
+                      );
+                    })}
+                  </div>}
+                  {/* Actions */}
+                  <div style={{padding:"10px 12px",borderTop:"1px solid "+BORDER,background:"#f8fafc",display:"flex",gap:8}}>
+                    <button onClick={()=>startTracking(r)} className="btn" style={{
+                      flex:1,padding:"12px 0",borderRadius:12,fontFamily:DISP,
+                      background:r.status==="En curso"?"linear-gradient(135deg,"+BLUE+",#3b82f6)":"linear-gradient(135deg,#059669,#34d399)",
+                      color:"#fff",fontWeight:800,fontSize:13,
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:7,
+                      boxShadow:"0 4px 14px "+(r.status==="En curso"?BLUE:"#059669")+"45"
+                    }}>
+                      {r.status==="En curso"?<><Navigation size={14}/>Continuar</>:<><Play size={14}/>Iniciar</>}
+                    </button>
+                    <button onClick={()=>finalizarRutaDirecta(r)} className="btn" title="Finalizar ruta" style={{
+                      padding:"12px 13px",borderRadius:12,background:"#f0fdf4",border:"1.5px solid #bbf7d0",
+                      color:GREEN,fontWeight:800,fontSize:12,display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"
+                    }}><Flag size={13}/>Fin</button>
+                    <button onClick={()=>archivarRuta(r)} className="btn" title="Ocultar ruta" style={{
+                      padding:"12px 11px",borderRadius:12,background:"#fff1f2",border:"1.5px solid #fecdd3",
+                      color:ROSE,display:"flex",alignItems:"center"
+                    }}><Trash2 size={14}/></button>
+                  </div>
+                </div>
+              );
+            })}</>
+          )}
+
+          {/* TAB: RUTAS ACTIVAS */}
+          {tabChofer==="activas"&&(rutasActivas.length===0
+            ?<div style={{background:"#fff",borderRadius:18,padding:"44px 24px",textAlign:"center",boxShadow:"0 2px 16px rgba(12,24,41,.05)"}}>
+              <div style={{fontSize:48,marginBottom:14}}>🚚</div>
+              <div style={{fontFamily:DISP,fontWeight:800,fontSize:17,color:TEXT,marginBottom:8}}>Sin rutas asignadas</div>
+              <div style={{fontSize:12,color:MUTED}}>Contacta a administración para recibir rutas</div>
+            </div>
+            :<>{rutasActivas.map(r=>{
+              const SC={Programada:VIOLET,"En curso":BLUE,Completada:GREEN,"Camino a carga":"#0891b2"};
+              const c=SC[r.status]||MUTED;
+              const totalSt=(r.stops||[]).filter(s=>!s.isOrigin).length;
+              const doneSt=(r.stopsStatus||[]).filter(s=>s.status==="entregado").length;
+              const pct2=totalSt>0?Math.round(doneSt/totalSt*100):0;
+              return(
+                <div key={r.id} style={{background:"#fff",borderRadius:18,marginBottom:14,boxShadow:"0 2px 16px rgba(12,24,41,.07)",overflow:"hidden",borderLeft:"5px solid "+c}}>
+                  <div style={{padding:"14px 14px 12px"}}>
+                    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:6}}>
+                      <div style={{flex:1,minWidth:0,paddingRight:10}}>
+                        <div style={{fontFamily:DISP,fontWeight:800,fontSize:15,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.nombre}</div>
+                        {r.cliente&&<div style={{fontSize:11,color:MUTED,marginTop:2}}>{r.cliente}</div>}
+                      </div>
+                      <span style={{background:c+"18",color:c,borderRadius:8,padding:"3px 9px",fontSize:9,fontWeight:800,flexShrink:0}}>{r.status||"Programada"}</span>
+                    </div>
+                    <div style={{display:"flex",gap:14,fontSize:11,color:MUTED,marginBottom:totalSt>0?10:0}}>
+                      <span style={{display:"flex",alignItems:"center",gap:4}}><MapPin size={11} color={c}/>{totalSt} paradas</span>
+                      {r.totalPDV>0&&<span style={{display:"flex",alignItems:"center",gap:4}}><Package size={11} color={MUTED}/>{r.totalPDV.toLocaleString()} PDVs</span>}
+                      {r.totalKm>0&&<span style={{display:"flex",alignItems:"center",gap:4}}><Globe size={11} color={MUTED}/>{r.totalKm.toLocaleString()} km</span>}
+                    </div>
+                    {totalSt>0&&<>
+                      <div style={{height:4,background:BORDER,borderRadius:10,overflow:"hidden"}}>
+                        <div style={{height:"100%",background:"linear-gradient(90deg,"+c+","+c+"bb)",width:pct2+"%",transition:"width .6s"}}/>
+                      </div>
+                      <div style={{fontSize:10,color:MUTED,marginTop:3}}>{doneSt} de {totalSt} entregas confirmadas · {pct2}%</div>
+                    </>}
+                  </div>
+                  <div style={{padding:"10px 12px",borderTop:"1px solid "+BORDER,background:"#f8fafc",display:"flex",gap:8}}>
+                    <button onClick={()=>startTracking(r)} className="btn" style={{
+                      flex:1,padding:"13px 0",borderRadius:12,fontFamily:DISP,
+                      background:r.status==="En curso"?"linear-gradient(135deg,"+BLUE+",#3b82f6)":"linear-gradient(135deg,#059669,#34d399)",
+                      color:"#fff",fontWeight:800,fontSize:14,
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                      boxShadow:"0 4px 16px "+(r.status==="En curso"?BLUE:"#059669")+"45"
+                    }}>
+                      {r.status==="En curso"?<><Navigation size={15}/>Continuar ruta</>:<><Play size={15}/>Iniciar ruta</>}
+                    </button>
+                    <button onClick={()=>finalizarRutaDirecta(r)} className="btn" title="Finalizar" style={{
+                      padding:"13px 13px",borderRadius:12,background:"#f0fdf4",border:"1.5px solid #bbf7d0",
+                      color:GREEN,fontWeight:800,display:"flex",alignItems:"center",gap:5
+                    }}><Flag size={15}/>Fin</button>
+                    <button onClick={()=>archivarRuta(r)} className="btn" title="Ocultar" style={{
+                      padding:"13px 11px",borderRadius:12,background:"#fff1f2",border:"1.5px solid #fecdd3",
+                      color:ROSE,display:"flex",alignItems:"center"
+                    }}><Trash2 size={15}/></button>
+                  </div>
+                </div>
+              );
+            })}</>
+          )}
+
+          {/* TAB: HISTORIAL — agrupado por fecha */}
+          {tabChofer==="historial"&&(rutasCompletadas.length===0
+            ?<div style={{background:"#fff",borderRadius:18,padding:"44px 24px",textAlign:"center",boxShadow:"0 2px 16px rgba(12,24,41,.05)"}}>
+              <div style={{fontSize:48,marginBottom:14}}>📋</div>
+              <div style={{fontFamily:DISP,fontWeight:800,fontSize:17,color:TEXT,marginBottom:8}}>Sin historial aún</div>
+              <div style={{fontSize:12,color:MUTED}}>Las rutas completadas aparecerán aquí</div>
+            </div>
+            :<>{(()=>{
+              const byDate={};
+              rutasCompletadas.forEach(r=>{
+                const ts=r.completadaEn?.seconds;
+                const dk=ts?new Date(ts*1000).toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long",year:"numeric"}):"Fecha desconocida";
+                if(!byDate[dk])byDate[dk]=[];
+                byDate[dk].push(r);
+              });
+              return Object.entries(byDate).map(([date,rs])=>(
+                <div key={date} style={{marginBottom:18}}>
+                  <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:8,paddingLeft:2}}>{date}</div>
+                  {rs.map(r=>{
+                    const done=(r.stopsStatus||[]).filter(s=>s.status==="entregado").length;
+                    const total=(r.stops||[]).filter(s=>!s.isOrigin).length;
+                    const dur=r.iniciadaEn?.seconds&&r.completadaEn?.seconds?Math.round((r.completadaEn.seconds-r.iniciadaEn.seconds)/60):null;
+                    return(
+                      <div key={r.id} style={{background:"#fff",borderRadius:14,padding:"14px",marginBottom:8,boxShadow:"0 1px 8px rgba(12,24,41,.05)",borderLeft:"4px solid "+GREEN}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                          <div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:TEXT,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:10}}>{r.nombre}</div>
+                          <span style={{background:GREEN+"18",color:GREEN,borderRadius:8,padding:"2px 8px",fontSize:9,fontWeight:800,flexShrink:0}}>✓ Lista</span>
+                        </div>
+                        {r.cliente&&<div style={{fontSize:11,color:MUTED,marginBottom:6}}>{r.cliente}</div>}
+                        <div style={{display:"flex",gap:12,fontSize:11,color:MUTED,flexWrap:"wrap"}}>
+                          <span style={{display:"flex",alignItems:"center",gap:3}}><CheckCircle size={10} color={GREEN}/>{done}/{total} entregas</span>
+                          {r.totalPDV>0&&<span style={{display:"flex",alignItems:"center",gap:3}}><Package size={10}/>{r.totalPDV.toLocaleString()} PDVs</span>}
+                          {dur!==null&&<span style={{display:"flex",alignItems:"center",gap:3}}><Clock size={10}/>{dur>=60?Math.floor(dur/60)+"h "+dur%60+"min":dur+" min"}</span>}
+                          {r.totalKm>0&&<span style={{display:"flex",alignItems:"center",gap:3}}><Globe size={10}/>{r.totalKm.toLocaleString()} km</span>}
+                        </div>
                       </div>
                     );
                   })}
                 </div>
-                {/* Acción de la ruta */}
-                <div style={{padding:"10px 14px",borderTop:"1px solid "+BORDER,background:"#fafbfd"}}>
-                  <button onClick={()=>startTracking(r)} className="btn" style={{width:"100%",padding:"10px 0",borderRadius:10,background:r.status==="En curso"?"linear-gradient(135deg,"+BLUE+",#3b82f6)":"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
-                    {r.status==="En curso"?<><Navigation size={14}/>Continuar ruta</>:<><Play size={14}/>Iniciar ruta</>}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </>)}
+              ));
+            })()}</>
+          )}
 
-        {tabChofer==="activas"&&(rutasActivas.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-          <Package size={32} color={BD2} style={{marginBottom:8}}/>
-          <div>No tienes rutas asignadas</div>
-          <div style={{fontSize:11,marginTop:4}}>Contacta a administración</div>
+          {/* Sub-componentes */}
+          {tabChofer==="gastos"&&<ChoferGastos chofer={chofer} showT={showT}/>}
+          {tabChofer==="chat"&&<ChoferChat chofer={chofer}/>}
+          {tabChofer==="perfil"&&<ChoferPerfil chofer={chofer} misRutas={misRutas} rutasCompletadas={rutasCompletadas} onLogout={onLogout}/>}
         </div>
-        :rutasActivas.map(r=>{
-          const sc={Programada:VIOLET,"En curso":BLUE,Completada:GREEN};
-          const c = sc[r.status]||MUTED;
-          return(
-            <div key={r.id} className="ch" style={{background:"#fff",borderRadius:14,padding:16,marginBottom:10,boxShadow:"0 1px 4px rgba(12,24,41,.04)",border:"1px solid "+BORDER}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                <div style={{fontWeight:700,fontSize:15}}>{r.nombre}</div>
-                <Tag color={c} sm>{r.status||"Programada"}</Tag>
-              </div>
-              {r.cliente&&<div style={{fontSize:12,color:MUTED,marginBottom:8}}>{r.cliente}</div>}
-              <div style={{display:"flex",gap:12,fontSize:11,color:MUTED,marginBottom:12}}>
-                <span><MapPin size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{(r.stops||[]).length} paradas</span>
-                <span><Package size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{(r.totalPDV||0).toLocaleString()} PDVs</span>
-                {r.totalKm>0&&<span><Globe size={11} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{r.totalKm.toLocaleString()} km</span>}
-              </div>
-              <button onClick={()=>startTracking(r)} className="btn" style={{width:"100%",background:"linear-gradient(135deg,"+(r.status==="En curso"?BLUE:GREEN)+","+(r.status==="En curso"?"#3b82f6":"#10b981")+")",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 16px "+(r.status==="En curso"?BLUE:GREEN)+"30"}}>
-                {r.status==="En curso"?<><Navigation size={15}/>Continuar ruta</>:<><Play size={15}/>Iniciar ruta</>}
-              </button>
-            </div>
-          );
-        }))}
 
-        {tabChofer==="historial"&&(rutasCompletadas.length===0?<div style={{background:"#fff",borderRadius:14,padding:32,textAlign:"center",color:MUTED,fontSize:13,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
-          <CheckCircle size={32} color={BD2} style={{marginBottom:8}}/>
-          <div>Sin rutas completadas</div>
+        {/* ── BOTTOM TAB BAR ── */}
+        <div style={{
+          position:"fixed",bottom:0,left:0,right:0,zIndex:100,
+          background:"rgba(255,255,255,.97)",backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",
+          borderTop:"1px solid "+BORDER,
+          boxShadow:"0 -4px 24px rgba(12,24,41,.09)",
+          paddingBottom:"env(safe-area-inset-bottom,0px)"
+        }}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)"}}>
+            {[
+              {id:"hoy",    icon:Calendar,    label:"Hoy",      badge:paradasPendientes.length, color:BLUE},
+              {id:"activas",icon:Truck,       label:"Rutas",    badge:rutasActivas.length,      color:A},
+              {id:"gastos", icon:DollarSign,  label:"Gastos",   badge:0,                        color:AMBER},
+              {id:"chat",   icon:Send,        label:"Chat",     badge:chatUnread,               color:BLUE},
+              {id:"historial",icon:CheckCircle,label:"Historial",badge:0,                       color:GREEN},
+              {id:"perfil", icon:Shield,      label:"Perfil",   badge:0,                        color:VIOLET},
+            ].map(tab=>{
+              const active=tabChofer===tab.id;
+              const Ic=tab.icon;
+              return(
+                <button key={tab.id} onClick={()=>setTabChofer(tab.id)} className="btn" style={{
+                  display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+                  gap:2,padding:"8px 2px 6px",background:"transparent",
+                  color:active?tab.color:MUTED,position:"relative",
+                  transition:"color .2s"
+                }}>
+                  {active&&<div style={{
+                    position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",
+                    width:26,height:2.5,background:tab.color,borderRadius:2,
+                  }}/>}
+                  <div style={{position:"relative"}}>
+                    <Ic size={21} strokeWidth={active?2.5:1.7}/>
+                    {tab.badge>0&&<div style={{
+                      position:"absolute",top:-5,right:-7,
+                      background:ROSE,color:"#fff",borderRadius:10,
+                      padding:"1px 4px",fontSize:8,fontWeight:900,lineHeight:"13px",
+                      minWidth:15,textAlign:"center",border:"2px solid #f0f4fb"
+                    }}>{tab.badge>9?"9+":tab.badge}</div>}
+                  </div>
+                  <div style={{fontSize:9,fontWeight:active?800:500,letterSpacing:"0.01em"}}>{tab.label}</div>
+                </button>
+              );
+            })}
+          </div>
         </div>
-        :rutasCompletadas.map(r=>{
-          const done = (r.stopsStatus||[]).filter(s=>s.status==="entregado").length;
-          const fecha = r.completadaEn?.seconds?new Date(r.completadaEn.seconds*1000).toLocaleDateString("es-MX",{day:"2-digit",month:"short",year:"numeric"}):"—";
-          return(
-            <div key={r.id} style={{background:"#fff",borderRadius:14,padding:14,marginBottom:10,boxShadow:"0 1px 4px rgba(12,24,41,.04)",border:"1px solid "+GREEN+"20"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                <div style={{fontWeight:700,fontSize:14}}>{r.nombre}</div>
-                <Tag color={GREEN} sm>✓ Completada</Tag>
-              </div>
-              {r.cliente&&<div style={{fontSize:11,color:MUTED,marginBottom:6}}>{r.cliente}</div>}
-              <div style={{display:"flex",gap:12,fontSize:11,color:MUTED}}>
-                <span><Calendar size={10} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{fecha}</span>
-                <span><CheckCircle size={10} style={{display:"inline",marginRight:3,verticalAlign:"text-bottom"}}/>{done} entregas</span>
-              </div>
-            </div>
-          );
-        }))}
-
-        {/* TAB: GASTOS — combustible/casetas con foto ticket */}
-        {tabChofer==="gastos"&&<ChoferGastos chofer={chofer} showT={showT}/>}
-
-        {/* TAB: CHAT — mensajería con admin */}
-        {tabChofer==="chat"&&<ChoferChat chofer={chofer}/>}
-
-        {/* TAB: PERFIL — stats históricas del chofer */}
-        {tabChofer==="perfil"&&<ChoferPerfil chofer={chofer} misRutas={misRutas} rutasCompletadas={rutasCompletadas} onLogout={onLogout}/>}
-      </div>}
+      </>}
     </div>
   );
 }
@@ -8247,6 +9447,11 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
   const [firmaData,setFirmaData]=useState("");
   const [incidentType,setIncidentType]=useState("ausente");
   const [submitting,setSubmitting]=useState(false);
+  const [estadoMerc,setEstadoMerc]=useState("ok"); // "ok" | "dano"
+  const [danioDesc,setDanioDesc]=useState("");
+  const [fotoFile2,setFotoFile2]=useState(null);
+  const [fotoPreview2,setFotoPreview2]=useState("");
+  const resetModal=()=>{setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setFotoFile2(null);setFotoPreview2("");setReceptor("");setFirmaData("");setIncidentType("ausente");setEstadoMerc("ok");setDanioDesc("");};
   const [myLoc,setMyLoc]=useState(null); // Posición actual (fallback si no hay tracking)
   const miniMapRef=useRef(null);
   const miniMapContRef=useRef(null);
@@ -8568,87 +9773,156 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
       </div>
 
       {/* Confirmation modal */}
-      {modalStop&&<Modal title={modalStop.action==="entregado"?"Confirmar entrega":"Reportar incidente"} onClose={()=>{setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setReceptor("");setFirmaData("");setIncidentType("ausente");}} icon={modalStop.action==="entregado"?CheckCircle:AlertCircle} iconColor={modalStop.action==="entregado"?GREEN:ROSE}>
-        <div style={{marginBottom:12}}>
-          <div style={{fontSize:12,color:MUTED,marginBottom:4}}>Parada</div>
-          <div style={{fontWeight:700,fontSize:15}}>{modalStop.city}</div>
-        </div>
-        {/* INCIDENTE: categorías */}
-        {modalStop.action==="problema"&&<div style={{marginBottom:12}}>
-          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>Tipo de incidente</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-            {INCIDENT_TYPES.map(t=>(
-              <button key={t.id} type="button" onClick={()=>{setIncidentType(t.id);if(!comentario&&t.template)setComentario(t.template);}} className="btn" style={{padding:"9px 10px",borderRadius:10,border:"1.5px solid "+(incidentType===t.id?ROSE:BD2),background:incidentType===t.id?ROSE+"12":"#fff",color:incidentType===t.id?ROSE:TEXT,fontWeight:700,fontSize:11,textAlign:"left",display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:14}}>{t.emoji}</span>{t.label}
-              </button>
-            ))}
+      {modalStop&&(()=>{
+        const isEntrega = modalStop.action==="entregado";
+        const faltaFoto = isEntrega && !fotoPreview;
+        const faltaFirma = isEntrega && !firmaData;
+        const faltaReceptor = isEntrega && !receptor.trim();
+        const faltaDanioDesc = isEntrega && estadoMerc==="dano" && !danioDesc.trim();
+        const faltaFotoDanio = isEntrega && estadoMerc==="dano" && !fotoPreview2;
+        const canConfirm = !submitting && (!isEntrega || (!faltaFoto&&!faltaFirma&&!faltaReceptor&&!faltaDanioDesc&&!faltaFotoDanio));
+        const faltaLabel = [faltaReceptor&&"nombre",faltaFoto&&"foto evidencia",faltaFirma&&"firma",faltaDanioDesc&&"descripción daño",faltaFotoDanio&&"foto del daño"].filter(Boolean).join(", ");
+        return(
+        <Modal title={isEntrega?"Confirmar entrega / recolección":"Reportar incidente"} onClose={resetModal} icon={isEntrega?CheckCircle:AlertCircle} iconColor={isEntrega?GREEN:ROSE}>
+
+          {/* Parada */}
+          <div style={{background:isEntrega?GREEN+"10":ROSE+"10",border:"1.5px solid "+(isEntrega?GREEN:ROSE)+"30",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
+            <MapPin size={14} color={isEntrega?GREEN:ROSE}/>
+            <div>
+              <div style={{fontSize:11,color:MUTED}}>Punto de {isEntrega?"entrega / recolección":"incidente"}</div>
+              <div style={{fontWeight:800,fontSize:15}}>{modalStop.city}</div>
+            </div>
           </div>
-        </div>}
-        {modalStop.action==="entregado"&&<>
-          {/* Escáner de código de barras / QR (opcional, si el navegador lo soporta) */}
-          <BarcodeQuickScan onScan={(code)=>{
-            setComentario(prev=>prev?prev+" · Cód: "+code:"Cód: "+code);
-          }}/>
-          <div style={{marginBottom:11}}>
-            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Nombre de quien recibió <span style={{color:ROSE}}>*</span></div>
-            <input value={receptor} onChange={e=>setReceptor(e.target.value)} placeholder="Juan Pérez" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14}}/>
-          </div>
-        </>}
-        <Txt label={modalStop.action==="entregado"?"Comentarios / Observaciones":"Detalle del incidente"} value={comentario} onChange={e=>setComentario(e.target.value)} placeholder={modalStop.action==="entregado"?"Sin observaciones":"Explica con más detalle…"}/>
-        {/* Foto evidencia */}
-        <div style={{marginTop:13}}>
-          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>
-            {modalStop.action==="entregado"?"Foto de evidencia":"Foto del incidente (opcional)"}
-          </div>
-          {fotoPreview?<div style={{position:"relative",borderRadius:12,overflow:"hidden",border:"1.5px solid "+BD2}}>
-            <img src={fotoPreview} alt="preview" style={{width:"100%",display:"block",maxHeight:260,objectFit:"cover"}}/>
-            <button onClick={()=>{setFotoFile(null);setFotoPreview("");}} className="btn" style={{position:"absolute",top:8,right:8,background:"rgba(12,24,41,.7)",color:"#fff",borderRadius:"50%",width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center"}}><X size={14}/></button>
-          </div>
-          :<label htmlFor={"foto-"+modalStop.idx} style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"22px 14px",background:A+"06",border:"2px dashed "+A+"40",borderRadius:12,cursor:"pointer",color:A,fontWeight:700,fontSize:13}}>
-            <Camera size={18}/>Tomar foto
-            <input id={"foto-"+modalStop.idx} type="file" accept="image/*" capture="environment" onChange={pickPhoto} style={{display:"none"}}/>
-          </label>}
-        </div>
-        {/* Firma digital — solo para entregas */}
-        {modalStop.action==="entregado"&&<div style={{marginTop:13}}>
-          <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Firma de quien recibió <span style={{color:ROSE}}>*</span></div>
-          <SignaturePad onChange={setFirmaData}/>
-        </div>}
-        <button onClick={async()=>{
-          setSubmitting(true);
-          try{
-            let fotoURL = "";
-            if(fotoFile){
-              try{fotoURL = await uploadEvidencia(fotoFile);}
-              catch(e){
-                if(!confirm("No se pudo procesar la foto. ¿Continuar sin foto?\n\nError: "+e.message)){
-                  setSubmitting(false);return;
+
+          {/* ── INCIDENTE: tipo ── */}
+          {!isEntrega&&<div style={{marginBottom:12}}>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>Tipo de incidente</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+              {INCIDENT_TYPES.map(t=>(
+                <button key={t.id} type="button" onClick={()=>{setIncidentType(t.id);if(!comentario&&t.template)setComentario(t.template);}} className="btn" style={{padding:"9px 10px",borderRadius:10,border:"1.5px solid "+(incidentType===t.id?ROSE:BD2),background:incidentType===t.id?ROSE+"12":"#fff",color:incidentType===t.id?ROSE:TEXT,fontWeight:700,fontSize:11,textAlign:"left",display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:14}}>{t.emoji}</span>{t.label}
+                </button>
+              ))}
+            </div>
+          </div>}
+
+          {/* ── ENTREGA: campos obligatorios ── */}
+          {isEntrega&&<>
+            <BarcodeQuickScan onScan={code=>setComentario(p=>p?p+" · Cód: "+code:"Cód: "+code)}/>
+
+            {/* 1. Nombre receptor */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:800,color:faltaReceptor?ROSE:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",gap:4}}>
+                <span>Nombre de quien recibe / entrega</span><span style={{color:ROSE}}>*</span>
+              </div>
+              <input value={receptor} onChange={e=>setReceptor(e.target.value)} placeholder="Ej: Juan Pérez — Recepción" style={{width:"100%",background:"#fff",border:"1.5px solid "+(faltaReceptor?ROSE:BD2),borderRadius:10,padding:"11px 13px",fontSize:14,boxSizing:"border-box"}}/>
+            </div>
+
+            {/* 2. Estado de la mercancía */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:800,color:MUTED,marginBottom:7,textTransform:"uppercase",letterSpacing:"0.06em"}}>Estado de la mercancía <span style={{color:ROSE}}>*</span></div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {[["ok",GREEN,"✅","Sin daños — OK"],["dano",ROSE,"⚠️","Con daños"]].map(([v,c,e,l])=>(
+                  <button key={v} type="button" onClick={()=>setEstadoMerc(v)} className="btn" style={{padding:"12px 10px",borderRadius:11,border:"2px solid "+(estadoMerc===v?c:BD2),background:estadoMerc===v?c+"14":"#fff",color:estadoMerc===v?c:TEXT,fontWeight:800,fontSize:13,display:"flex",alignItems:"center",gap:7,justifyContent:"center"}}>
+                    <span>{e}</span>{l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 3. Si hay daños: descripción + foto daño */}
+            {estadoMerc==="dano"&&<div style={{background:ROSE+"08",border:"1.5px solid "+ROSE+"30",borderRadius:11,padding:"12px 14px",marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:800,color:ROSE,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.06em"}}>Descripción del daño <span style={{color:ROSE}}>*</span></div>
+              <textarea value={danioDesc} onChange={e=>setDanioDesc(e.target.value)} placeholder="Ej: Caja aplastada, producto roto, golpe en esquina…" rows={3} style={{width:"100%",background:"#fff",border:"1.5px solid "+(faltaDanioDesc?ROSE:BD2),borderRadius:9,padding:"10px 12px",fontSize:13,resize:"vertical",boxSizing:"border-box"}}/>
+              <div style={{marginTop:10}}>
+                <div style={{fontSize:10,fontWeight:800,color:ROSE,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>Foto del daño <span style={{color:ROSE}}>*</span></div>
+                {fotoPreview2
+                  ?<div style={{position:"relative",borderRadius:10,overflow:"hidden",border:"1.5px solid "+ROSE+"40"}}>
+                    <img src={fotoPreview2} alt="daño" style={{width:"100%",display:"block",maxHeight:200,objectFit:"cover"}}/>
+                    <button onClick={()=>{setFotoFile2(null);setFotoPreview2("");}} className="btn" style={{position:"absolute",top:7,right:7,background:"rgba(12,24,41,.7)",color:"#fff",borderRadius:"50%",width:26,height:26,display:"flex",alignItems:"center",justifyContent:"center"}}><X size={12}/></button>
+                  </div>
+                  :<label htmlFor="foto-danio" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"18px",background:ROSE+"08",border:"2px dashed "+ROSE+"50",borderRadius:10,cursor:"pointer",color:ROSE,fontWeight:700,fontSize:13}}>
+                    <Camera size={16}/>Fotografiar daño
+                    <input id="foto-danio" type="file" accept="image/*" capture="environment" onChange={e=>{const f=e.target.files?.[0];if(!f)return;setFotoFile2(f);const r=new FileReader();r.onload=ev=>setFotoPreview2(ev.target.result);r.readAsDataURL(f);}} style={{display:"none"}}/>
+                  </label>}
+              </div>
+            </div>}
+
+            {/* 4. Foto de evidencia de entrega — OBLIGATORIA */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:800,color:faltaFoto?ROSE:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>
+                Foto de evidencia <span style={{color:ROSE}}>*</span>
+                {faltaFoto&&<span style={{marginLeft:6,color:ROSE,fontSize:9,fontWeight:700}}>(obligatoria)</span>}
+              </div>
+              {fotoPreview
+                ?<div style={{position:"relative",borderRadius:12,overflow:"hidden",border:"2px solid "+GREEN+"50"}}>
+                  <img src={fotoPreview} alt="evidencia" style={{width:"100%",display:"block",maxHeight:240,objectFit:"cover"}}/>
+                  <div style={{position:"absolute",bottom:8,left:8,background:GREEN,borderRadius:6,padding:"3px 8px",fontSize:10,fontWeight:700,color:"#fff",display:"flex",alignItems:"center",gap:4}}><CheckCircle size={10}/>Foto capturada</div>
+                  <button onClick={()=>{setFotoFile(null);setFotoPreview("");}} className="btn" style={{position:"absolute",top:8,right:8,background:"rgba(12,24,41,.7)",color:"#fff",borderRadius:"50%",width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center"}}><X size={13}/></button>
+                </div>
+                :<label htmlFor={"foto-ev-"+modalStop.idx} style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6,padding:"28px 14px",background:faltaFoto?ROSE+"06":A+"06",border:"2px dashed "+(faltaFoto?ROSE+"60":A+"40"),borderRadius:12,cursor:"pointer",color:faltaFoto?ROSE:A,fontWeight:700,fontSize:14}}>
+                  <Camera size={26}/>
+                  <span>Tomar foto de evidencia</span>
+                  <span style={{fontSize:11,fontWeight:500,opacity:0.7}}>Captura la mercancía / firma en el punto</span>
+                  <input id={"foto-ev-"+modalStop.idx} type="file" accept="image/*" capture="environment" onChange={pickPhoto} style={{display:"none"}}/>
+                </label>}
+            </div>
+
+            {/* 5. Firma digital — OBLIGATORIA */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:800,color:faltaFirma?ROSE:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.06em"}}>
+                Firma de quien recibe <span style={{color:ROSE}}>*</span>
+                {faltaFirma&&<span style={{marginLeft:6,color:ROSE,fontSize:9,fontWeight:700}}>(obligatoria)</span>}
+              </div>
+              <SignaturePad onChange={setFirmaData}/>
+            </div>
+          </>}
+
+          {/* Comentarios */}
+          <Txt label={isEntrega?"Observaciones adicionales (opcional)":"Detalle del incidente"} value={comentario} onChange={e=>setComentario(e.target.value)} placeholder={isEntrega?"Sin observaciones":"Explica con más detalle…"}/>
+
+          {/* Indicador de campos faltantes */}
+          {isEntrega&&faltaLabel&&<div style={{background:ROSE+"10",border:"1.5px solid "+ROSE+"30",borderRadius:9,padding:"8px 12px",marginTop:8,fontSize:12,color:ROSE,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>
+            <AlertCircle size={13}/>Falta: {faltaLabel}
+          </div>}
+
+          {/* Botón confirmar */}
+          <button onClick={async()=>{
+            if(!canConfirm) return;
+            setSubmitting(true);
+            try{
+              let fotoURL="", fotoURL2="";
+              if(fotoFile) try{fotoURL=await uploadEvidencia(fotoFile);}catch(e){showT("Error foto: "+e.message,"err");setSubmitting(false);return;}
+              if(fotoFile2) try{fotoURL2=await uploadEvidencia(fotoFile2);}catch(e){showT("Error foto daño: "+e.message,"err");setSubmitting(false);return;}
+              const incident = INCIDENT_TYPES.find(t=>t.id===incidentType);
+              const incidentLabel = !isEntrega?(incident?.label||""):"";
+              const danioTag = estadoMerc==="dano"?`⚠ DAÑO: ${danioDesc}`:"";
+              const notasFull = isEntrega
+                ? [receptor?"Recibió: "+receptor:"",danioTag,comentario].filter(Boolean).join(" · ")
+                : [incidentLabel,comentario].filter(Boolean).join(" — ");
+              // Guardamos fotoURL2 (foto de daño) en notas si existe
+              const notatsFinal = fotoURL2?notasFull+" [foto-daño guardada]":notasFull;
+              await updateStopStatus(modalStop.idx,modalStop.action,notatsFinal,fotoURL,receptor,firmaData,incidentLabel);
+              // Si hay foto de daño, la guardamos también en el registro
+              if(fotoURL2) await updateDoc(doc(db,"rutas",ruta.id),{[`fotoDanio_${modalStop.idx}`]:fotoURL2}).catch(()=>{});
+              if(ruta.clienteTel){
+                if(window.__notifyEvent__){
+                  if(isEntrega) window.__notifyEvent__(ruta,"stop-delivered",{city:modalStop.city,notas:notatsFinal,fotoURL});
+                  else window.__notifyEvent__(ruta,"issue",{city:modalStop.city,tipo:incidentLabel,notas:notatsFinal});
+                }else{
+                  notifyCliente(isEntrega?"delivered":"issue",modalStop,fotoURL,notatsFinal,incidentLabel);
                 }
               }
-            }
-            const incident = INCIDENT_TYPES.find(t=>t.id===incidentType);
-            const incidentLabel = modalStop.action==="problema"?(incident?.label||""):"";
-            const notasFull = modalStop.action==="entregado"
-              ? [receptor?"Recibió: "+receptor:"",comentario].filter(Boolean).join(" · ")
-              : [incidentLabel,comentario].filter(Boolean).join(" — ");
-            await updateStopStatus(modalStop.idx,modalStop.action,notasFull,fotoURL,receptor,firmaData,incidentLabel);
-            // Notifica al cliente
-            if(ruta.clienteTel){
-              if(window.__notifyEvent__){
-                if(modalStop.action==="entregado") window.__notifyEvent__(ruta,"stop-delivered",{city:modalStop.city,notas:notasFull,fotoURL});
-                else window.__notifyEvent__(ruta,"issue",{city:modalStop.city,tipo:incidentLabel,notas:notasFull});
-              }else{
-                notifyCliente(modalStop.action==="entregado"?"delivered":"issue",modalStop,fotoURL,notasFull,incidentLabel);
-              }
-            }
-            showT(modalStop.action==="entregado"?"✓ Entrega confirmada con firma":"⚠ Incidente reportado");
-          }catch(e){showT(e.message,"err");}
-          setSubmitting(false);
-          setModalStop(null);setComentario("");setFotoFile(null);setFotoPreview("");setReceptor("");setFirmaData("");setIncidentType("ausente");
-        }} disabled={submitting||(modalStop.action==="entregado"&&(!receptor.trim()||!firmaData))} className="btn" style={{width:"100%",marginTop:14,background:modalStop.action==="entregado"&&(!receptor.trim()||!firmaData)?"#e0e0e0":(modalStop.action==="entregado"?"linear-gradient(135deg,"+GREEN+",#10b981)":"linear-gradient(135deg,"+ROSE+",#f43f5e)"),color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
-          {submitting?<><div className="spin" style={{width:14,height:14,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Enviando…</>:modalStop.action==="entregado"&&(!receptor.trim()||!firmaData)?"Falta receptor y firma":<><CheckCircle size={14}/>Confirmar</>}
-        </button>
-      </Modal>}
+              showT(isEntrega?"✓ Entrega confirmada — evidencia guardada":"⚠ Incidente reportado");
+            }catch(e){showT(e.message,"err");}
+            setSubmitting(false);
+            resetModal();
+          }} disabled={!canConfirm} className="btn" style={{width:"100%",marginTop:14,background:!canConfirm?"#d1d5db":(isEntrega?"linear-gradient(135deg,"+GREEN+",#10b981)":"linear-gradient(135deg,"+ROSE+",#f43f5e)"),color:!canConfirm?"#9ca3af":"#fff",borderRadius:12,padding:"14px 0",fontFamily:DISP,fontWeight:800,fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all 0.2s"}}>
+            {submitting?<><div className="spin" style={{width:15,height:15,border:"2px solid #fff",borderTop:"2px solid transparent",borderRadius:"50%"}}/>Guardando evidencia…</>:<><CheckCircle size={15}/>{isEntrega?"Confirmar entrega":"Reportar incidente"}</>}
+          </button>
+        </Modal>
+        );
+      })()}
     </div>
   );
 }
@@ -9651,27 +10925,482 @@ function SOSGlobalBanner({onGo}){
   );
 }
 
+/* ── Error boundary para capturar errores de render ── */
+class ErrorBoundary extends Component{
+  constructor(p){super(p);this.state={err:null,info:null};}
+  static getDerivedStateFromError(err){return{err};}
+  componentDidCatch(err,info){this.setState({err,info});console.error("DMOV ErrorBoundary:",err,info);}
+  render(){
+    if(this.state.err){
+      return(
+        <div style={{minHeight:"100vh",background:"#fff7ed",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#fff",borderRadius:16,padding:28,maxWidth:520,width:"100%",boxShadow:"0 8px 32px rgba(0,0,0,.1)"}}>
+            <div style={{fontSize:28,marginBottom:8}}>⚠️</div>
+            <div style={{fontWeight:800,fontSize:18,color:"#dc2626",marginBottom:8}}>Error al cargar la app</div>
+            <div style={{fontFamily:"monospace",fontSize:12,background:"#fef2f2",borderRadius:8,padding:12,color:"#991b1b",wordBreak:"break-all",marginBottom:12}}>
+              {this.state.err?.toString()}
+            </div>
+            <div style={{fontFamily:"monospace",fontSize:10,background:"#f9fafb",borderRadius:8,padding:10,color:"#6b7280",maxHeight:150,overflow:"auto",marginBottom:14}}>
+              {this.state.info?.componentStack}
+            </div>
+            <button onClick={()=>window.location.reload()} style={{background:"#d97706",color:"#fff",border:"none",borderRadius:9,padding:"10px 20px",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+              Recargar app
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/* ── Pantalla de login para oficina ── */
+function LoginScreen(){
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+  const login=async()=>{
+    setLoading(true);setErr("");
+    try{await signInWithPopup(auth,googleProvider);}
+    catch(e){
+      if(e.code!=="auth/popup-closed-by-user") setErr("No se pudo iniciar sesión. Intenta de nuevo.");
+      setLoading(false);
+    }
+  };
+  return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fff7ed 0%,#fef3c7 40%,#f0fdf4 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"#fff",borderRadius:24,padding:"40px 32px",maxWidth:380,width:"100%",boxShadow:"0 24px 80px rgba(0,0,0,.10)",textAlign:"center"}}>
+        {/* Logo */}
+        <div style={{width:72,height:72,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 8px 24px #d9770640"}}>
+          <Truck size={34} color="#fff"/>
+        </div>
+        <div style={{fontFamily:DISP,fontWeight:900,fontSize:28,color:"#1a1a2e",letterSpacing:"-0.03em",marginBottom:4}}>DMvimiento</div>
+        <div style={{fontSize:13,color:MUTED,marginBottom:32}}>Sistema de Operaciones Logísticas</div>
+
+        {err&&<div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:11,padding:"10px 14px",fontSize:12,color:"#dc2626",marginBottom:16}}>{err}</div>}
+
+        <button onClick={login} disabled={loading} className="btn"
+          style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:12,padding:"14px 20px",background:loading?"#f5f5f5":"#fff",border:"2px solid #e5e7eb",borderRadius:13,cursor:loading?"not-allowed":"pointer",fontSize:15,fontWeight:700,color:"#374151",boxShadow:"0 2px 8px rgba(0,0,0,.06)",transition:"all .15s"}}>
+          {loading
+            ?<><RefreshCw size={18} style={{animation:"spin 1s linear infinite"}}/> Iniciando sesión...</>
+            :<><svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+              Entrar con Google</>
+          }
+        </button>
+
+        <div style={{marginTop:20,fontSize:11,color:MUTED,lineHeight:1.6}}>
+          Solo el equipo autorizado de DMvimiento puede acceder.<br/>
+          Usa tu cuenta Google corporativa.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── PIN SCREEN — segunda capa de seguridad por perfil ─────────────────── */
+function PinScreen({userProfile,onVerified,onBack}){
+  const [pin,setPin]=useState("");
+  const [err,setErr]=useState("");
+  const [attempts,setAttempts]=useState(0);
+  const [loading,setLoading]=useState(false);
+  const [showPin,setShowPin]=useState(false);
+  const [resetting,setResetting]=useState(false);
+  const inputRef=useRef(null);
+  useEffect(()=>{setTimeout(()=>inputRef.current?.focus(),80);},[]);
+  const isAdmin=userProfile?.rol==="admin";
+  const color=isAdmin?A:BLUE;
+  const initials=(n)=>(n||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+
+  const verify=async()=>{
+    if(!userProfile?.pin){onVerified();return;}
+    if(!pin.trim()){setErr("Ingresa tu contraseña");return;}
+    setLoading(true);setErr("");
+    const hashed=await hashPin(pin);
+    if(hashed===userProfile?.pin){
+      onVerified();
+    } else {
+      const next=attempts+1;
+      setAttempts(next);
+      setErr(next>=3?"Contraseña incorrecta. ¿Olvidaste tu contraseña? Usa la opción de abajo.":"Contraseña incorrecta. Intenta de nuevo.");
+      setPin("");setLoading(false);
+      setTimeout(()=>inputRef.current?.focus(),60);
+    }
+  };
+
+  // Restablece PIN: vuelve a pedir Google login y borra el pin del perfil
+  const resetPin=async()=>{
+    setResetting(true);
+    try{
+      await signInWithPopup(auth,googleProvider);
+      // Re-auth exitosa → borra el pin de Firestore para que pueda entrar sin PIN y asignar uno nuevo
+      await updateDoc(doc(db,"dmov_usuarios",userProfile.uid),{pin:null});
+      onVerified(); // entra sin PIN; deberá asignar uno desde Usuarios
+    }catch(e){
+      setErr("No se pudo verificar identidad. Intenta de nuevo.");
+    }
+    setResetting(false);
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#fff7ed 0%,#fef3c7 40%,#f0fdf4 100%)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"#fff",borderRadius:24,padding:"40px 36px 32px",maxWidth:380,width:"100%",boxShadow:"0 24px 80px rgba(0,0,0,.12)",border:"1.5px solid "+BORDER}}>
+        {onBack&&(
+          <button onClick={onBack} className="btn" style={{background:"none",border:"none",cursor:"pointer",color:MUTED,fontSize:13,display:"flex",alignItems:"center",gap:5,marginBottom:20,fontFamily:SANS,fontWeight:600}}>
+            <ChevronLeft size={16}/>Cambiar perfil
+          </button>
+        )}
+        {/* Icono de usuario */}
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{width:72,height:72,background:"linear-gradient(135deg,"+color+","+color+"cc)",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 14px",boxShadow:"0 8px 24px "+color+"30",fontSize:24,fontWeight:900,color:"#fff",letterSpacing:"-0.03em"}}>
+            {initials(userProfile?.nombre||userProfile?.email)}
+          </div>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:20,color:TEXT,letterSpacing:"-0.02em"}}>{userProfile?.nombre?.split(" ")[0]||"Usuario"}</div>
+          <div style={{fontSize:12,color:MUTED,marginTop:2}}>{userProfile?.email}</div>
+          <div style={{background:color+"15",color,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.05em",display:"inline-block",marginTop:8}}>
+            {isAdmin?"Administrador":"Operaciones"}
+          </div>
+        </div>
+
+        {/* Input contraseña */}
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:TEXT,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+            <Shield size={13} color={color}/>
+            Contraseña de acceso
+          </div>
+          <div style={{position:"relative"}}>
+            <input
+              ref={inputRef}
+              type={showPin?"text":"password"}
+              value={pin}
+              onChange={e=>{setPin(e.target.value);setErr("");}}
+              onKeyDown={e=>e.key==="Enter"&&!loading&&verify()}
+              placeholder="••••••••"
+              autoComplete="current-password"
+              style={{width:"100%",padding:"13px 44px 13px 16px",borderRadius:12,border:"1.5px solid "+(err?ROSE:BD2),fontSize:16,fontFamily:SANS,outline:"none",boxSizing:"border-box",background:"#fafafa",transition:"border .15s"}}
+            />
+            <button
+              type="button"
+              onClick={()=>setShowPin(v=>!v)}
+              style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:MUTED,padding:4,display:"flex",alignItems:"center"}}
+              tabIndex={-1}
+            ><Eye size={16}/></button>
+          </div>
+          {err&&<div style={{fontSize:12,color:ROSE,marginTop:6,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><AlertCircle size={12}/>{err}</div>}
+        </div>
+
+        <button
+          onClick={verify}
+          disabled={loading||resetting}
+          className="btn"
+          style={{width:"100%",padding:"14px",borderRadius:12,background:(loading||resetting)?"#f5f5f5":"linear-gradient(135deg,"+color+","+color+"cc)",color:(loading||resetting)?"#999":"#fff",fontFamily:SANS,fontWeight:700,fontSize:15,border:"none",cursor:(loading||resetting)?"not-allowed":"pointer",boxShadow:(loading||resetting)?"none":"0 4px 16px "+color+"30",transition:"all .15s"}}
+        >
+          {loading?"Verificando…":"Ingresar →"}
+        </button>
+
+        {/* Opción de reset después de varios intentos */}
+        {attempts>=2&&(
+          <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid "+BORDER}}>
+            <div style={{fontSize:12,color:MUTED,textAlign:"center",marginBottom:10}}>¿Olvidaste tu contraseña?</div>
+            <button
+              onClick={resetPin}
+              disabled={resetting}
+              className="btn"
+              style={{width:"100%",padding:"11px",borderRadius:10,background:"#f8fafc",border:"1.5px solid "+BD2,color:TEXT,fontFamily:SANS,fontWeight:700,fontSize:13,cursor:resetting?"wait":"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}
+            >
+              {resetting
+                ?<><RefreshCw size={14} style={{animation:"spin 1s linear infinite"}}/>Verificando con Google…</>
+                :<><svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                  Verificar con Google y restablecer</>
+              }
+            </button>
+            <div style={{fontSize:11,color:BD2,textAlign:"center",marginTop:8}}>Confirma tu identidad con Google para limpiar la contraseña y asignar una nueva desde el panel de Usuarios.</div>
+          </div>
+        )}
+
+        <div style={{textAlign:"center",marginTop:18,fontSize:11,color:BD2}}>
+          DMvimiento · Sistema privado · Solo personal autorizado
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── PROFILE PICKER — selección de perfil estilo Netflix ───────────────── */
+function ProfilePickerScreen({profiles,onSelect}){
+  const [selected,setSelected]=useState(null);
+  const initials=(n)=>(n||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  if(selected){
+    return(
+      <PinScreen
+        userProfile={selected}
+        onVerified={()=>onSelect(selected)}
+        onBack={()=>setSelected(null)}
+      />
+    );
+  }
+  return(
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628 0%,#0f2040 60%,#162850 100%)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      {/* Logo */}
+      <div style={{textAlign:"center",marginBottom:48}}>
+        <div style={{width:68,height:68,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 18px",boxShadow:"0 12px 36px #d9770650"}}>
+          <Truck size={32} color="#fff"/>
+        </div>
+        <div style={{fontFamily:DISP,fontWeight:900,fontSize:30,color:"#fff",letterSpacing:"-0.03em",marginBottom:6}}>DMvimiento</div>
+        <div style={{fontSize:11,color:"#ffffff60",letterSpacing:"0.04em",textTransform:"uppercase",fontWeight:600}}>¿Quién eres?</div>
+      </div>
+      {/* Tarjetas de perfil */}
+      <div style={{display:"flex",gap:24,justifyContent:"center",flexWrap:"wrap",maxWidth:640}}>
+        {profiles.length===0&&(
+          <div style={{fontSize:14,color:"#ffffff50",textAlign:"center",padding:40}}>
+            No hay perfiles configurados.<br/>
+            <span style={{fontSize:12}}>Contacta al administrador del sistema.</span>
+          </div>
+        )}
+        {profiles.map(p=>{
+          const isAdminP=p.rol==="admin";
+          const color=isAdminP?A:BLUE;
+          return(
+            <div
+              key={p.id}
+              onClick={()=>setSelected(p)}
+              style={{cursor:"pointer",textAlign:"center",padding:"32px 36px 28px",borderRadius:22,background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",backdropFilter:"blur(12px)",transition:"all .18s",minWidth:180,userSelect:"none"}}
+              onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,.12)";e.currentTarget.style.borderColor=color+"90";e.currentTarget.style.transform="translateY(-6px)";e.currentTarget.style.boxShadow="0 20px 60px rgba(0,0,0,.4)";}}
+              onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,.06)";e.currentTarget.style.borderColor="rgba(255,255,255,.1)";e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="none";}}
+            >
+              <div style={{width:80,height:80,borderRadius:22,background:"linear-gradient(135deg,"+color+","+color+"bb)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:28,fontWeight:900,color:"#fff",letterSpacing:"-0.03em",boxShadow:"0 8px 28px "+color+"50"}}>
+                {initials(p.nombre||p.email)}
+              </div>
+              <div style={{fontFamily:DISP,fontWeight:800,fontSize:18,color:"#fff",marginBottom:6,letterSpacing:"-0.01em"}}>
+                {(p.nombre||p.email||"").split(" ")[0]}
+              </div>
+              <div style={{background:color+"25",color,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.06em",display:"inline-block",border:"1px solid "+color+"40"}}>
+                {isAdminP?"Administrador":"Operaciones"}
+              </div>
+              {p.pin&&<div style={{fontSize:10,color:"#ffffff40",marginTop:10,display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                <Shield size={9} color="#ffffff40"/>Con contraseña
+              </div>}
+              {!p.pin&&<div style={{fontSize:10,color:"#ffffff30",marginTop:10}}>Sin contraseña</div>}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{marginTop:48,fontSize:11,color:"#ffffff25",letterSpacing:"0.04em"}}>
+        DMvimiento · Sistema privado · Solo personal autorizado
+      </div>
+    </div>
+  );
+}
+
+/* ─── USUARIOS (admin only) ──────────────────────────────────────────────── */
+function Usuarios(){
+  const [usuarios,setUsuarios]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [toast,setToast]=useState(null);
+  const [editPin,setEditPin]=useState({}); // {uid: newPinValue}
+  const [savingPin,setSavingPin]=useState({}); // {uid: bool}
+  const [showNew,setShowNew]=useState(false);
+  const [newNombre,setNewNombre]=useState("");
+  const [newEmail,setNewEmail]=useState("");
+  const [newRol,setNewRol]=useState("operaciones");
+  const [savingNew,setSavingNew]=useState(false);
+  const showT=(m,t="ok")=>setToast({msg:m,type:t});
+  useEffect(()=>{
+    const unsub=onSnapshot(collection(db,"dmov_usuarios"),s=>{
+      setUsuarios(s.docs.map(d=>({id:d.id,...d.data()})));
+      setLoading(false);
+    });
+    return()=>unsub();
+  },[]);
+  const updateRol=async(uid,rol)=>{
+    try{await updateDoc(doc(db,"dmov_usuarios",uid),{rol});showT("Rol actualizado");}
+    catch(e){showT(e.message,"err");}
+  };
+  const toggleActivo=async(uid,activo)=>{
+    try{await updateDoc(doc(db,"dmov_usuarios",uid),{activo:!activo});showT(activo?"Usuario desactivado":"Usuario activado");}
+    catch(e){showT(e.message,"err");}
+  };
+  const guardarPin=async(uid)=>{
+    const pin=(editPin[uid]||"").trim();
+    if(!pin){showT("Escribe una contraseña","err");return;}
+    if(pin.length<4){showT("Mínimo 4 caracteres","err");return;}
+    setSavingPin(prev=>({...prev,[uid]:true}));
+    try{
+      const hashed=await hashPin(pin);
+      await updateDoc(doc(db,"dmov_usuarios",uid),{pin:hashed});
+      setEditPin(prev=>({...prev,[uid]:""}));
+      showT("✓ Contraseña actualizada");
+    }catch(e){showT(e.message,"err");}
+    setSavingPin(prev=>({...prev,[uid]:false}));
+  };
+  const quitarPin=async(uid)=>{
+    if(!confirm("¿Quitar contraseña de este usuario? Podrá entrar sin PIN hasta que asignes una nueva."))return;
+    try{await updateDoc(doc(db,"dmov_usuarios",uid),{pin:null});showT("PIN eliminado — usuario puede entrar sin contraseña");}
+    catch(e){showT(e.message,"err");}
+  };
+  const crearPerfil=async()=>{
+    if(!newNombre.trim()){showT("Escribe un nombre","err");return;}
+    setSavingNew(true);
+    try{
+      const id="usr_"+Date.now();
+      await setDoc(doc(db,"dmov_usuarios",id),{uid:id,nombre:newNombre.trim(),email:newEmail.trim()||"",rol:newRol,activo:true,createdAt:serverTimestamp()});
+      setNewNombre("");setNewEmail("");setShowNew(false);
+      showT("✓ Perfil creado — asigna una contraseña");
+    }catch(e){showT(e.message,"err");}
+    setSavingNew(false);
+  };
+  const rolBadge=(rol)=>{
+    const c=rol==="admin"?A:BLUE;
+    return <span style={{background:c+"18",color:c,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:"0.04em"}}>{rol}</span>;
+  };
+  const initials=(nombre)=>(nombre||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      <div className="au" style={{marginBottom:22}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div>
+            <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Usuarios & Roles</h1>
+            <p style={{color:MUTED,fontSize:13,marginTop:3}}>Gestión de acceso y contraseñas del sistema DMvimiento</p>
+          </div>
+          <div style={{background:"linear-gradient(135deg,"+A+"18,"+A+"08)",border:"1.5px solid "+A+"30",borderRadius:12,padding:"10px 16px",display:"flex",alignItems:"center",gap:8}}>
+            <Shield size={16} color={A}/>
+            <span style={{fontSize:13,fontWeight:700,color:A}}>Panel de administrador</span>
+          </div>
+        </div>
+      </div>
+
+      <button onClick={()=>setShowNew(v=>!v)} className="btn" style={{display:"flex",alignItems:"center",gap:7,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13,border:"none",cursor:"pointer",marginBottom:16,boxShadow:"0 4px 14px "+A+"30"}}>
+        <Plus size={14}/>{showNew?"Cancelar":"Nuevo perfil"}
+      </button>
+      {showNew&&(
+        <div style={{background:"#fff",border:"1.5px solid "+A+"30",borderRadius:14,padding:"18px 20px",marginBottom:16}}>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,color:TEXT,marginBottom:14}}>Crear nuevo perfil</div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+            <div style={{flex:1,minWidth:160}}>
+              <div style={{fontSize:12,color:MUTED,fontWeight:600,marginBottom:5}}>Nombre *</div>
+              <input value={newNombre} onChange={e=>setNewNombre(e.target.value)} placeholder="Nombre completo" style={{width:"100%",padding:"8px 12px",borderRadius:9,border:"1.5px solid "+BD2,fontSize:13,fontFamily:SANS,outline:"none",boxSizing:"border-box"}}/>
+            </div>
+            <div style={{flex:1,minWidth:160}}>
+              <div style={{fontSize:12,color:MUTED,fontWeight:600,marginBottom:5}}>Email (opcional)</div>
+              <input value={newEmail} onChange={e=>setNewEmail(e.target.value)} placeholder="correo@empresa.com" type="email" style={{width:"100%",padding:"8px 12px",borderRadius:9,border:"1.5px solid "+BD2,fontSize:13,fontFamily:SANS,outline:"none",boxSizing:"border-box"}}/>
+            </div>
+            <div>
+              <div style={{fontSize:12,color:MUTED,fontWeight:600,marginBottom:5}}>Rol</div>
+              <select value={newRol} onChange={e=>setNewRol(e.target.value)} style={{padding:"8px 12px",borderRadius:9,border:"1.5px solid "+BD2,fontSize:13,fontWeight:700,color:newRol==="admin"?A:BLUE,background:"#fff",cursor:"pointer"}}>
+                <option value="admin">admin</option>
+                <option value="operaciones">operaciones</option>
+              </select>
+            </div>
+            <button onClick={crearPerfil} disabled={savingNew} className="btn" style={{padding:"8px 16px",borderRadius:9,background:savingNew?"#f5f5f5":"linear-gradient(135deg,"+A+",#fb923c)",color:savingNew?"#999":"#fff",fontSize:13,fontWeight:700,cursor:savingNew?"wait":"pointer",border:"none",flexShrink:0}}>
+              {savingNew?"Creando…":"Crear"}
+            </button>
+          </div>
+          <div style={{fontSize:11,color:MUTED,marginTop:10}}>💡 Después de crear el perfil, asigna una contraseña desde las tarjetas de abajo.</div>
+        </div>
+      )}
+
+      {/* Instrucciones */}
+      <div style={{background:"#fff",border:"1.5px solid "+BLUE+"30",borderRadius:14,padding:"16px 20px",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <div style={{width:32,height:32,borderRadius:9,background:BLUE+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Users size={14} color={BLUE}/></div>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,color:TEXT}}>Invitar usuario</div>
+        </div>
+        <p style={{fontSize:13,color:MUTED,lineHeight:1.6}}>Para invitar a un nuevo usuario, pídele que acceda con su cuenta Google en <strong style={{color:TEXT}}>la URL del sistema</strong>. Al ingresar por primera vez se creará su perfil con rol <strong style={{color:VIOLET}}>"operaciones"</strong> y contraseña temporal <strong style={{color:TEXT,fontFamily:MONO}}>123456</strong>. Cámbiala desde aquí.</p>
+      </div>
+
+      {loading
+        ?<div style={{padding:40,textAlign:"center",color:MUTED}}>Cargando usuarios…</div>
+        :<div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {usuarios.length===0&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:40,textAlign:"center",color:MUTED,fontSize:13}}>No hay usuarios registrados aún</div>}
+          {usuarios.map(u=>(
+            <div key={u.id} style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"18px 20px",boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+                {/* Avatar */}
+                <div style={{width:46,height:46,borderRadius:14,background:u.rol==="admin"?A:BLUE,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:900,color:"#fff",flexShrink:0,letterSpacing:"-0.02em"}}>
+                  {initials(u.nombre||u.email)}
+                </div>
+                {/* Info */}
+                <div style={{flex:1,minWidth:160}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:2}}>
+                    <span style={{fontWeight:700,fontSize:15,color:TEXT}}>{u.nombre||u.email}</span>
+                    {rolBadge(u.rol||"operaciones")}
+                    {!u.activo&&<span style={{background:ROSE+"15",color:ROSE,borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:700}}>INACTIVO</span>}
+                    {u.pin&&<span style={{background:GREEN+"12",color:GREEN,borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:3}}><Check size={9}/>PIN SET</span>}
+                  </div>
+                  <div style={{fontSize:12,color:MUTED}}>{u.email}</div>
+                </div>
+                {/* Controls */}
+                <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0,flexWrap:"wrap"}}>
+                  <select
+                    value={u.rol||"operaciones"}
+                    onChange={e=>updateRol(u.id,e.target.value)}
+                    style={{border:"1.5px solid "+BD2,borderRadius:9,padding:"7px 11px",fontSize:12,fontWeight:700,color:u.rol==="admin"?A:BLUE,background:"#fff",cursor:"pointer"}}
+                  >
+                    <option value="admin">admin</option>
+                    <option value="operaciones">operaciones</option>
+                  </select>
+                  <button
+                    onClick={()=>toggleActivo(u.id,u.activo!==false)}
+                    className="btn"
+                    style={{padding:"7px 14px",borderRadius:9,border:"1.5px solid "+(u.activo!==false?GREEN:ROSE)+"40",background:(u.activo!==false?GREEN:ROSE)+"10",color:u.activo!==false?GREEN:ROSE,fontSize:12,fontWeight:700,cursor:"pointer"}}
+                  >
+                    {u.activo!==false?"Activo":"Inactivo"}
+                  </button>
+                </div>
+              </div>
+              {/* PIN management row */}
+              <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+BORDER,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <div style={{fontSize:12,color:MUTED,fontWeight:600,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+                  <Shield size={11} color={MUTED}/>
+                  {u.pin?"Cambiar contraseña:":"Establecer contraseña:"}
+                </div>
+                <input
+                  type="password"
+                  value={editPin[u.id]||""}
+                  onChange={e=>setEditPin(prev=>({...prev,[u.id]:e.target.value}))}
+                  onKeyDown={e=>e.key==="Enter"&&guardarPin(u.id)}
+                  placeholder="Nueva contraseña…"
+                  autoComplete="new-password"
+                  style={{flex:1,minWidth:140,maxWidth:220,padding:"7px 12px",borderRadius:9,border:"1.5px solid "+BD2,fontSize:13,fontFamily:SANS,outline:"none"}}
+                />
+                <button
+                  onClick={()=>guardarPin(u.id)}
+                  disabled={savingPin[u.id]}
+                  className="btn"
+                  style={{padding:"7px 14px",borderRadius:9,background:savingPin[u.id]?"#f5f5f5":"linear-gradient(135deg,"+VIOLET+",#6d28d9)",color:savingPin[u.id]?"#999":"#fff",fontSize:12,fontWeight:700,cursor:savingPin[u.id]?"wait":"pointer",border:"none",flexShrink:0}}
+                >
+                  {savingPin[u.id]?"Guardando…":"Guardar PIN"}
+                </button>
+                {u.pin&&<button onClick={()=>quitarPin(u.id)} className="btn" title="Quitar contraseña — entrará sin PIN" style={{padding:"7px 11px",borderRadius:9,border:"1.5px solid "+ROSE+"40",background:ROSE+"08",color:ROSE,fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>✕ Quitar</button>}
+              </div>
+            </div>
+          ))}
+        </div>
+      }
+    </div>
+  );
+}
+
 export default function App(){
   const path = typeof window!=="undefined"?window.location.pathname:"";
-  // /chofer route — driver PWA
-  if(path.startsWith("/chofer")){
-    return(<><style>{CSS}</style><ChoferApp/></>);
-  }
-  // /track/:id route — public tracking page
+  // Rutas públicas sin auth — deben estar antes de cualquier hook
+  if(path.startsWith("/chofer")) return <><style>{CSS}</style><ChoferApp/></>;
   const trackMatch = path.match(/^\/track\/([A-Z0-9]+)/i);
-  if(trackMatch){
-    return(<><style>{CSS}</style><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></>);
-  }
+  if(trackMatch) return <><style>{CSS}</style><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></>;
 
-  const [view,setView]=useState(()=>{
-    // Deep-link via ?v=<id> (para shortcuts PWA)
-    try{
-      const qs = new URLSearchParams(window.location.search);
-      const v = qs.get("v");
-      if(v) return v;
-    }catch(e){}
-    return "dashboard";
-  });
+  /* ── TODOS los hooks siempre se llaman en el mismo orden ── */
+
+  // 1. Auth anónima — firebase auth para Firestore, no requiere Google login
+  const [authUser,setAuthUser]=useState(undefined);
+  useEffect(()=>{
+    const unsub=onAuthStateChanged(auth,u=>{
+      if(u){setAuthUser(u);}
+      else{signInAnonymously(auth).then(r=>setAuthUser(r.user)).catch(()=>setAuthUser(null));}
+    });
+    return()=>unsub();
+  },[]);
+
+  // 2. Estado de la app
+  const [view,setView]=useState(()=>{try{const v=new URLSearchParams(window.location.search).get("v");if(v)return v;}catch(e){}return "dashboard";});
   const [cots,setCots]=useState([]);
   const [facts,setFacts]=useState([]);
   const [rutas,setRutas]=useState([]);
@@ -9686,91 +11415,130 @@ export default function App(){
   const [installPrompt,setInstallPrompt]=useState(null);
   const [showInstallBanner,setShowInstallBanner]=useState(false);
 
-  // PWA install prompt
+  // 2b. Perfiles de usuarios (todos) — para el picker de selección
+  const [userProfile,setUserProfile]=useState(null); // perfil seleccionado actualmente
+  const [allProfiles,setAllProfiles]=useState([]);
+  const [profileLoading,setProfileLoading]=useState(true);
   useEffect(()=>{
-    const h=(e)=>{e.preventDefault();setInstallPrompt(e);
-      if(!localStorage.getItem("dmov_install_dismissed")) setShowInstallBanner(true);
-    };
+    if(!authUser){setProfileLoading(false);return;}
+    const unsub=onSnapshot(collection(db,"dmov_usuarios"),s=>{
+      const list=s.docs
+        .map(d=>({id:d.id,...d.data()}))
+        .filter(p=>p.activo!==false)
+        .sort((a,b)=>a.rol==="admin"?-1:b.rol==="admin"?1:0);
+      setAllProfiles(list);
+      setProfileLoading(false);
+    },()=>setProfileLoading(false));
+    return()=>unsub();
+  },[authUser?.uid]);
+
+  // 3. PWA install
+  useEffect(()=>{
+    const h=(e)=>{e.preventDefault();setInstallPrompt(e);if(!localStorage.getItem("dmov_install_dismissed"))setShowInstallBanner(true);};
     window.addEventListener("beforeinstallprompt",h);
     return()=>window.removeEventListener("beforeinstallprompt",h);
   },[]);
 
+  // 4. Firestore listeners — SOLO cuando hay usuario autenticado
   useEffect(()=>{
-    const u1=onSnapshot(collection(db,"cotizaciones"),s=>{setCots(s.docs.map(d=>({id:d.id,...d.data()})));setFbOk(true);});
-    const u2=onSnapshot(collection(db,"facturas"),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u3=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u4=onSnapshot(collection(db,"entregas"),s=>setEntregas(s.docs.map(d=>({id:d.id,...d.data()}))));
+    if(!authUser) return; // sin auth, no configurar listeners
+    const onErr=()=>{}; // silencia errores de permisos
+    const u1=onSnapshot(collection(db,"cotizaciones"),s=>{setCots(s.docs.map(d=>({id:d.id,...d.data()})));setFbOk(true);},onErr);
+    const u2=onSnapshot(collection(db,"facturas"),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u3=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u4=onSnapshot(collection(db,"entregas"),s=>setEntregas(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     const u5=onSnapshot(collection(db,"viaticos"),s=>{
-      const list = s.docs.map(d=>({id:d.id,...d.data()}));
+      const list=s.docs.map(d=>({id:d.id,...d.data()}));
       setViat(list);
-      // Expone globalmente para que exportFacturasXLSX genere la hoja P&L + Costos
-      try{window.__DMOV_VIATICOS__ = list;}catch(e){}
-    });
-    // También trae gastosChofer para incluirlos en reportes oficiales
+      try{window.__DMOV_VIATICOS__=list;}catch(e){}
+    },onErr);
     const u9=onSnapshot(collection(db,"gastosChofer"),s=>{
-      try{window.__DMOV_GASTOS_CHOFER__ = s.docs.map(d=>({id:d.id,...d.data()}));}catch(e){}
-    });
-    const u6=onSnapshot(collection(db,"cuentas"),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u7=onSnapshot(collection(db,"prospeccion"),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u8=onSnapshot(collection(db,"choferes"),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()}))));
+      try{window.__DMOV_GASTOS_CHOFER__=s.docs.map(d=>({id:d.id,...d.data()}));}catch(e){}
+    },onErr);
+    const u6=onSnapshot(collection(db,"cuentas"),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u7=onSnapshot(collection(db,"prospeccion"),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u8=onSnapshot(collection(db,"choferes"),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     return()=>{u1();u2();u3();u4();u5();u6();u7();u8();u9&&u9();};
-  },[]);
+  },[authUser?.uid]); // re-ejecutar solo cuando cambia el uid
 
-  // Cmd+K shortcut
+  // 5. Cmd+K shortcut
   useEffect(()=>{
     const h=e=>{if((e.metaKey||e.ctrlKey)&&e.key==="k"){e.preventDefault();setSearchOpen(o=>!o);}};
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
   },[]);
 
-  // Responsive sidebar
+  // 6. Responsive sidebar
   useEffect(()=>{
     const h=()=>{if(window.innerWidth<768)setSidebarOpen(false);};
     h();window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);
   },[]);
 
+  /* ── Auth checks DESPUÉS de todos los hooks ── */
+  // Loading inicial (esperando Firebase anónimo)
+  if(authUser===undefined||profileLoading) return(
+    <><style>{CSS}</style>
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#0f2040)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{width:60,height:60,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",boxShadow:"0 8px 28px #d9770640"}}><Truck size={28} color="#fff"/></div>
+        <div style={{fontFamily:DISP,fontWeight:900,fontSize:20,color:"#fff"}}>DMvimiento</div>
+        <div style={{fontSize:12,color:"#ffffff50",marginTop:6}}>Cargando…</div>
+      </div>
+    </div></>
+  );
+
+  // Selector de perfil (si no hay perfil activo)
+  if(!userProfile){
+    return <><style>{CSS}</style><ProfilePickerScreen profiles={allProfiles} onSelect={setUserProfile}/></>;
+  }
+
+  const rol=userProfile?.rol||"admin";
+  const isAdmin=rol==="admin";
+  const isOps=rol==="operaciones";
+
+  /* ── App principal ── */
   const VIEWS={
-    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos}/>,
-    cotizador:<Cotizador onSaved={()=>setView("dashboard")}/>,
-    presupuestos:<Presupuestos/>,
-    prospeccion:<Prospeccion/>,
+    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     choferes:<Choferes/>,
     tracking:<LiveTracking/>,
     rutas:<PlanificadorRutas/>,
-    nacional:<PlanificadorNacional/>,
-    facturas:<Facturas/>,
-    viaticos:<Viaticos/>,
+    nacional:isAdmin?<PlanificadorNacional/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    facturas:<Facturas rol={rol}/>,
+    reportes:isAdmin?<Reportes/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    viaticos:isAdmin?<Viaticos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     gastosAdmin:<GastosAdmin/>,
     jornadas:<JornadasAdmin/>,
     chat:<ChatCentro/>,
     alertas:<AlertasCentro setView={setView}/>,
-    clientes:<Clientes/>,
+    clientes:isAdmin?<Clientes/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     entregas:<Entregas/>,
+    usuarios:isAdmin?<Usuarios/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
   };
 
   return(
-    <>
-      <style>{CSS}</style>
-      <SOSGlobalBanner onGo={()=>setView("alertas")}/>
-      <div style={{display:"flex",minHeight:"100vh",background:"#f1f4fb",color:TEXT,fontFamily:SANS}}>
-        {sidebarOpen&&<div className="mobile-backdrop" onClick={()=>setSidebarOpen(false)}/>}
-        <Sidebar view={view} setView={v=>{setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen}/>
-        <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
-          <TopBar view={view} setView={setView} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} setSearchOpen={setSearchOpen}/>
-          <main style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
-            {VIEWS[view]||VIEWS.dashboard}
-          </main>
+    <><style>{CSS}</style>
+      <ErrorBoundary>
+        <SOSGlobalBanner onGo={()=>setView("alertas")}/>
+        <div style={{display:"flex",minHeight:"100vh",background:"#f1f4fb",color:TEXT,fontFamily:SANS}}>
+          {sidebarOpen&&<div className="mobile-backdrop" onClick={()=>setSidebarOpen(false)}/>}
+          <Sidebar view={view} setView={v=>{setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen} userProfile={userProfile} rol={rol} onLogout={()=>{setUserProfile(null);setView("dashboard");}}/>
+          <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
+            <TopBar view={view} setView={setView} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} setSearchOpen={setSearchOpen}/>
+            <main style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
+              {VIEWS[view]||VIEWS.dashboard}
+            </main>
+          </div>
         </div>
-      </div>
-      {searchOpen&&<SearchPalette cots={cots} facts={facts} rutas={rutas} clientes={clientes} entregas={entregas} onSelect={v=>setView(v)} onClose={()=>setSearchOpen(false)}/>}
-      {showInstallBanner&&installPrompt&&<div style={{position:"fixed",bottom:16,right:16,zIndex:200,background:"#fff",borderRadius:14,padding:"14px 18px",boxShadow:"0 16px 50px rgba(12,24,41,.2)",border:"1.5px solid "+A+"30",display:"flex",alignItems:"center",gap:12,maxWidth:380}}>
-        <div style={{width:40,height:40,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:14,color:"#fff",flexShrink:0}}>DM</div>
-        <div style={{flex:1}}>
-          <div style={{fontWeight:700,fontSize:13}}>Instalar app DMvimiento</div>
-          <div style={{fontSize:11,color:MUTED}}>Acceso rápido desde tu home screen</div>
-        </div>
-        <button onClick={async()=>{installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted"){localStorage.setItem("dmov_install_dismissed","1");}setShowInstallBanner(false);setInstallPrompt(null);}} className="btn" style={{background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:9,padding:"8px 14px",fontSize:12,fontWeight:700}}>Instalar</button>
-        <button onClick={()=>{localStorage.setItem("dmov_install_dismissed","1");setShowInstallBanner(false);}} className="btn" style={{color:MUTED,fontSize:10}}>✕</button>
-      </div>}
+        {searchOpen&&<SearchPalette cots={cots} facts={facts} rutas={rutas} clientes={clientes} entregas={entregas} onSelect={v=>setView(v)} onClose={()=>setSearchOpen(false)}/>}
+        {showInstallBanner&&installPrompt&&<div style={{position:"fixed",bottom:16,right:16,zIndex:200,background:"#fff",borderRadius:14,padding:"14px 18px",boxShadow:"0 16px 50px rgba(12,24,41,.2)",border:"1.5px solid "+A+"30",display:"flex",alignItems:"center",gap:12,maxWidth:380}}>
+          <div style={{width:40,height:40,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:14,color:"#fff",flexShrink:0}}>DM</div>
+          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13}}>Instalar app DMvimiento</div><div style={{fontSize:11,color:MUTED}}>Acceso rápido desde tu home screen</div></div>
+          <button onClick={async()=>{installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted")localStorage.setItem("dmov_install_dismissed","1");setShowInstallBanner(false);setInstallPrompt(null);}} className="btn" style={{background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:9,padding:"8px 14px",fontSize:12,fontWeight:700}}>Instalar</button>
+          <button onClick={()=>{localStorage.setItem("dmov_install_dismissed","1");setShowInstallBanner(false);}} className="btn" style={{color:MUTED,fontSize:10}}>✕</button>
+        </div>}
+      </ErrorBoundary>
     </>
   );
 }
