@@ -6983,8 +6983,10 @@ function buildPLData(facts, viat, mesDesde, mesHasta, anio="2026"){
     CATS_COSTO.forEach(c=>costosCat[c]=0);
     mViat.forEach(v=>{ const c=getCategoria(v.concepto||""); costosCat[c]=(costosCat[c]||0)+(v.monto||0); });
     const totalCostos = Object.values(costosCat).reduce((a,b)=>a+b,0);
-    const utilidad   = ingresos - totalCostos;
-    const margen     = ingresos>0?utilidad/ingresos:null;
+    /* Utilidad contable: subtotal SIN IVA − costos (los costos van sin IVA).
+       Así el P&L cuadra 1:1 con la balanza de comprobación. */
+    const utilidad   = subtotal - totalCostos;
+    const margen     = subtotal>0?utilidad/subtotal:null;
     return {mes:m, mesFull:MESES_FULL_REP[MESES_REP.indexOf(m)], ingresos, subtotal, cobrado, pendiente,
             costosCat, totalCostos, utilidad, margen,
             nFacts:mFacts.length, nViat:mViat.length};
@@ -7205,6 +7207,272 @@ function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
 }
 
 /* ── Componente Reportes ───────────────────────────────────────────────── */
+/* ── Gráficas SVG (sin librerías) para Reportes ──────────────────────────── */
+
+/* Línea de tendencia: Utilidad $ (área) + Margen % (línea punteada) */
+function TrendChart({pl}){
+  if(pl.length<2) return null;
+  const W=680,H=170,P={t:18,r:46,b:24,l:52};
+  const iw=W-P.l-P.r, ih=H-P.t-P.b;
+  const vals=pl.map(d=>d.utilidad);
+  const maxV=Math.max(...vals,0), minV=Math.min(...vals,0);
+  const span=(maxV-minV)||1;
+  const x=i=>P.l+(pl.length===1?iw/2:i*(iw/(pl.length-1)));
+  const y=v=>P.t+ih-((v-minV)/span)*ih;
+  const y0=y(0);
+  const pts=pl.map((d,i)=>`${x(i)},${y(d.utilidad)}`).join(" ");
+  const area=`${x(0)},${y0} ${pts.split(" ").join(" ")} ${x(pl.length-1)},${y0}`;
+  const margs=pl.map(d=>d.margen!==null?d.margen:0);
+  const yM=v=>P.t+ih-Math.max(0,Math.min(1,(v+0.2)/0.7))*ih; // escala margen −20%..50%
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto"}}>
+      {[0.25,0.5,0.75].map(f=><line key={f} x1={P.l} x2={W-P.r} y1={P.t+ih*f} y2={P.t+ih*f} stroke={BORDER} strokeDasharray="3 4" strokeWidth="1"/>)}
+      <line x1={P.l} x2={W-P.r} y1={y0} y2={y0} stroke={MUTED+"70"} strokeWidth="1.2"/>
+      <polygon points={area} fill={GREEN+"18"}/>
+      <polyline points={pts} fill="none" stroke={GREEN} strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round"/>
+      <polyline points={pl.map((d,i)=>`${x(i)},${yM(margs[i])}`).join(" ")} fill="none" stroke={VIOLET} strokeWidth="1.6" strokeDasharray="5 4" strokeLinejoin="round"/>
+      {pl.map((d,i)=>(
+        <g key={d.mes}>
+          <circle cx={x(i)} cy={y(d.utilidad)} r="3.5" fill={d.utilidad>=0?GREEN:ROSE} stroke="#fff" strokeWidth="1.5"/>
+          <text x={x(i)} y={y(d.utilidad)+(d.utilidad>=0?-9:15)} textAnchor="middle" fontSize="9" fontFamily={MONO} fontWeight="700" fill={d.utilidad>=0?GREEN:ROSE}>
+            {(d.utilidad>=0?"+":"")+Math.round(d.utilidad/1000)}k
+          </text>
+          <text x={x(i)} y={H-7} textAnchor="middle" fontSize="9.5" fontWeight="700" fill={TEXT}>{d.mes}</text>
+          {d.margen!==null&&<text x={x(i)} y={yM(margs[i])-6} textAnchor="middle" fontSize="8" fontFamily={MONO} fill={VIOLET}>{Math.round(d.margen*100)}%</text>}
+        </g>
+      ))}
+      <text x={P.l-6} y={y0+3} textAnchor="end" fontSize="8.5" fontFamily={MONO} fill={MUTED}>$0</text>
+      <text x={P.l-6} y={P.t+8} textAnchor="end" fontSize="8.5" fontFamily={MONO} fill={MUTED}>{Math.round(maxV/1000)}k</text>
+    </svg>
+  );
+}
+
+/* Barras apiladas: costos por categoría por mes */
+function StackedCostChart({pl}){
+  const cats=CATS_COSTO.filter(c=>pl.some(d=>(d.costosCat[c]||0)>0));
+  if(pl.length===0||cats.length===0) return <div style={{color:MUTED,fontSize:12,textAlign:"center",padding:24}}>Sin costos en el período</div>;
+  const maxV=Math.max(...pl.map(d=>d.totalCostos),1);
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:pl.length>6?8:14,height:150,paddingBottom:4,borderBottom:"1px solid "+BORDER+"60"}}>
+        {pl.map(d=>(
+          <div key={d.mes} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",minWidth:0,height:"100%",justifyContent:"flex-end"}}>
+            <div style={{fontSize:8.5,fontFamily:MONO,fontWeight:700,color:ROSE,marginBottom:3}}>{Math.round(d.totalCostos/1000)}k</div>
+            <div style={{width:"70%",maxWidth:52,display:"flex",flexDirection:"column-reverse",height:Math.max(3,Math.round(d.totalCostos/maxV*118))+"px",borderRadius:"4px 4px 0 0",overflow:"hidden"}}>
+              {cats.map(c=>{
+                const v=d.costosCat[c]||0;
+                if(v<=0) return null;
+                return <div key={c} title={c+": "+fmt(v)} style={{background:CATS_COLOR[c],height:(v/d.totalCostos*100)+"%",minHeight:2}}/>;
+              })}
+            </div>
+            <div style={{fontSize:9,fontWeight:700,color:TEXT,marginTop:4}}>{d.mes}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:"5px 14px",marginTop:10}}>
+        {cats.map(c=><span key={c} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:10,color:MUTED,fontWeight:600}}><span style={{width:9,height:9,borderRadius:2,background:CATS_COLOR[c],display:"inline-block"}}/>{c}</span>)}
+      </div>
+    </div>
+  );
+}
+
+/* Donut genérico */
+function DonutChart({data,size=150,stroke=26,centerLabel,centerSub}){
+  const total=data.reduce((a,d)=>a+d.value,0);
+  if(total<=0) return <div style={{color:MUTED,fontSize:12,textAlign:"center",padding:20}}>Sin datos</div>;
+  const R=(size-stroke)/2, C=size/2, circ=2*Math.PI*R;
+  let acc=0;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
+      <svg width={size} height={size} style={{flexShrink:0}}>
+        <circle cx={C} cy={C} r={R} fill="none" stroke={BORDER} strokeWidth={stroke}/>
+        {data.filter(d=>d.value>0).map((d,i)=>{
+          const frac=d.value/total;
+          const dash=`${frac*circ} ${circ}`;
+          const off=-acc*circ;
+          acc+=frac;
+          return <circle key={i} cx={C} cy={C} r={R} fill="none" stroke={d.color} strokeWidth={stroke} strokeDasharray={dash} strokeDashoffset={off} transform={`rotate(-90 ${C} ${C})`} strokeLinecap="butt"/>;
+        })}
+        <text x={C} y={C-3} textAnchor="middle" fontSize="17" fontFamily={MONO} fontWeight="800" fill={TEXT}>{centerLabel}</text>
+        {centerSub&&<text x={C} y={C+14} textAnchor="middle" fontSize="9" fill={MUTED}>{centerSub}</text>}
+      </svg>
+      <div style={{flex:1,minWidth:140}}>
+        {data.filter(d=>d.value>0).sort((a,b)=>b.value-a.value).map((d,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:7,marginBottom:6}}>
+            <span style={{width:9,height:9,borderRadius:2,background:d.color,flexShrink:0}}/>
+            <span style={{fontSize:11,color:TEXT,fontWeight:600,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.label}</span>
+            <span style={{fontSize:10,fontFamily:MONO,fontWeight:700,color:MUTED,flexShrink:0}}>{Math.round(d.value/total*100)}%</span>
+            <span style={{fontSize:10,fontFamily:MONO,fontWeight:700,color:TEXT,flexShrink:0}}>{fmtK(d.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── PDF EJECUTIVO con gráficas (jsPDF vectorial) ────────────────────────── */
+function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
+  const pl = buildPLData(facts, viat, mesDesde, mesHasta, anio);
+  const tag = mesDesde===mesHasta?mesDesde:`${mesDesde}–${mesHasta}`;
+  const fecha = new Date().toLocaleDateString("es-MX",{day:"numeric",month:"long",year:"numeric"});
+  const doc = new jsPDF({unit:"mm",format:"a4"});
+  const PW = 210, M = 14;
+  const money = v=>"$"+Math.round(v).toLocaleString("es-MX");
+
+  const totalSub = pl.reduce((a,d)=>a+d.subtotal,0);
+  const totalIngIVA = pl.reduce((a,d)=>a+d.ingresos,0);
+  const totalCos = pl.reduce((a,d)=>a+d.totalCostos,0);
+  const totalUtil = totalSub-totalCos;
+  const margen = totalSub>0?totalUtil/totalSub:0;
+  const totalCob = pl.reduce((a,d)=>a+d.cobrado,0);
+  const totalPend = pl.reduce((a,d)=>a+d.pendiente,0);
+  const pctCob = totalIngIVA>0?Math.round(totalCob/totalIngIVA*100):0;
+
+  /* Header banda */
+  doc.setFillColor(12,24,41); doc.rect(0,0,PW,30,"F");
+  doc.setFillColor(249,115,22); doc.rect(0,30,PW,1.6,"F");
+  doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(17);
+  doc.text("REPORTE EJECUTIVO — D EN MOVIMIENTO SA DE CV",M,13);
+  doc.setFontSize(10); doc.setFont("helvetica","normal"); doc.setTextColor(180,195,215);
+  doc.text(`Estado de Resultados · Período: ${tag} ${anio} · Generado el ${fecha}`,M,21);
+  doc.setTextColor(249,115,22); doc.setFontSize(8);
+  doc.text("Fuente: contabilidad oficial (balanza de comprobación) + sistema DMOV",M,26.5);
+
+  /* KPI band */
+  let yy=38;
+  const kpis=[
+    ["INGRESOS (sin IVA)",money(totalSub),[22,163,74]],
+    ["COSTOS",money(totalCos),[225,29,72]],
+    ["UTILIDAD",money(totalUtil),totalUtil>=0?[22,163,74]:[225,29,72]],
+    ["MARGEN",Math.round(margen*100)+"%",margen>=0.15?[22,163,74]:margen>=0?[217,119,6]:[225,29,72]],
+    ["COBRADO",pctCob+"%",pctCob>=80?[22,163,74]:[217,119,6]],
+  ];
+  const kw=(PW-2*M-4*4)/5;
+  kpis.forEach((k,i)=>{
+    const kx=M+i*(kw+4);
+    doc.setFillColor(248,250,252); doc.setDrawColor(226,232,240);
+    doc.roundedRect(kx,yy,kw,20,2,2,"FD");
+    doc.setFontSize(6.6); doc.setTextColor(96,112,128); doc.setFont("helvetica","bold");
+    doc.text(k[0],kx+kw/2,yy+6,{align:"center"});
+    doc.setFontSize(11.5); doc.setTextColor(...k[2]);
+    doc.text(String(k[1]),kx+kw/2,yy+14.5,{align:"center"});
+  });
+  yy+=27;
+
+  /* Gráfica barras: Ingresos vs Costos por mes (vectorial) */
+  doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(12,24,41);
+  doc.text("Ingresos vs Costos por mes",M,yy); yy+=3;
+  const chH=42, chW=PW-2*M, baseY=yy+chH;
+  const maxV=Math.max(...pl.map(d=>Math.max(d.subtotal,d.totalCostos)),1);
+  doc.setDrawColor(226,232,240);
+  [0.25,0.5,0.75,1].forEach(f=>{doc.line(M,baseY-chH*f,M+chW,baseY-chH*f);});
+  doc.line(M,baseY,M+chW,baseY);
+  const slot=chW/pl.length;
+  pl.forEach((d,i)=>{
+    const cx=M+i*slot;
+    const bw=Math.min(11,slot/3.4);
+    const hI=d.subtotal/maxV*chH, hC=d.totalCostos/maxV*chH;
+    doc.setFillColor(22,163,74);  doc.rect(cx+slot/2-bw-1,baseY-hI,bw,hI,"F");
+    doc.setFillColor(225,29,72);  doc.rect(cx+slot/2+1,baseY-hC,bw,hC,"F");
+    doc.setFontSize(7.5); doc.setTextColor(12,24,41); doc.setFont("helvetica","bold");
+    doc.text(d.mes,cx+slot/2,baseY+4.5,{align:"center"});
+    const u=d.utilidad;
+    doc.setFontSize(6.4); doc.setTextColor(...(u>=0?[22,163,74]:[225,29,72]));
+    doc.text((u>=0?"+":"")+Math.round(u/1000)+"k",cx+slot/2,baseY-Math.max(hI,hC)-2,{align:"center"});
+  });
+  doc.setFontSize(6.6); doc.setTextColor(96,112,128); doc.setFont("helvetica","normal");
+  doc.text("Verde: ingresos sin IVA · Rojo: costos · Cifra superior: utilidad del mes",M,baseY+9);
+  yy=baseY+14;
+
+  /* Tabla P&L por mes */
+  const catShow=CATS_COSTO.filter(c=>pl.some(d=>(d.costosCat[c]||0)>0));
+  autoTable(doc,{
+    startY:yy,
+    margin:{left:M,right:M},
+    head:[["Mes","Ingresos s/IVA","Cobrado c/IVA","Por cobrar",...catShow.map(c=>c),"Total costos","Utilidad","Margen"]],
+    body:pl.map(d=>[
+      d.mesFull,
+      money(d.subtotal),
+      money(d.cobrado),
+      money(d.pendiente),
+      ...catShow.map(c=>d.costosCat[c]?money(d.costosCat[c]):"—"),
+      money(d.totalCostos),
+      money(d.utilidad),
+      d.margen!==null?Math.round(d.margen*100)+"%":"—",
+    ]),
+    foot:[[
+      "TOTAL",money(totalSub),money(totalCob),money(totalPend),
+      ...catShow.map(c=>money(pl.reduce((a,d)=>a+(d.costosCat[c]||0),0))),
+      money(totalCos),money(totalUtil),Math.round(margen*100)+"%",
+    ]],
+    styles:{fontSize:6.6,cellPadding:1.6,halign:"right"},
+    headStyles:{fillColor:[12,24,41],textColor:255,fontSize:6.2,halign:"right"},
+    footStyles:{fillColor:[249,115,22],textColor:255,fontStyle:"bold"},
+    columnStyles:{0:{halign:"left",fontStyle:"bold"}},
+    didParseCell:(data)=>{
+      if(data.section==="body"&&data.column.index===data.table.columns.length-2){
+        const v=pl[data.row.index]?.utilidad||0;
+        data.cell.styles.textColor=v>=0?[22,163,74]:[225,29,72];
+        data.cell.styles.fontStyle="bold";
+      }
+    },
+  });
+  yy=doc.lastAutoTable.finalY+8;
+
+  /* Distribución de costos + Top clientes en 2 columnas */
+  if(yy>210){doc.addPage();yy=16;}
+  const half=(PW-2*M-6)/2;
+  doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(12,24,41);
+  doc.text("Distribución de costos",M,yy);
+  doc.text("Top clientes (facturación c/IVA)",M+half+6,yy);
+  yy+=4;
+  const catAcum={};
+  CATS_COSTO.forEach(c=>catAcum[c]=pl.reduce((a,d)=>a+(d.costosCat[c]||0),0));
+  const catsSorted=CATS_COSTO.filter(c=>catAcum[c]>0).sort((a,b)=>catAcum[b]-catAcum[a]);
+  const hexToRgb=h=>[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
+  let cy=yy+3;
+  catsSorted.forEach(c=>{
+    const v=catAcum[c], p=totalCos>0?v/totalCos:0;
+    doc.setFillColor(...hexToRgb(CATS_COLOR[c]||"#9ca3af"));
+    doc.roundedRect(M,cy-2.5,3,3,0.6,0.6,"F");
+    doc.setFontSize(7.4); doc.setTextColor(12,24,41); doc.setFont("helvetica","bold");
+    doc.text(c,M+5,cy);
+    doc.setFont("helvetica","normal"); doc.setTextColor(96,112,128);
+    doc.text(money(v)+"  ("+Math.round(p*100)+"%)",M+half-2,cy,{align:"right"});
+    doc.setFillColor(235,240,246); doc.rect(M+5,cy+1.2,half-9,1.6,"F");
+    doc.setFillColor(...hexToRgb(CATS_COLOR[c]||"#9ca3af")); doc.rect(M+5,cy+1.2,Math.max(0.5,(half-9)*p),1.6,"F");
+    cy+=7.5;
+  });
+  // Top clientes
+  const idxD=MESES_REP.indexOf(mesDesde),idxH=MESES_REP.indexOf(mesHasta);
+  const mesesR=MESES_REP.slice(idxD,idxH+1);
+  const mp={};
+  facts.filter(f=>mesesR.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(anio))
+       .forEach(f=>{const k=f.empresa||f.cliente||"—";mp[k]=(mp[k]||0)+(f.total||0);});
+  const tops=Object.entries(mp).sort((a,b)=>b[1]-a[1]).slice(0,7);
+  const topMaxV=tops[0]?tops[0][1]:1;
+  let ty=yy+3;
+  const tx=M+half+6;
+  tops.forEach(([cli,v])=>{
+    doc.setFontSize(7.4); doc.setTextColor(12,24,41); doc.setFont("helvetica","bold");
+    doc.text(cli.length>34?cli.slice(0,33)+"…":cli,tx,ty);
+    doc.setFont("helvetica","normal"); doc.setTextColor(96,112,128);
+    doc.text(money(v),PW-M,ty,{align:"right"});
+    doc.setFillColor(235,240,246); doc.rect(tx,ty+1.2,half-4,1.6,"F");
+    doc.setFillColor(22,163,74); doc.rect(tx,ty+1.2,Math.max(0.5,(half-4)*(v/topMaxV)),1.6,"F");
+    ty+=7.5;
+  });
+
+  /* Footer */
+  const pages=doc.getNumberOfPages();
+  for(let p=1;p<=pages;p++){
+    doc.setPage(p);
+    doc.setFontSize(6.5); doc.setTextColor(150,160,175);
+    doc.text(`DMOV Sistema · Reporte ejecutivo ${tag} ${anio} · Página ${p}/${pages} · Confidencial`,PW/2,292,{align:"center"});
+  }
+  doc.save(`DMOV_Ejecutivo_${tag}_${anio}.pdf`);
+}
+
 function Reportes(){
   const ANIO = "2026";
   const mesActual = MESES_REP[new Date().getMonth()];
@@ -7237,10 +7505,11 @@ function Reportes(){
 
   const pl = useMemo(()=>buildPLData(facts,viat,desde,hasta,ANIO),[facts,viat,desde,hasta]);
 
-  const totalIng   = pl.reduce((a,d)=>a+d.ingresos,0);
+  const totalIng   = pl.reduce((a,d)=>a+d.ingresos,0);   // c/IVA (cobranza)
+  const totalSub   = pl.reduce((a,d)=>a+d.subtotal,0);   // sin IVA (P&L)
   const totalCos   = pl.reduce((a,d)=>a+d.totalCostos,0);
-  const totalUtil  = totalIng-totalCos;
-  const margenGral = totalIng>0?totalUtil/totalIng:null;
+  const totalUtil  = totalSub-totalCos;
+  const margenGral = totalSub>0?totalUtil/totalSub:null;
   const totalCob   = pl.reduce((a,d)=>a+d.cobrado,0);
   const totalPend  = pl.reduce((a,d)=>a+d.pendiente,0);
   const pctCob     = totalIng>0?Math.round(totalCob/totalIng*100):0;
@@ -7282,12 +7551,20 @@ function Reportes(){
           </h1>
           <p style={{color:MUTED,fontSize:13}}>Estado de resultados · Desglose por categoría · Descarga por período</p>
         </div>
-        <button
-          onClick={()=>{exportReporteXLSX(facts,viat,desde,hasta,ANIO);showT("✓ Reporte descargado — "+periodoLabel);}}
-          className="btn"
-          style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#16a34a,#15803d)",color:"#fff",borderRadius:12,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px #16a34a40"}}>
-          <Download size={15}/>Descargar Excel
-        </button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button
+            onClick={()=>{exportReportePDF(facts,viat,desde,hasta,ANIO);showT("✓ PDF Ejecutivo descargado — "+periodoLabel);}}
+            className="btn"
+            style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"40"}}>
+            <FileText size={15}/>PDF Ejecutivo
+          </button>
+          <button
+            onClick={()=>{exportReporteXLSX(facts,viat,desde,hasta,ANIO);showT("✓ Reporte descargado — "+periodoLabel);}}
+            className="btn"
+            style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#16a34a,#15803d)",color:"#fff",borderRadius:12,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px #16a34a40"}}>
+            <Download size={15}/>Excel
+          </button>
+        </div>
       </div>
 
       {/* Selector de período */}
@@ -7327,9 +7604,9 @@ function Reportes(){
 
       {/* KPI Cards */}
       <div className="g4" style={{marginBottom:20}}>
-        <KpiCard icon={TrendingUp} color={GREEN} label="Ingresos" value={fmtK(totalIng)} sub={pl.reduce((a,d)=>a+d.nFacts,0)+" facturas emitidas"}/>
-        <KpiCard icon={Zap} color={ROSE} label="Costos" value={fmtK(totalCos)} sub={pl.reduce((a,d)=>a+d.nViat,0)+" registros"}/>
-        <KpiCard icon={BarChart2} color={margenColor} label="Utilidad" value={fmtK(totalUtil)} sub={margenGral!==null?(Math.round(margenGral*100))+"% margen":"—"}/>
+        <KpiCard icon={TrendingUp} color={GREEN} label="Ingresos (sin IVA)" value={fmtK(totalSub)} sub={pl.reduce((a,d)=>a+d.nFacts,0)+" facturas · "+fmtK(totalIng)+" c/IVA"}/>
+        <KpiCard icon={Zap} color={ROSE} label="Costos" value={fmtK(totalCos)} sub={pl.reduce((a,d)=>a+d.nViat,0)+" registros contables"}/>
+        <KpiCard icon={BarChart2} color={margenColor} label="Utilidad" value={fmtK(totalUtil)} sub={margenGral!==null?(Math.round(margenGral*100))+"% margen s/ingresos sin IVA":"—"}/>
         <KpiCard icon={DollarSign} color={BLUE} label="Cobrado" value={fmtK(totalCob)} sub={pctCob+"% del facturado · $"+Math.round(totalPend/1000)+"k pendiente"}/>
       </div>
 
@@ -7338,8 +7615,8 @@ function Reportes(){
         {[
           {label:"Margen %", val:margenGral!==null?Math.round(margenGral*100)+"%":"—", ok:margenGral!==null&&margenGral>=0.15, warn:margenGral!==null&&margenGral>=0&&margenGral<0.15, ref:"≥ 15% óptimo"},
           {label:"% Cobrado", val:pctCob+"%", ok:pctCob>=80, warn:pctCob>=50&&pctCob<80, ref:"≥ 80% objetivo"},
-          {label:"Costo / Ingreso", val:totalIng>0?Math.round(totalCos/totalIng*100)+"%":"—", ok:totalIng>0&&totalCos/totalIng<=0.85, warn:totalIng>0&&totalCos/totalIng>0.85&&totalCos<=totalIng, ref:"< 85% objetivo"},
-          {label:"Nómina / Ingreso", val:totalIng>0?Math.round((catAcum["Nómina"]||0)/totalIng*100)+"%":"—", ok:totalIng>0&&(catAcum["Nómina"]||0)/totalIng<=0.4, warn:totalIng>0&&(catAcum["Nómina"]||0)/totalIng>0.4&&(catAcum["Nómina"]||0)/totalIng<=0.6, ref:"< 40% saludable"},
+          {label:"Costo / Ingreso", val:totalSub>0?Math.round(totalCos/totalSub*100)+"%":"—", ok:totalSub>0&&totalCos/totalSub<=0.85, warn:totalSub>0&&totalCos/totalSub>0.85&&totalCos<=totalSub, ref:"< 85% objetivo (sin IVA)"},
+          {label:"Nómina / Ingreso", val:totalSub>0?Math.round((catAcum["Nómina"]||0)/totalSub*100)+"%":"—", ok:totalSub>0&&(catAcum["Nómina"]||0)/totalSub<=0.4, warn:totalSub>0&&(catAcum["Nómina"]||0)/totalSub>0.4&&(catAcum["Nómina"]||0)/totalSub<=0.6, ref:"< 40% saludable"},
         ].map(({label,val,ok,warn,ref})=>{
           const c=ok?GREEN:warn?AMBER:ROSE;
           return(
@@ -7358,11 +7635,11 @@ function Reportes(){
         <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22}}>
           <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:4,color:TEXT}}>Ingresos vs Costos por mes</div>
           <div style={{fontSize:11,color:MUTED,marginBottom:16}}>
-            <span style={{display:"inline-flex",alignItems:"center",gap:5,marginRight:16}}><span style={{width:10,height:10,borderRadius:2,background:GREEN,display:"inline-block"}}/> Ingresos</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:5,marginRight:16}}><span style={{width:10,height:10,borderRadius:2,background:GREEN,display:"inline-block"}}/> Ingresos sin IVA</span>
             <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:10,height:10,borderRadius:2,background:ROSE,display:"inline-block"}}/> Costos</span>
           </div>
           {pl.length===0?<div style={{color:MUTED,textAlign:"center",padding:30,fontSize:13}}>Sin datos para este período</div>:(()=>{
-            const maxV=Math.max(...pl.map(d=>Math.max(d.ingresos,d.totalCostos)),1);
+            const maxV=Math.max(...pl.map(d=>Math.max(d.subtotal,d.totalCostos)),1);
             return(
               <div style={{display:"flex",alignItems:"flex-end",gap:pl.length>6?6:10,height:140,paddingBottom:20,position:"relative",borderBottom:"1px solid "+BORDER+"60"}}>
                 {pl.map(d=>(
@@ -7372,8 +7649,8 @@ function Reportes(){
                       {d.utilidad>=0?"+":""}{Math.round(d.utilidad/1000)}k
                     </div>
                     <div style={{width:"100%",display:"flex",gap:2,alignItems:"flex-end",height:110}}>
-                      <div style={{flex:1,background:GREEN+"cc",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round(d.ingresos/maxV*100))+"%",minHeight:3,transition:"height .4s"}}/>
-                      <div style={{flex:1,background:ROSE+"cc",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round(d.totalCostos/maxV*100))+"%",minHeight:3,transition:"height .4s"}}/>
+                      <div title={"Ingresos "+fmt(d.subtotal)} style={{flex:1,background:GREEN+"cc",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round(d.subtotal/maxV*100))+"%",minHeight:3,transition:"height .4s"}}/>
+                      <div title={"Costos "+fmt(d.totalCostos)} style={{flex:1,background:ROSE+"cc",borderRadius:"3px 3px 0 0",height:Math.max(3,Math.round(d.totalCostos/maxV*100))+"%",minHeight:3,transition:"height .4s"}}/>
                     </div>
                     <div style={{fontSize:9,fontWeight:700,color:TEXT,marginTop:2}}>{d.mes}</div>
                   </div>
@@ -7400,6 +7677,52 @@ function Reportes(){
           }
         </div>
       </div>
+
+      {/* Tendencia de utilidad + margen (solo con 2+ meses) */}
+      {pl.length>1&&(
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22,marginBottom:16}}>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT,marginBottom:4}}>Tendencia de utilidad y margen</div>
+          <div style={{fontSize:11,color:MUTED,marginBottom:10}}>
+            <span style={{display:"inline-flex",alignItems:"center",gap:5,marginRight:16}}><span style={{width:14,height:3,borderRadius:2,background:GREEN,display:"inline-block"}}/> Utilidad mensual $</span>
+            <span style={{display:"inline-flex",alignItems:"center",gap:5}}><span style={{width:14,height:0,borderTop:"2px dashed "+VIOLET,display:"inline-block"}}/> Margen %</span>
+          </div>
+          <TrendChart pl={pl}/>
+        </div>
+      )}
+
+      {/* Costos apilados por categoría + donuts */}
+      <div style={{display:"grid",gridTemplateColumns:pl.length>1?"1fr 380px":"1fr 1fr",gap:16,marginBottom:16}}>
+        {pl.length>1&&(
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22}}>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT,marginBottom:12}}>Composición de costos por mes</div>
+            <StackedCostChart pl={pl}/>
+          </div>
+        )}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22}}>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT,marginBottom:14}}>Distribución de costos</div>
+          <DonutChart
+            data={CATS_COSTO.filter(c=>catAcum[c]>0).map(c=>({label:c,value:catAcum[c],color:CATS_COLOR[c]}))}
+            centerLabel={fmtK(totalCos)} centerSub="costos"/>
+        </div>
+        {pl.length<=1&&(
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22}}>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT,marginBottom:14}}>Cobranza del período</div>
+            <DonutChart
+              data={[{label:"Cobrado",value:totalCob,color:GREEN},{label:"Por cobrar",value:totalPend,color:AMBER}]}
+              centerLabel={pctCob+"%"} centerSub="cobrado"/>
+          </div>
+        )}
+      </div>
+
+      {/* Cobranza (con 2+ meses va en fila propia) */}
+      {pl.length>1&&(
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22,marginBottom:16,maxWidth:520}}>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT,marginBottom:14}}>Cobranza del período</div>
+          <DonutChart
+            data={[{label:"Cobrado",value:totalCob,color:GREEN},{label:"Por cobrar",value:totalPend,color:AMBER}]}
+            centerLabel={pctCob+"%"} centerSub="cobrado"/>
+        </div>
+      )}
 
       {/* Desglose de costos por categoría */}
       <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22,marginBottom:16}}>
@@ -7437,7 +7760,7 @@ function Reportes(){
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
               <thead>
                 <tr style={{background:BLUE+"08"}}>
-                  {["Mes","Ingresos","Nómina","Subcontrato","Transporte","Viáticos","Operación","Otros","Total Costos","Utilidad","Margen"].map(h=>(
+                  {["Mes","Ingresos s/IVA","Nómina","Subcontrato","Transporte","Viáticos","Operación","Otros","Total Costos","Utilidad","Margen"].map(h=>(
                     <th key={h} style={{padding:"10px 12px",textAlign:h==="Mes"?"left":"right",fontWeight:700,color:BLUE,borderBottom:"2px solid "+BLUE+"20",whiteSpace:"nowrap",fontSize:11}}>{h}</th>
                   ))}
                 </tr>
@@ -7450,7 +7773,7 @@ function Reportes(){
                   return(
                     <tr key={d.mes} style={{background:bg}}>
                       <td style={{padding:"9px 12px",fontWeight:700,color:TEXT,borderBottom:"1px solid "+BORDER+"50"}}>{d.mesFull}</td>
-                      {[d.ingresos,d.costosCat["Nómina"]||0,d.costosCat["Subcontrato"]||0,d.costosCat["Transporte"]||0,d.costosCat["Viáticos"]||0,d.costosCat["Operación"]||0,otros,d.totalCostos].map((v,ci)=>(
+                      {[d.subtotal,d.costosCat["Nómina"]||0,d.costosCat["Subcontrato"]||0,d.costosCat["Transporte"]||0,d.costosCat["Viáticos"]||0,d.costosCat["Operación"]||0,otros,d.totalCostos].map((v,ci)=>(
                         <td key={ci} style={{padding:"9px 12px",textAlign:"right",fontFamily:MONO,fontSize:11,color:ci===0?GREEN:ci===7?ROSE:TEXT,fontWeight:ci===0||ci===7?700:400,borderBottom:"1px solid "+BORDER+"50"}}>{v>0?fmt(v):"—"}</td>
                       ))}
                       <td style={{padding:"9px 12px",textAlign:"right",fontFamily:MONO,fontSize:11,fontWeight:800,color:uColor,borderBottom:"1px solid "+BORDER+"50"}}>{fmt(d.utilidad)}</td>
@@ -7462,7 +7785,7 @@ function Reportes(){
               <tfoot>
                 <tr style={{background:BLUE+"10",borderTop:"2px solid "+BLUE+"30"}}>
                   <td style={{padding:"10px 12px",fontWeight:800,color:BLUE,fontSize:12}}>TOTAL</td>
-                  {[totalIng,catAcum["Nómina"]||0,catAcum["Subcontrato"]||0,catAcum["Transporte"]||0,catAcum["Viáticos"]||0,catAcum["Operación"]||0,(catAcum["Bancario"]||0)+(catAcum["Otro"]||0)+(catAcum["Administración"]||0)+(catAcum["Comunicación"]||0)+(catAcum["Fiscal"]||0),totalCos].map((v,ci)=>(
+                  {[totalSub,catAcum["Nómina"]||0,catAcum["Subcontrato"]||0,catAcum["Transporte"]||0,catAcum["Viáticos"]||0,catAcum["Operación"]||0,(catAcum["Bancario"]||0)+(catAcum["Otro"]||0)+(catAcum["Administración"]||0)+(catAcum["Comunicación"]||0)+(catAcum["Fiscal"]||0),totalCos].map((v,ci)=>(
                     <td key={ci} style={{padding:"10px 12px",textAlign:"right",fontFamily:MONO,fontSize:12,color:ci===0?GREEN:ci===7?ROSE:BLUE,fontWeight:800}}>{fmt(v)}</td>
                   ))}
                   <td style={{padding:"10px 12px",textAlign:"right",fontFamily:MONO,fontSize:12,fontWeight:900,color:totalUtil>=0?GREEN:ROSE}}>{fmt(totalUtil)}</td>
