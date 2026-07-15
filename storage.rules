@@ -1,9 +1,20 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    // F0: antes era `allow read, write: if true` (bucket público total).
+    // Ahora requiere sesión de Firebase Auth — la app de chofer y el panel
+    // usan auth anónima, así que la operación no se rompe.
     match /evidencias/{allPaths=**} {
-      allow read: if true;
-      allow write: if true;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Cualquier otra ruta del bucket: lectura autenticada, escritura bloqueada.
+    match /{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
     }
   }
 }

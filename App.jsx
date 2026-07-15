@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc,
   doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
-  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  limit, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
 } from "firebase/firestore";
 import {
   getAuth, signInWithPopup, GoogleAuthProvider, signOut as fbSignOut,
@@ -52,8 +52,18 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({prompt:"select_account"});
 
 /* ─── SEGURIDAD: hash SHA-256 para PINs de acceso ─────────────────────────── */
-async function hashPin(pin){
-  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(pin).trim()));
+/* F0: trackingId criptográfico — Math.random() era predecible para URLs públicas /track/:id */
+function genTrackingId(){
+  const arr=new Uint8Array(6);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b=>b.toString(36).padStart(2,"0")).join("").slice(0,10).toUpperCase();
+}
+
+async function hashPin(pin, salt=""){
+  // F0.5: hash con salt por-usuario (uid) — hashes no comparables entre usuarios
+  // ni atacables con tablas precalculadas. Los perfiles existentes no tenían PIN
+  // guardado, así que el cambio de esquema no rompe a nadie.
+  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(salt)+":"+String(pin).trim()));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
 }
 
@@ -407,6 +417,15 @@ body{background:#f1f4fb;font-family:${SANS};color:${TEXT};-webkit-font-smoothing
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:${BD2};border-radius:8px}
+::-webkit-scrollbar-thumb:hover{background:${MUTED}}
+::selection{background:${A}30}
+/* UX F4: foco visible para teclado (accesibilidad) sin ensuciar el mouse */
+:focus-visible{outline:2px solid ${A};outline-offset:2px;border-radius:4px}
+button:focus:not(:focus-visible),input:focus:not(:focus-visible),select:focus:not(:focus-visible){outline:none}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;border-color:${A}!important;box-shadow:0 0 0 3px ${A}22}
+button{transition:transform .12s ease,box-shadow .12s ease,opacity .12s ease}
+button:active{transform:scale(.985)}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
 @keyframes popIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -1116,6 +1135,21 @@ const CLIENTE_PLANES = [
     regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#a16207",
   },
+  /* HENRY / WALMART — cliente nuevo (mayo 2026), datos fiscales por completar */
+  {
+    id:"henry_walmart",
+    aliases:["HENRY","LUIS ENRIQUE","WALMART","CANJES WALMART","HENRY WALMART"],
+    cliente:"Henry / Walmart",
+    empresa:"POR DEFINIR",
+    plan:"Walmart Canjes Promotores",
+    planSolicitud:"P-WALMART Canjes Promotores",
+    rfc:"",
+    domicilio1:"",
+    domicilio2:"",
+    regimenFiscal:"",
+    color:"#0ea5e9",
+    pendienteFiscales: true, // marcar para completar después
+  },
 ];
 
 /* Constantes "siempre iguales" que aparecen en cada solicitud de factura.
@@ -1733,6 +1767,17 @@ function buildRelacionFacturasSheet(facts, brand, year){
 function buildResumenPLSheet(facts, viat, brand, year){
   const MESES_FULL=["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO","JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"];
   const MESES_ABBR=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  // F2: el P&L incluía SOLO viáticos de oficina e ignoraba los gastos de choferes
+  // aprobados → utilidad sobreestimada. Se fusionan aquí (mapeando fechaTs → mes/año).
+  const gastosCh = (typeof window!=="undefined" && window.__DMOV_GASTOS_CHOFER__) || [];
+  const gastosChNorm = gastosCh
+    .filter(g=>g.estado==="reembolsado"||g.estado==="aprobado")
+    .map(g=>{
+      const d = g.fechaTs?.seconds ? new Date(g.fechaTs.seconds*1000) : (g.createdAt?.seconds ? new Date(g.createdAt.seconds*1000) : null);
+      return d ? { tipo:g.tipo||"otro", concepto:"[Chofer "+(g.choferNombre||"")+"] "+(g.tipo||"gasto")+(g.nota?" — "+g.nota:""), monto:Number(g.monto)||0, mes:MESES_ABBR[d.getMonth()], anio:d.getFullYear() } : null;
+    })
+    .filter(Boolean);
+  viat = [...viat, ...gastosChNorm];
   const ws = {};
   const merges = [];
   const rowHeights = [];
@@ -2273,157 +2318,6 @@ function exportFacturasXLSX(facts, mesFiltro){
 }
 
 // ═══════ FIN exportFacturasXLSX (formato oficina) — código legacy eliminado ═══════
-function _legacyExportFacturasXLSX_disabled(facts, mesFiltro){
-  const anio = new Date().getFullYear();
-  const wb = XLSX.utils.book_new();
-  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-  const fechaReporte = new Date().toLocaleDateString("es-MX",{year:"numeric",month:"long",day:"numeric"});
-
-  // ──────── HOJA 1: RESUMEN EJECUTIVO ────────
-  const totalFact = facts.reduce((a,f)=>a+Number(f.total||0),0);
-  const totalSub  = facts.reduce((a,f)=>a+Number(f.subtotal||f.monto||0),0);
-  const totalIVA  = facts.reduce((a,f)=>a+Number(f.ivaAmt||f.iva||0),0);
-  const cobrado   = facts.filter(f=>f.status==="Pagada").reduce((a,f)=>a+Number(f.total||0),0);
-  const pendiente = facts.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+Number(f.total||0),0);
-  const vencido   = facts.filter(f=>f.status==="Vencida").reduce((a,f)=>a+Number(f.total||0),0);
-
-  const resumen = [
-    ["DMVIMIENTO — REPORTE EJECUTIVO DE FACTURACIÓN"],
-    ["Generado: "+fechaReporte+(mesFiltro?"  ·  Mes filtrado: "+mesFiltro:"")],
-    [],
-    ["INDICADORES GENERALES"],
-    ["Total de facturas",       facts.length],
-    ["Subtotal acumulado",      totalSub],
-    ["IVA acumulado (16%)",     totalIVA],
-    ["TOTAL FACTURADO",         totalFact],
-    [],
-    ["ESTADO DE PAGOS"],
-    ["Cobrado (pagadas)",       cobrado],
-    ["Por cobrar (pendientes)", pendiente],
-    ["Vencido",                 vencido],
-    ["% de cobranza",           totalFact>0?Math.round(cobrado/totalFact*100)/100:0],
-    [],
-    ["FACTURAS POR ESTADO"],
-    ["Pagadas",    facts.filter(f=>f.status==="Pagada").length],
-    ["Pendientes", facts.filter(f=>f.status==="Pendiente").length],
-    ["Vencidas",   facts.filter(f=>f.status==="Vencida").length],
-  ];
-  const ws1 = XLSX.utils.aoa_to_sheet(resumen);
-  ws1["!cols"] = [{wch:35},{wch:22}];
-  ws1["!merges"] = [{s:{r:0,c:0},e:{r:0,c:1}},{s:{r:1,c:0},e:{r:1,c:1}},{s:{r:3,c:0},e:{r:3,c:1}},{s:{r:9,c:0},e:{r:9,c:1}},{s:{r:15,c:0},e:{r:15,c:1}}];
-  // Format money cells
-  ["B6","B7","B8","B11","B12","B13"].forEach(a=>setCurrency(ws1,a));
-  if(ws1["B14"]) ws1["B14"].z = "0%";
-  XLSX.utils.book_append_sheet(wb, ws1, "Resumen");
-
-  // ──────── HOJA 2: POR MES ────────
-  const porMesData = [];
-  porMesData.push(["Mes","# Facturas","Subtotal","IVA 16%","Total","Cobrado","Pendiente","Vencido","% Cobrado"]);
-  let gFac=0,gSub=0,gIva=0,gCob=0,gPen=0,gVen=0,gCount=0;
-  MESES.forEach(m=>{
-    const its = facts.filter(f=>f.mesOp===m);
-    if(its.length===0) return;
-    const sub = its.reduce((a,f)=>a+Number(f.subtotal||f.monto||0),0);
-    const iva = its.reduce((a,f)=>a+Number(f.ivaAmt||f.iva||0),0);
-    const tot = its.reduce((a,f)=>a+Number(f.total||0),0);
-    const cob = its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+Number(f.total||0),0);
-    const pen = its.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+Number(f.total||0),0);
-    const ven = its.filter(f=>f.status==="Vencida").reduce((a,f)=>a+Number(f.total||0),0);
-    porMesData.push([m+" "+anio,its.length,sub,iva,tot,cob,pen,ven,tot>0?cob/tot:0]);
-    gFac+=tot;gSub+=sub;gIva+=iva;gCob+=cob;gPen+=pen;gVen+=ven;gCount+=its.length;
-  });
-  porMesData.push([]);
-  porMesData.push(["TOTAL ANUAL "+anio,gCount,gSub,gIva,gFac,gCob,gPen,gVen,gFac>0?gCob/gFac:0]);
-  const ws2 = XLSX.utils.aoa_to_sheet(porMesData);
-  ws2["!cols"] = [{wch:14},{wch:11},{wch:16},{wch:14},{wch:16},{wch:16},{wch:16},{wch:14},{wch:11}];
-  const lastRow2 = porMesData.length;
-  setRange(ws2,[2,3,4,5,6,7],1,lastRow2-1,MONEY_FMT);
-  for(let r=1;r<lastRow2;r++){
-    const a = XLSX.utils.encode_cell({r,c:8});
-    if(ws2[a]) ws2[a].z = "0.0%";
-  }
-  ws2["!freeze"] = {xSplit:0,ySplit:1};
-  XLSX.utils.book_append_sheet(wb, ws2, "Por Mes");
-
-  // ──────── HOJA 3: POR CLIENTE ────────
-  const byClient = {};
-  facts.forEach(f=>{
-    const k = (f.empresa||f.cliente||"—").trim();
-    if(!byClient[k]) byClient[k] = {count:0,sub:0,iva:0,tot:0,cob:0,pen:0};
-    byClient[k].count++;
-    byClient[k].sub += Number(f.subtotal||f.monto||0);
-    byClient[k].iva += Number(f.ivaAmt||f.iva||0);
-    byClient[k].tot += Number(f.total||0);
-    if(f.status==="Pagada") byClient[k].cob += Number(f.total||0);
-    if(f.status==="Pendiente") byClient[k].pen += Number(f.total||0);
-  });
-  const clientData = [["Cliente","# Facturas","Subtotal","IVA 16%","Total","Cobrado","Pendiente","% Part."]];
-  const ordered = Object.entries(byClient).sort((a,b)=>b[1].tot-a[1].tot);
-  ordered.forEach(([name,v])=>{
-    clientData.push([name,v.count,v.sub,v.iva,v.tot,v.cob,v.pen,gFac>0?v.tot/gFac:0]);
-  });
-  clientData.push([]);
-  clientData.push(["TOTAL GENERAL",gCount,gSub,gIva,gFac,gCob,gPen,1]);
-  const ws3 = XLSX.utils.aoa_to_sheet(clientData);
-  ws3["!cols"] = [{wch:32},{wch:11},{wch:16},{wch:14},{wch:16},{wch:16},{wch:16},{wch:10}];
-  setRange(ws3,[2,3,4,5,6],1,clientData.length-1,MONEY_FMT);
-  for(let r=1;r<clientData.length;r++){
-    const a = XLSX.utils.encode_cell({r,c:7});
-    if(ws3[a]) ws3[a].z = "0.00%";
-  }
-  ws3["!freeze"] = {xSplit:0,ySplit:1};
-  XLSX.utils.book_append_sheet(wb, ws3, "Por Cliente");
-
-  // ──────── HOJA 4: DETALLE POR MES (agrupado) ────────
-  const detailGrouped = [["#","Folio","Fecha","Cliente","Solicitante","Plan","Servicio","Subtotal","IVA","Total","Estado","Notas"]];
-  let idx = 1;
-  MESES.forEach(m=>{
-    const its = facts.filter(f=>f.mesOp===m).sort((a,b)=>(a.folio||"").localeCompare(b.folio||""));
-    if(its.length===0) return;
-    // Section header row
-    detailGrouped.push(["▼ "+m.toUpperCase()+" "+anio+" — "+its.length+" factura(s)","","","","","","","","","","",""]);
-    let mSub=0,mIva=0,mTot=0;
-    its.forEach(f=>{
-      const sub = Number(f.subtotal||f.monto||0);
-      const iva = Number(f.ivaAmt||f.iva||0);
-      const tot = Number(f.total||0);
-      mSub+=sub;mIva+=iva;mTot+=tot;
-      detailGrouped.push([idx++,f.folio||"",m+" "+(f.anio||anio),f.empresa||f.cliente||"",f.solicitante||"",f.plan||"",f.servicio||"",sub,iva,tot,f.status||"Pendiente",f.notas||""]);
-    });
-    // Subtotal row
-    detailGrouped.push(["","","","Subtotal "+m,"","","",mSub,mIva,mTot,"",""]);
-    detailGrouped.push([]);
-  });
-  // Grand total
-  detailGrouped.push(["","","","GRAN TOTAL","","","",gSub,gIva,gFac,"",""]);
-  const ws4 = XLSX.utils.aoa_to_sheet(detailGrouped);
-  ws4["!cols"] = [{wch:5},{wch:16},{wch:11},{wch:28},{wch:20},{wch:18},{wch:40},{wch:14},{wch:12},{wch:14},{wch:12},{wch:30}];
-  setRange(ws4,[7,8,9],1,detailGrouped.length,MONEY_FMT);
-  ws4["!freeze"] = {xSplit:0,ySplit:1};
-  XLSX.utils.book_append_sheet(wb, ws4, "Detalle por Mes");
-
-  // ──────── HOJA 5: DETALLE COMPLETO (plano, filtrable) ────────
-  const flatSorted = [...facts].sort((a,b)=>{
-    const mi = MESES.indexOf(a.mesOp||"")-MESES.indexOf(b.mesOp||"");
-    return mi!==0?mi:(a.folio||"").localeCompare(b.folio||"");
-  });
-  const detailFlat = [["Folio","Mes","Año","Cliente","Solicitante","Plan","Servicio","Subtotal","IVA 16%","Total","Estado","Notas"]];
-  flatSorted.forEach(f=>{
-    detailFlat.push([f.folio||"",f.mesOp||"",f.anio||anio,f.empresa||f.cliente||"",f.solicitante||"",f.plan||"",f.servicio||"",Number(f.subtotal||f.monto||0),Number(f.ivaAmt||f.iva||0),Number(f.total||0),f.status||"Pendiente",f.notas||""]);
-  });
-  detailFlat.push([]);
-  detailFlat.push(["TOTAL","","","","","","",gSub,gIva,gFac,"",""]);
-  const ws5 = XLSX.utils.aoa_to_sheet(detailFlat);
-  ws5["!cols"] = [{wch:16},{wch:6},{wch:7},{wch:28},{wch:20},{wch:18},{wch:40},{wch:14},{wch:12},{wch:14},{wch:12},{wch:30}];
-  setRange(ws5,[7,8,9],1,detailFlat.length,MONEY_FMT);
-  ws5["!freeze"] = {xSplit:0,ySplit:1};
-  ws5["!autofilter"] = {ref:"A1:L"+(flatSorted.length+1)};
-  XLSX.utils.book_append_sheet(wb, ws5, "Detalle Completo");
-
-  // Descargar
-  const mesTag = mesFiltro?"_"+mesFiltro:"";
-  XLSX.writeFile(wb, `DMOV_Facturacion${mesTag}_${anio}.xlsx`);
-}
 
 // Alias para mantener compatibilidad
 function exportFinancierosXLSX(facts){
@@ -3290,6 +3184,7 @@ function getNavSections(rol){
   const all=[
     {section:"CORE",items:[
       {id:"dashboard",    label:"Dashboard",         icon:LayoutDashboard},
+      {id:"ejecutivo",    label:"Dashboard Ejecutivo", icon:TrendingUp, badge:"★", adminOnly:true},
       {id:"cotizador",    label:"Cotizador Pro",     icon:DollarSign, badge:"★",  adminOnly:true},
       {id:"presupuestos", label:"Presupuestos",      icon:ClipboardList,           adminOnly:true},
       {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
@@ -3298,6 +3193,7 @@ function getNavSections(rol){
       {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
       {id:"rutas",    label:"Planificador Rutas",    icon:Map},
       {id:"choferes", label:"Choferes",              icon:Users},
+      {id:"unidades", label:"Flota",                 icon:Truck, badge:"NEW"},
       {id:"nacional", label:"Proyectos Nacionales",  icon:Target, adminOnly:true},
       {id:"entregas", label:"Entregas",              icon:Package},
     ]},
@@ -3388,6 +3284,198 @@ function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout}){
   );
 }
 /* ─── DASHBOARD ──────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   DASHBOARD EJECUTIVO (F3) — salud del negocio en tiempo real, solo admin.
+   Ingresos = subtotal facturado (sin IVA). Costos = viáticos + gastos de chofer
+   aprobados. Cliente = clienteId (backfill F1) con fallback a texto legacy.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],setView}){
+  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const HOY=new Date(); const ANIO=HOY.getFullYear(); const MES_IDX=HOY.getMonth();
+
+  // Vencimientos de flota y licencias (suscripción propia — datos chicos)
+  const [unidadesEx,setUnidadesEx]=useState([]);
+  const [choferesEx,setChoferesEx]=useState([]);
+  useEffect(()=>onSnapshot(query(collection(db,"unidades"),limit(300)),s=>setUnidadesEx(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
+  useEffect(()=>onSnapshot(query(collection(db,"choferes"),limit(300)),s=>setChoferesEx(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
+  const vencimientos=useMemo(()=>{
+    const hoyStr=HOY.toISOString().slice(0,10);
+    const en30=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+    const out=[];
+    const chk=(fecha,tipo,quien,ir)=>{
+      if(!fecha) return;
+      if(fecha<hoyStr) out.push({nivel:"vencido",texto:tipo+" VENCIDO · "+quien+" ("+fecha+")",ir});
+      else if(fecha<=en30) out.push({nivel:"pronto",texto:tipo+" vence "+fecha+" · "+quien,ir});
+    };
+    unidadesEx.filter(u=>u.status!=="Baja").forEach(u=>{
+      chk(u.seguroVence,"Seguro",u.placa||u.id,"unidades");
+      chk(u.verificacionVence,"Verificación",u.placa||u.id,"unidades");
+    });
+    choferesEx.filter(c=>c.status!=="Inactivo").forEach(c=>{
+      chk(c.licenciaVence,"Licencia",c.nombre||"chofer","choferes");
+    });
+    return out.sort((a,b)=>(a.nivel==="vencido"?0:1)-(b.nivel==="vencido"?0:1));
+  },[unidadesEx,choferesEx]);
+  const kpi=useMemo(()=>{
+    const fAnio=facts.filter(f=>Number(f.anio)===ANIO); // Number(): anio llega como string en docs viejos
+    // Ingresos por mes (subtotal sin IVA)
+    const ingMes=MESES.map(m=>fAnio.filter(f=>f.mesOp===m).reduce((a,f)=>a+(Number(f.subtotal||f.monto)||0),0));
+    // Costos por mes: viáticos + gastos chofer aprobados
+    const gasChNorm=gastosCh.filter(g=>g.estado==="reembolsado"||g.estado==="aprobado").map(g=>{
+      const d=g.fechaTs?.seconds?new Date(g.fechaTs.seconds*1000):(g.createdAt?.seconds?new Date(g.createdAt.seconds*1000):null);
+      return d?{mes:MESES[d.getMonth()],anio:d.getFullYear(),monto:Number(g.monto)||0,tipo:g.tipo||"otro"}:null;
+    }).filter(Boolean);
+    const gastosTodos=[...viat.map(v=>({mes:v.mes,anio:v.anio,monto:Number(v.monto)||0,tipo:v.tipo||"otro"})),...gasChNorm].filter(g=>Number(g.anio)===ANIO);
+    const gasMes=MESES.map(m=>gastosTodos.filter(g=>g.mes===m).reduce((a,g)=>a+g.monto,0));
+    const utilMes=MESES.map((_,i)=>ingMes[i]-gasMes[i]);
+    // Este mes vs anterior
+    const ingActual=ingMes[MES_IDX], ingPrev=MES_IDX>0?ingMes[MES_IDX-1]:0;
+    const crecimiento=ingPrev>0?((ingActual-ingPrev)/ingPrev*100):0;
+    // Cartera
+    const abiertas=facts.filter(f=>(f.status==="Pendiente"||f.status==="Vencida")&&(Number(f.total)||0)>0);
+    const cxc=abiertas.reduce((a,f)=>a+(Number(f.total)||0),0);
+    const vencidas=abiertas.filter(f=>f.status==="Vencida");
+    const cxcVencida=vencidas.reduce((a,f)=>a+(Number(f.total)||0),0);
+    // Aging de vencidas
+    const aging={a30:0,a60:0,a90:0};
+    vencidas.forEach(f=>{
+      const dias=f.fechaVenc?Math.floor((HOY-new Date(f.fechaVenc))/86400000):0;
+      const t=Number(f.total)||0;
+      if(dias<=30)aging.a30+=t; else if(dias<=60)aging.a60+=t; else aging.a90+=t;
+    });
+    // Por captura (sin monto)
+    const sinMonto=facts.filter(f=>(Number(f.total)||0)===0&&f.status!=="Cancelada").length;
+    // Top clientes del año
+    const porCli={};
+    fAnio.forEach(f=>{
+      const key=f.clienteId||f.empresa||f.cliente||"—";
+      if(!porCli[key])porCli[key]={id:f.clienteId,nombre:f.solicitante||f.empresa||f.cliente||key,total:0,n:0};
+      porCli[key].total+=Number(f.subtotal||f.monto)||0; porCli[key].n++;
+    });
+    const topCli=Object.values(porCli).sort((a,b)=>b.total-a.total).slice(0,6);
+    // Gastos por categoría del año
+    const porCat={};
+    gastosTodos.forEach(g=>{porCat[g.tipo]=(porCat[g.tipo]||0)+g.monto;});
+    const catList=Object.entries(porCat).sort((a,b)=>b[1]-a[1]).slice(0,8);
+    // Totales año
+    const ingAnio=ingMes.reduce((a,b)=>a+b,0), gasAnio=gasMes.reduce((a,b)=>a+b,0);
+    const conMonto=fAnio.filter(f=>(Number(f.subtotal||f.monto)||0)>0);
+    const ticketProm=conMonto.length?ingAnio/conMonto.length:0;
+    const margen=ingAnio>0?((ingAnio-gasAnio)/ingAnio*100):0;
+    const rutasActivas=rutas.filter(r=>r.status==="En curso"||r.status==="Programada").length;
+    return{ingMes,gasMes,utilMes,ingActual,ingPrev,crecimiento,cxc,cxcVencida,aging,sinMonto,topCli,catList,ingAnio,gasAnio,ticketProm,margen,nFacturas:fAnio.length,rutasActivas,nVencidas:vencidas.length};
+  },[facts,viat,gastosCh,rutas]);
+
+  const maxIng=Math.max(...kpi.ingMes,...kpi.gasMes,1);
+  const barCol=(v)=>v>=0?GREEN:ROSE;
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Dashboard Ejecutivo</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Salud del negocio · {ANIO} · ingresos sin IVA · costos = viáticos + gastos de chofer</p>
+        </div>
+        <button onClick={()=>setView&&setView("reportes")} className="btn" style={{padding:"9px 16px",borderRadius:11,border:"1.5px solid "+BD2,background:"#fff",color:TEXT,fontSize:13,fontWeight:700}}>Ver reportes →</button>
+      </div>
+
+      {/* Fila 1: KPIs principales */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:14}}>
+        <KpiCard icon={TrendingUp} color={GREEN} label={"VENTAS "+MESES[MES_IDX].toUpperCase()} value={fmt(kpi.ingActual)} sub={(kpi.crecimiento>=0?"▲ +":"▼ ")+kpi.crecimiento.toFixed(1)+"% vs "+(MES_IDX>0?MESES[MES_IDX-1]:"—")}/>
+        <KpiCard icon={DollarSign} color={A} label={"VENTAS "+ANIO} value={fmt(kpi.ingAnio)} sub={kpi.nFacturas+" facturas · ticket prom "+fmt(kpi.ticketProm)}/>
+        <KpiCard icon={BarChart2} color={kpi.margen>=25?GREEN:kpi.margen>=10?AMBER:ROSE} label="MARGEN BRUTO" value={kpi.margen.toFixed(1)+"%"} sub={"Utilidad "+fmt(kpi.ingAnio-kpi.gasAnio)+" · costos "+fmt(kpi.gasAnio)}/>
+        <KpiCard icon={FileText} color={BLUE} label="POR COBRAR" value={fmt(kpi.cxc)} sub={kpi.nVencidas+" vencidas por "+fmt(kpi.cxcVencida)} onClick={()=>setView&&setView("facturas")}/>
+      </div>
+
+      {/* Fila 2: alertas ejecutivas */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:18}}>
+        <div style={{background:kpi.cxcVencida>0?"linear-gradient(135deg,#dc2626,#ef4444)":"#fff",border:kpi.cxcVencida>0?"none":"1px solid "+BORDER,borderRadius:14,padding:"14px 16px",color:kpi.cxcVencida>0?"#fff":TEXT,cursor:"pointer"}} onClick={()=>setView&&setView("facturas")}>
+          <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.06em",opacity:.85}}>COBRANZA VENCIDA · AGING</div>
+          <div style={{display:"flex",gap:14,marginTop:8,fontFamily:MONO,fontSize:12,fontWeight:700}}>
+            <span>0-30d: {fmt(kpi.aging.a30)}</span><span>31-60d: {fmt(kpi.aging.a60)}</span><span>+60d: {fmt(kpi.aging.a90)}</span>
+          </div>
+        </div>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"14px 16px"}}>
+          <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.06em",color:MUTED}}>PENDIENTES DE CAPTURA</div>
+          <div style={{fontFamily:DISP,fontWeight:900,fontSize:24,color:kpi.sinMonto>0?AMBER:GREEN,marginTop:4}}>{kpi.sinMonto} <span style={{fontSize:12,fontWeight:600,color:MUTED}}>facturas sin monto</span></div>
+        </div>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"14px 16px"}}>
+          <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.06em",color:MUTED}}>OPERACIÓN</div>
+          <div style={{fontFamily:DISP,fontWeight:900,fontSize:24,color:BLUE,marginTop:4}}>{kpi.rutasActivas} <span style={{fontSize:12,fontWeight:600,color:MUTED}}>rutas activas/programadas</span></div>
+        </div>
+      </div>
+
+      {/* Vencimientos de flota y licencias */}
+      {vencimientos.length>0&&<div style={{background:"#fff",border:"1.5px solid "+(vencimientos.some(v=>v.nivel==="vencido")?ROSE+"50":AMBER+"50"),borderRadius:16,padding:"16px 20px",marginBottom:18}}>
+        <div style={{fontWeight:800,fontSize:14,marginBottom:10,fontFamily:DISP,display:"flex",alignItems:"center",gap:8}}>
+          ⚠️ Vencimientos de flota y licencias
+          <span style={{background:ROSE+"14",color:ROSE,borderRadius:8,padding:"2px 9px",fontSize:11,fontWeight:800}}>{vencimientos.length}</span>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {vencimientos.slice(0,8).map((v,i)=>(
+            <div key={i} onClick={()=>setView&&setView(v.ir)} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:9,background:(v.nivel==="vencido"?ROSE:AMBER)+"0d",cursor:"pointer",fontSize:12.5}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:v.nivel==="vencido"?ROSE:AMBER,flexShrink:0}}/>
+              <span style={{fontWeight:v.nivel==="vencido"?800:600,color:v.nivel==="vencido"?ROSE:TEXT}}>{v.texto}</span>
+              <span style={{marginLeft:"auto",color:MUTED,fontSize:11}}>ir →</span>
+            </div>
+          ))}
+        </div>
+      </div>}
+
+      {/* Fila 3: gráfica mensual ingresos vs costos */}
+      <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px",marginBottom:18}}>
+        <div style={{fontWeight:800,fontSize:14,marginBottom:14,fontFamily:DISP}}>Ingresos vs Costos por mes · {ANIO}</div>
+        <div style={{display:"flex",alignItems:"flex-end",gap:8,height:150}}>
+          {MESES.map((m,i)=>(
+            <div key={m} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,height:"100%",justifyContent:"flex-end"}} title={m+": ingresos "+fmt(kpi.ingMes[i])+" · costos "+fmt(kpi.gasMes[i])+" · utilidad "+fmt(kpi.utilMes[i])}>
+              <div style={{display:"flex",gap:2,alignItems:"flex-end",height:"100%",width:"100%",justifyContent:"center"}}>
+                <div style={{width:"38%",height:Math.max(2,(kpi.ingMes[i]/maxIng)*100)+"%",background:"linear-gradient(180deg,"+GREEN+","+GREEN+"90)",borderRadius:"4px 4px 0 0"}}/>
+                <div style={{width:"38%",height:Math.max(2,(kpi.gasMes[i]/maxIng)*100)+"%",background:"linear-gradient(180deg,"+ROSE+"cc,"+ROSE+"70)",borderRadius:"4px 4px 0 0"}}/>
+              </div>
+              <div style={{fontSize:10,fontWeight:i===MES_IDX?800:500,color:i===MES_IDX?A:MUTED,fontFamily:MONO}}>{m}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:16,marginTop:10,fontSize:11,color:MUTED}}>
+          <span><span style={{display:"inline-block",width:10,height:10,background:GREEN,borderRadius:3,marginRight:5}}/>Ingresos (sin IVA)</span>
+          <span><span style={{display:"inline-block",width:10,height:10,background:ROSE+"cc",borderRadius:3,marginRight:5}}/>Costos operativos</span>
+        </div>
+      </div>
+
+      {/* Fila 4: top clientes + gastos por categoría */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:14}}>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+          <div style={{fontWeight:800,fontSize:14,marginBottom:12,fontFamily:DISP}}>Top clientes · facturación {ANIO}</div>
+          {kpi.topCli.map((c,i)=>{
+            const max=kpi.topCli[0]?.total||1;
+            return(<div key={i} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                <span style={{fontWeight:700}}>{c.nombre}</span>
+                <span style={{fontFamily:MONO,fontWeight:700}}>{fmt(c.total)} <span style={{color:MUTED,fontWeight:400}}>({c.n})</span></span>
+              </div>
+              <MiniBar pct={(c.total/max)*100} color={i===0?A:BLUE} h={6}/>
+            </div>);
+          })}
+          {kpi.topCli.length===0&&<div style={{color:MUTED,fontSize:12}}>Sin facturación este año</div>}
+        </div>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+          <div style={{fontWeight:800,fontSize:14,marginBottom:12,fontFamily:DISP}}>Costos por categoría · {ANIO}</div>
+          {kpi.catList.map(([cat,monto],i)=>{
+            const max=kpi.catList[0]?.[1]||1;
+            return(<div key={cat} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                <span style={{fontWeight:700,textTransform:"capitalize"}}>{cat}</span>
+                <span style={{fontFamily:MONO,fontWeight:700}}>{fmt(monto)}</span>
+              </div>
+              <MiniBar pct={(monto/max)*100} color={i===0?ROSE:AMBER} h={6}/>
+            </div>);
+          })}
+          {kpi.catList.length===0&&<div style={{color:MUTED,fontSize:12}}>Sin gastos registrados este año</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospectos=[],choferes=[],rol="admin"}){
   const isAdmin=rol==="admin";
   // KPIs operativos adicionales (gastos choferes, jornadas activas, SOS)
@@ -3903,7 +3991,7 @@ function Cotizador({onSaved}){
     try{
       const q=buildQ();
       const vencimiento = new Date(Date.now()+15*86400000).toISOString().slice(0,10);
-      await addDoc(collection(db,"cotizaciones"),{
+      const cotRef = await addDoc(collection(db,"cotizaciones"),{
         ...q,
         recurrente: !!recurrente,
         recurrenciaFrec: recurrente?recurrenciaFrec:"",
@@ -3912,6 +4000,47 @@ function Cotizador({onSaved}){
         createdAt:serverTimestamp(),
       });
       showT("✓ Cotización guardada — "+q.folio+(recurrente?" (recurrente "+recurrenciaFrec+")":""));
+      // F4: cerrar el silo — la cotización puede fluir a presupuesto en un clic.
+      // El presupuesto ya fluye a factura (toFactura), completando COT→PRE→FAC.
+      if(confirm("¿Crear PRESUPUESTO desde esta cotización?\n\nSe genera con folio PRE- ligado a "+q.folio+" y podrás convertirlo a factura desde el módulo Presupuestos.")){
+        const sub = Math.round((q.total/1.16)*100)/100;
+        const ivaAmt = Math.round((q.total-sub)*100)/100;
+        await addDoc(collection(db,"presupuestos"),{
+          folio:"PRE-"+uid(),
+          cliente:q.cliente, contacto:q.contacto||"",
+          fecha:new Date().toISOString().slice(0,10),
+          vigencia:vencimiento,
+          conceptos:[{desc:(q.modoLabel||"Servicio logístico")+" — "+(q.destino||"")+(q.vehiculoLabel?" · "+q.vehiculoLabel:""),cant:1,precio:sub}],
+          subtotal:sub, ivaAmt, total:q.total, iva:true,
+          status:"Borrador",
+          notas:"Generado desde cotización "+q.folio,
+          cotizacionOrigenId:cotRef.id, cotizacionOrigenFolio:q.folio,
+          rutaOrigenId:null,
+          createdAt:serverTimestamp(),
+        });
+        showT("✓ Presupuesto creado desde "+q.folio);
+      }
+      // F4: cotización → ruta operativa (borrador sin chofer). Los stops de la
+      // cotización tienen la forma correcta; los puntos exactos se agregan al
+      // asignar la operación. buildRutaGeofence tolera puntos vacíos (null).
+      if((q.stops||[]).length>0 && confirm("¿Crear también una RUTA en el planificador desde esta cotización?\n\nQueda como Programada sin chofer — la asignas desde Planificador de Rutas.")){
+        const stops=(q.stops||[]).map((s,i)=>({city:s.city||"",pdv:s.pdv||0,km:0,addr:s.city||"",isOrigin:i===0,puntos:[]}));
+        await addDoc(collection(db,"rutas"),{
+          nombre:"Ruta "+q.folio+" · "+(q.destino||q.cliente),
+          cliente:q.cliente, clienteTel:"", clienteEmail:"",
+          trackingId:genTrackingId(),
+          veh:"", vehiculoLabel:q.vehiculoLabel||"",
+          stops, totalPDV:q.totalPDV||0, totalKm:q.km||0,
+          vans:1, diasOp:1, capDia:0, crew:1, xViat:0, tarifaT:0,
+          sub:Math.round((q.total/1.16)*100)/100, iva:q.total-Math.round((q.total/1.16)*100)/100, total:q.total,
+          plazo:q.plazo||"", maxDia:0, mapURL:"",
+          status:"Programada", progreso:0,
+          choferId:"", choferNombre:"", choferTel:"", choferPlaca:"",
+          cotizacionOrigenId:cotRef.id, cotizacionOrigenFolio:q.folio,
+          createdAt:serverTimestamp(),
+        });
+        showT("✓ Ruta creada desde "+q.folio+" — asigna chofer en Planificador");
+      }
       onSaved&&onSaved();
     }catch(e){showT(e.message,"err");}
   };
@@ -4577,7 +4706,7 @@ function ImportRutasModal({onClose,choferes,showT}){
         const km = tar?tar.km:0;
         const chof = choferes.find(c=>c.id===choferAsignado);
         const nombre = `${g.ciudad} · ${g.fecha||new Date().toLocaleDateString("es-MX")} · ${g.cliente||"Masiva"}`;
-        const trackingId = Math.random().toString(36).slice(2,10).toUpperCase();
+        const trackingId = genTrackingId();
         const stops = [
           {city:"Ciudad de México",pdv:0,km:0,isOrigin:true,puntos:[]},
           {city:g.ciudad,pdv:totalPDV,km:km,addr:"",isOrigin:false,puntos:puntos},
@@ -4921,7 +5050,7 @@ function PlanificadorRutas(){
     setSaving(true);
     try{
       const choferSel = choferesList.find(c=>c.id===choferId);
-      const trackingId = Math.random().toString(36).slice(2,10).toUpperCase();
+      const trackingId = genTrackingId();
       await addDoc(collection(db,"rutas"),{nombre,cliente,clienteTel:(clienteTel||"").replace(/\D/g,""),clienteEmail:clienteEmail||"",trackingId,veh,vehiculoLabel:vehD?.label,stops:stops.map(s=>({city:s.city,pdv:s.pdv||0,km:s.km||0,addr:s.addr||"",isOrigin:!!s.isOrigin,puntos:(s.puntos||[]).map(p=>({id:p.id,name:p.name||"",address:p.address||"",lat:p.lat||0,lng:p.lng||0,notas:p.notas||"",isOrigin:!!p.isOrigin}))})),totalPDV,totalKm,vans,diasOp,capDia,crew,xViat,tarifaT,sub,iva,total,plazo,maxDia,mapURL:mapU,status:"Programada",progreso:0,choferId:choferId||"",choferNombre:choferSel?.nombre||"",choferTel:choferSel?.tel||"",choferPlaca:choferSel?.placa||"",createdAt:serverTimestamp()});
       // Notifica al cliente si tiene tel
       if(clienteTel&&clienteTel.replace(/\D/g,"").length===10){
@@ -5524,7 +5653,7 @@ function PlanificadorRutas(){
             copy.stopsStatus = [];
             copy.iniciadaEn = null;
             copy.completadaEn = null;
-            copy.trackingId = Math.random().toString(36).slice(2,10).toUpperCase();
+            copy.trackingId = genTrackingId();
             copy.choferId = ""; copy.choferNombre = ""; copy.choferTel = ""; copy.choferPlaca = "";
             copy.createdAt = serverTimestamp();
             await addDoc(collection(db,"rutas"),copy);
@@ -6198,6 +6327,39 @@ function Facturas({rol="admin"}){
   const del=async id=>{if(!confirm("¿Eliminar este registro?"))return;await deleteDoc(doc(db,"facturas",id));showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"facturas",id),{status});
 
+  /* ── F2: PAGOS ─────────────────────────────────────────────────────────
+     Cada cobro (total o parcial) se registra en la colección `pagos` con fecha
+     real → habilita flujo de efectivo y aging de cartera. Cuando la suma de
+     pagos cubre el total, la factura pasa a Pagada automáticamente. */
+  const [pagos,setPagos]=useState([]);
+  const [pagoModal,setPagoModal]=useState(null); // factura seleccionada
+  const [pagoForm,setPagoForm]=useState({monto:"",fecha:new Date().toISOString().slice(0,10),metodo:"Transferencia",notas:""});
+  useEffect(()=>onSnapshot(query(collection(db,"pagos"),limit(3000)),s=>setPagos(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
+  const pagosDe=f=>pagos.filter(p=>p.facturaId===f.id);
+  const pagadoDe=f=>pagosDe(f).reduce((a,p)=>a+(Number(p.monto)||0),0);
+  const saldoDe=f=>Math.max(0,(Number(f.total)||0)-pagadoDe(f));
+  const abrirPago=f=>{setPagoForm({monto:String(saldoDe(f)||""),fecha:new Date().toISOString().slice(0,10),metodo:"Transferencia",notas:""});setPagoModal(f);};
+  const registrarPago=async()=>{
+    const f=pagoModal; if(!f) return;
+    const monto=parseFloat(pagoForm.monto)||0;
+    if(monto<=0){showT("Monto inválido","err");return;}
+    try{
+      await addDoc(collection(db,"pagos"),{
+        facturaId:f.id, folio:f.folio||"", clienteId:f.clienteId||"", empresa:f.empresa||f.cliente||"",
+        monto, fecha:pagoForm.fecha, metodo:pagoForm.metodo, notas:pagoForm.notas||"",
+        createdAt:serverTimestamp(),
+      });
+      const nuevoSaldo=saldoDe(f)-monto;
+      if(nuevoSaldo<=0.5){ // tolerancia de centavos
+        await updateDoc(doc(db,"facturas",f.id),{status:"Pagada",fechaPago:pagoForm.fecha});
+        showT("✓ Pago registrado — factura PAGADA");
+      }else{
+        showT("✓ Abono registrado — saldo restante "+fmt(nuevoSaldo));
+      }
+      setPagoModal(null);
+    }catch(e){showT(e.message,"err");}
+  };
+
   const filt=mesF==="todos"?items:items.filter(f=>f.mesOp===mesF);
   const totTotal=filt.reduce((a,f)=>a+(f.total||0),0);
   const cobrado=filt.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
@@ -6302,7 +6464,7 @@ function Facturas({rol="admin"}){
                       <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
                         <button onClick={()=>downloadSolicitudFacturaXLSX(f)} className="btn" title="Descargar solicitud de factura (XLSX)" style={{padding:"5px 10px",borderRadius:7,background:GREEN+"14",border:"1.5px solid "+GREEN+"40",color:GREEN,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><FileText size={11}/>Solicitud</button>
                         <button onClick={()=>recordarPago(f)} className="btn" style={{padding:"5px 10px",borderRadius:7,background:BLUE+"10",border:"1px solid "+BLUE+"30",color:BLUE,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Send size={11}/>Recordar</button>
-                        <button onClick={()=>updStatus(f.id,"Pagada")} className="btn" style={{padding:"5px 10px",borderRadius:7,background:GREEN+"10",border:"1px solid "+GREEN+"30",color:GREEN,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Check size={11}/>Pagó</button>
+                        <button onClick={()=>abrirPago(f)} className="btn" style={{padding:"5px 10px",borderRadius:7,background:GREEN+"10",border:"1px solid "+GREEN+"30",color:GREEN,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Check size={11}/>Registrar pago</button>
                       </div>
                     </td>
                   </tr>
@@ -6352,6 +6514,7 @@ function Facturas({rol="admin"}){
                 </td>
                 <td style={{padding:"10px 12px"}}>
                   <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                    {isAdmin&&f.status!=="Pagada"&&(f.total||0)>0&&<button onClick={()=>abrirPago(f)} className="btn" title={"Registrar pago · pagado "+fmt(pagadoDe(f))+" · saldo "+fmt(saldoDe(f))} style={{color:GREEN,padding:"4px 8px",border:"1.5px solid "+GREEN+"40",background:pagadoDe(f)>0?GREEN+"22":GREEN+"10",borderRadius:6,display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}>💰{pagadoDe(f)>0?"Abonos":"Pago"}</button>}
                     <button onClick={()=>downloadSolicitudFacturaXLSX(f)} className="btn" title="Descargar SOLICITUD DE FACTURA con formato oficial (XLSX) — para enviar a contabilidad" style={{color:GREEN,padding:"4px 8px",border:"1.5px solid "+GREEN+"40",background:GREEN+"10",borderRadius:6,display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}>
                       <FileText size={12}/>Solicitud
                     </button>
@@ -6429,6 +6592,26 @@ function Facturas({rol="admin"}){
       </>}
 
       {showBitacora&&<BitacoraImport onClose={()=>setShowBitacora(false)} showT={showT}/>}
+      {pagoModal&&<Modal title={"Registrar pago · "+(pagoModal.folio||"")} onClose={()=>setPagoModal(null)} icon={DollarSign} iconColor={GREEN}>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{background:"#f8fafc",border:"1px solid "+BORDER,borderRadius:10,padding:"12px 14px",fontSize:13}}>
+            <div style={{fontWeight:800,marginBottom:4}}>{pagoModal.empresa||pagoModal.cliente}</div>
+            <div style={{display:"flex",gap:16,fontFamily:MONO,fontSize:12}}>
+              <span>Total: <strong>{fmt(pagoModal.total||0)}</strong></span>
+              <span style={{color:GREEN}}>Pagado: <strong>{fmt(pagadoDe(pagoModal))}</strong></span>
+              <span style={{color:ROSE}}>Saldo: <strong>{fmt(saldoDe(pagoModal))}</strong></span>
+            </div>
+            {pagosDe(pagoModal).length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:"1px solid "+BORDER}}>
+              {pagosDe(pagoModal).map(p=><div key={p.id} style={{fontSize:11,color:MUTED,fontFamily:MONO}}>· {p.fecha} — {fmt(p.monto)} ({p.metodo})</div>)}
+            </div>}
+          </div>
+          <Inp label="Monto del pago (MXN)" type="number" value={pagoForm.monto} onChange={e=>setPagoForm(f=>({...f,monto:e.target.value}))}/>
+          <Inp label="Fecha real del cobro" type="date" value={pagoForm.fecha} onChange={e=>setPagoForm(f=>({...f,fecha:e.target.value}))}/>
+          <Sel label="Método" options={["Transferencia","Efectivo","Cheque","Tarjeta","Otro"]} value={pagoForm.metodo} onChange={e=>setPagoForm(f=>({...f,metodo:e.target.value}))}/>
+          <Inp label="Notas (opcional)" value={pagoForm.notas} onChange={e=>setPagoForm(f=>({...f,notas:e.target.value}))}/>
+          <button onClick={registrarPago} className="btn" style={{padding:"12px 0",borderRadius:11,background:"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",fontWeight:800,fontSize:14}}>Registrar pago</button>
+        </div>
+      </Modal>}
       {modal&&<Modal title={editItem?"Editar registro":"Nuevo registro de facturación"} onClose={()=>{setModal(false);setEditItem(null);}} icon={FileText} iconColor={BLUE} wide>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <div>
@@ -7170,15 +7353,33 @@ function Viaticos(){
     {k:"tag",label:"📟 TAG / Telvia",color:"#0891b2"},
     {k:"hospital",label:"🏥 Hospital / Médico",color:ROSE},
     {k:"herramienta",label:"🔧 Herramienta",color:"#92400e"},
+    // Categorías F0: antes todo esto caía en "otro" (92% del gasto sin clasificar).
+    // Deben coincidir con las claves que usa el backfill de operacion-mayo-junio-2026.
+    {k:"nomina",label:"💼 Nómina / IMSS",color:"#1d4ed8"},
+    {k:"subcontrato",label:"🤝 Subcontrato / Honorarios",color:"#7c3aed"},
+    {k:"flete",label:"🚚 Flete externo",color:"#ea580c"},
+    {k:"mantenimiento",label:"🔩 Mantenimiento unidad",color:"#57534e"},
+    {k:"renta",label:"🏢 Renta / Arrendamiento",color:"#0f766e"},
+    {k:"seguros",label:"🛡️ Seguros",color:"#4338ca"},
+    {k:"comunicacion",label:"📱 Telefonía / Comunicación",color:"#0891b2"},
+    {k:"fiscal",label:"🏛️ Impuestos / Derechos",color:"#b91c1c"},
+    {k:"bancario",label:"🏦 Comisiones bancarias",color:"#475569"},
+    {k:"operacion",label:"⚙️ Operación / Materiales",color:"#365314"},
     {k:"otro",label:"📎 Otro",color:MUTED},
   ];
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const mesActual=MESES[new Date().getMonth()];
   const ANIO=new Date().getFullYear();
 
-  const empty={tipo:"comida",concepto:"",monto:"",operador:"",ruta:"",mes:mesActual,anio:ANIO,notas:""};
+  const empty={tipo:"comida",concepto:"",monto:"",operador:"",unidad:"",ruta:"",mes:mesActual,anio:ANIO,notas:""};
   const [form,setForm]=useState(empty);
   const sf=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+
+  // F1: catálogos para ligar el gasto a chofer/unidad reales
+  const [choferesCat,setChoferesCat]=useState([]);
+  const [unidadesCat,setUnidadesCat]=useState([]);
+  useEffect(()=>onSnapshot(query(collection(db,"choferes"),limit(200)),s=>setChoferesCat(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo")),()=>{}),[]);
+  useEffect(()=>onSnapshot(query(collection(db,"unidades"),limit(200)),s=>setUnidadesCat(s.docs.map(d=>({id:d.id,...d.data()})).filter(u=>u.status!=="Baja")),()=>{}),[]);
 
   useEffect(()=>onSnapshot(collection(db,"viaticos"),s=>{
     setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
@@ -7350,7 +7551,24 @@ function Viaticos(){
               {MESES.map(m=><option key={m} value={m}>{m}</option>)}
             </select>
           </div>
-          <Inp label="Operador / Chofer" value={form.operador} onChange={sf("operador")} placeholder="Nombre del operador"/>
+          {/* F1: operador y unidad como catálogo (no texto libre) → habilita
+              rentabilidad por operador/unidad. Texto libre sigue disponible
+              con la opción "Otro..." para no bloquear la captura. */}
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,letterSpacing:"0.07em",textTransform:"uppercase"}}>Operador / Chofer</div>
+            <select value={choferesCat.some(c=>c.nombre===form.operador)?form.operador:(form.operador?"__otro__":"")} onChange={e=>{const v=e.target.value;if(v==="__otro__"){const n=prompt("Nombre del operador:",form.operador||"");if(n!=null)setForm(f=>({...f,operador:n}));}else setForm(f=>({...f,operador:v}));}} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14,cursor:"pointer"}}>
+              <option value="">— Sin asignar —</option>
+              {choferesCat.map(c=><option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+              <option value="__otro__">Otro…{form.operador&&!choferesCat.some(c=>c.nombre===form.operador)?" ("+form.operador+")":""}</option>
+            </select>
+          </div>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,letterSpacing:"0.07em",textTransform:"uppercase"}}>Unidad (placa)</div>
+            <select value={form.unidad||""} onChange={e=>setForm(f=>({...f,unidad:e.target.value}))} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14,cursor:"pointer"}}>
+              <option value="">— Sin unidad —</option>
+              {unidadesCat.map(u=><option key={u.id} value={u.id}>{u.id}{u.tipo?" · "+u.tipo:""}</option>)}
+            </select>
+          </div>
           <Inp label="Ruta / Proyecto" value={form.ruta} onChange={sf("ruta")} placeholder="Ej: CDMX-MTY, Proyecto Walmart…"/>
           <div style={{gridColumn:"1/-1"}}><Txt label="Notas / Referencia del ticket" value={form.notas} onChange={sf("notas")} placeholder="Número de ticket, observaciones…"/></div>
           <button onClick={save} className="btn" style={{gridColumn:"1/-1",background:"linear-gradient(135deg,"+AMBER+",#f59e0b)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:"pointer"}}>
@@ -7660,6 +7878,115 @@ function Presupuestos(){
 }
 
 /* ─── CHOFERES ───────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   FLOTA / UNIDADES (F1) — los vehículos como entidad real del sistema.
+   Colección `unidades` (doc id = placa, creada en backfill F1 desde bitácora).
+   Vencimientos de seguro/verificación con alertas visuales a 30 días.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function Unidades(){
+  const [items,setItems]=useState([]);const [load,setLoad]=useState(true);
+  const [modal,setModal]=useState(false);const [editItem,setEditItem]=useState(null);
+  const [toast,setToast]=useState(null);
+  const showT=(m,t="ok")=>setToast({msg:m,type:t});
+  const TIPOS_U=["","Eurovan 1T","Camioneta 3.5T","Krafter","Rabón","Mudancero","Auto utilitario","Otro"];
+  const empty={placa:"",tipo:"",status:"Activa",seguroVence:"",verificacionVence:"",aseguradora:"",poliza:"",notas:""};
+  const [form,setForm]=useState(empty);
+  const sf=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+
+  useEffect(()=>onSnapshot(query(collection(db,"unidades"),limit(500)),s=>{
+    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.serviciosVistos||0)-(a.serviciosVistos||0)));
+    setLoad(false);
+  },()=>setLoad(false)),[]);
+
+  const HOY=new Date().toISOString().slice(0,10);
+  const en30=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+  const vencStatus=(fecha)=>{
+    if(!fecha) return {label:"Sin registrar",color:MUTED,urgente:false};
+    if(fecha<HOY) return {label:"VENCIDO "+fecha,color:ROSE,urgente:true};
+    if(fecha<=en30) return {label:"Vence "+fecha,color:AMBER,urgente:true};
+    return {label:"Vigente hasta "+fecha,color:GREEN,urgente:false};
+  };
+  const alertas=items.filter(u=>u.status!=="Baja"&&(vencStatus(u.seguroVence).urgente||vencStatus(u.verificacionVence).urgente)).length;
+
+  const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
+  const openEdit=u=>{setForm({placa:u.placa||u.id,tipo:u.tipo||"",status:u.status||"Activa",seguroVence:u.seguroVence||"",verificacionVence:u.verificacionVence||"",aseguradora:u.aseguradora||"",poliza:u.poliza||"",notas:u.notas||""});setEditItem(u);setModal(true);};
+  const save=async()=>{
+    const placa=(form.placa||"").trim().toUpperCase();
+    if(!placa){showT("La placa es obligatoria","err");return;}
+    try{
+      await setDoc(doc(db,"unidades",placa),{...form,placa,actualizadaEn:HOY},{merge:true});
+      setModal(false);setForm(empty);setEditItem(null);showT("✓ Unidad guardada");
+    }catch(e){showT(e.message,"err");}
+  };
+  const darBaja=async u=>{
+    if(!confirm("¿Dar de baja la unidad "+u.id+"? (no se borra el histórico)"))return;
+    await updateDoc(doc(db,"unidades",u.id),{status:"Baja"});showT("Unidad dada de baja");
+  };
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Flota</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>{items.filter(u=>u.status!=="Baja").length} unidades activas{alertas>0?" · ⚠️ "+alertas+" con vencimiento próximo":""}</p>
+        </div>
+        <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#f59e0b)",color:"#fff",borderRadius:12,padding:"10px 18px",fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"40"}}>
+          <Plus size={14}/>Agregar unidad
+        </button>
+      </div>
+
+      {load?<SkeletonRows n={4}/>:items.length===0?<EmptyState icon={Truck} title="Sin unidades" sub="Agrega tu primera unidad de la flota" action={openNew} actionLabel="Agregar"/>:(
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:14}}>
+          {items.map(u=>{
+            const seg=vencStatus(u.seguroVence), ver=vencStatus(u.verificacionVence);
+            const baja=u.status==="Baja";
+            return(
+              <div key={u.id} style={{background:"#fff",border:"1.5px solid "+(baja?BORDER:(seg.urgente||ver.urgente)?AMBER+"60":BORDER),borderRadius:16,padding:"18px 20px",opacity:baja?.55:1}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                  <div>
+                    <div style={{fontFamily:MONO,fontWeight:800,fontSize:19,letterSpacing:"0.02em"}}>{u.placa||u.id}</div>
+                    <div style={{fontSize:12,color:MUTED,marginTop:2}}>{u.tipo||"Tipo sin definir"}</div>
+                  </div>
+                  <span style={{background:(baja?MUTED:GREEN)+"14",color:baja?MUTED:GREEN,padding:"3px 10px",borderRadius:8,fontSize:11,fontWeight:800}}>{u.status||"Activa"}</span>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:12,fontSize:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MUTED}}>🛡️ Seguro</span><span style={{color:seg.color,fontWeight:700}}>{seg.label}</span></div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MUTED}}>✅ Verificación</span><span style={{color:ver.color,fontWeight:700}}>{ver.label}</span></div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MUTED}}>📦 Servicios registrados</span><span style={{fontFamily:MONO,fontWeight:700}}>{u.serviciosVistos||0}</span></div>
+                  {(u.choferesFrecuentes||[]).length>0&&<div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MUTED}}>👤 Choferes</span><span style={{fontWeight:600,textAlign:"right",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.choferesFrecuentes.join(", ")}</span></div>}
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>openEdit(u)} className="btn" style={{flex:1,padding:"8px 0",borderRadius:9,border:"1.5px solid "+BD2,background:"#fff",color:TEXT,fontSize:12,fontWeight:700}}>Editar</button>
+                  {!baja&&<button onClick={()=>darBaja(u)} className="btn" style={{padding:"8px 12px",borderRadius:9,border:"1.5px solid "+ROSE+"30",background:ROSE+"08",color:ROSE,fontSize:12,fontWeight:700}}>Baja</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {modal&&<Modal title={editItem?"Editar unidad "+(editItem.placa||editItem.id):"Nueva unidad"} onClose={()=>{setModal(false);setEditItem(null);}} icon={Truck} iconColor={A}>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <Inp label="Placa *" value={form.placa} onChange={sf("placa")} placeholder="ABC123D" disabled={!!editItem} style={editItem?{background:"#f5f5f5"}:{}}/>
+          <Sel label="Tipo de unidad" options={TIPOS_U.map(t=>t||"— Selecciona —")} value={form.tipo||"— Selecciona —"} onChange={e=>setForm(f=>({...f,tipo:e.target.value==="— Selecciona —"?"":e.target.value}))}/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <Inp label="Seguro vence" type="date" value={form.seguroVence} onChange={sf("seguroVence")}/>
+            <Inp label="Verificación vence" type="date" value={form.verificacionVence} onChange={sf("verificacionVence")}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <Inp label="Aseguradora" value={form.aseguradora} onChange={sf("aseguradora")}/>
+            <Inp label="No. de póliza" value={form.poliza} onChange={sf("poliza")}/>
+          </div>
+          <Sel label="Status" options={["Activa","En taller","Baja"]} value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))}/>
+          <Txt label="Notas" value={form.notas} onChange={sf("notas")} rows={2}/>
+          <button onClick={save} className="btn" style={{padding:"12px 0",borderRadius:11,background:"linear-gradient(135deg,"+A+",#f59e0b)",color:"#fff",fontWeight:800,fontSize:14}}>Guardar unidad</button>
+        </div>
+      </Modal>}
+    </div>
+  );
+}
+
 function Choferes(){
   const [items,setItems]=useState([]);
   const [load,setLoad]=useState(true);
@@ -7671,7 +7998,7 @@ function Choferes(){
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   const statuses=["Disponible","En ruta","Descanso","Inactivo"];
   const sc={Disponible:GREEN,"En ruta":BLUE,Descanso:AMBER,Inactivo:MUTED};
-  const empty={nombre:"",tel:"",email:"",placa:"",vehiculo:"cam",licencia:"",emergencia:"",emergenciaTel:"",status:"Disponible",fotoURL:"",notas:""};
+  const empty={nombre:"",tel:"",email:"",placa:"",vehiculo:"cam",licencia:"",licenciaVence:"",emergencia:"",emergenciaTel:"",status:"Disponible",fotoURL:"",notas:""};
   const [form,setForm]=useState(empty);
 
   useEffect(()=>onSnapshot(collection(db,"choferes"),s=>{
@@ -7680,7 +8007,7 @@ function Choferes(){
   }),[]);
 
   const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
-  const openEdit=c=>{setForm({nombre:c.nombre||"",tel:c.tel||"",email:c.email||"",placa:c.placa||"",vehiculo:c.vehiculo||"cam",licencia:c.licencia||"",emergencia:c.emergencia||"",emergenciaTel:c.emergenciaTel||"",status:c.status||"Disponible",fotoURL:c.fotoURL||"",notas:c.notas||""});setEditItem(c);setModal(true);};
+  const openEdit=c=>{setForm({nombre:c.nombre||"",tel:c.tel||"",email:c.email||"",placa:c.placa||"",vehiculo:c.vehiculo||"cam",licencia:c.licencia||"",licenciaVence:c.licenciaVence||"",emergencia:c.emergencia||"",emergenciaTel:c.emergenciaTel||"",status:c.status||"Disponible",fotoURL:c.fotoURL||"",notas:c.notas||""});setEditItem(c);setModal(true);};
 
   const save=async()=>{
     if(!form.nombre.trim()||!form.tel.trim()){showT("Nombre y teléfono son obligatorios","err");return;}
@@ -7768,6 +8095,7 @@ function Choferes(){
           <Inp label="Teléfono * (10 dígitos)" value={form.tel} onChange={e=>setForm({...form,tel:e.target.value})} placeholder="5512345678"/>
           <Inp label="Email" type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="juan@ejemplo.com"/>
           <Inp label="Licencia de conducir" value={form.licencia} onChange={e=>setForm({...form,licencia:e.target.value})} placeholder="Tipo B · Folio …"/>
+          <Inp label="Licencia vence" type="date" value={form.licenciaVence||""} onChange={e=>setForm({...form,licenciaVence:e.target.value})}/>
           <Inp label="Placa asignada" value={form.placa} onChange={e=>setForm({...form,placa:e.target.value})} placeholder="ABC-123-D"/>
           <Sel label="Vehículo" value={form.vehiculo} onChange={e=>setForm({...form,vehiculo:e.target.value})} options={[{v:"eur",l:"Eurovan"},{v:"cam",l:"Camioneta 3.5T"},{v:"kra",l:"Krafter"}]}/>
           <Inp label="Contacto de emergencia" value={form.emergencia} onChange={e=>setForm({...form,emergencia:e.target.value})} placeholder="Nombre del contacto"/>
@@ -7820,6 +8148,19 @@ function Prospeccion(){
     try{
       if(editItem){await updateDoc(doc(db,"prospeccion",editItem.id),data);showT("✓ Prospecto actualizado");}
       else{await addDoc(collection(db,"prospeccion"),{...data,folio:"PROS-"+uid(),createdAt:serverTimestamp()});showT("✓ Prospecto creado");}
+      // F4: prospecto GANADO deja de ser callejón sin salida — se convierte en cliente.
+      if(data.status==="Ganado"){
+        const yaExiste = await getDocs(query(collection(db,"cuentas"),where("nombre","==",data.empresa.trim())));
+        if(yaExiste.empty && confirm("🎉 Prospecto GANADO.\n\n¿Crear \""+data.empresa.trim()+"\" como CLIENTE en el catálogo?")){
+          await addDoc(collection(db,"cuentas"),{
+            nombre:data.empresa.trim(), contacto:data.contacto||"", email:"", tel:"", rfc:"",
+            plan:"", notas:"Creado automáticamente al ganar prospecto "+(editItem?.folio||""),
+            origenProspectoId:editItem?.id||null,
+            createdAt:serverTimestamp(),
+          });
+          showT("✓ Cliente creado en catálogo");
+        }
+      }
       setModal(false);setForm(empty);setEditItem(null);
     }catch(e){showT(e.message,"err");}
   };
@@ -7962,10 +8303,13 @@ function Prospeccion(){
    LIVE TRACKING + APP DE CHOFER
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Helper: crear un alerta en Firestore */
+/* Helper: crear un alerta en Firestore.
+   IMPORTANTE: colección canónica = "alertas" (español). El Centro de Alertas,
+   el Dashboard y el SOSGlobalBanner leen "alertas"; antes esto escribía en
+   "alerts" (inglés) y los SOS nunca llegaban al panel. Unificado F0. */
 async function postAlert(rutaId, choferId, choferNombre, type, msg, extra={}){
   try{
-    await addDoc(collection(db,"alerts"),{rutaId,choferId,choferNombre,type,msg,read:false,createdAt:serverTimestamp(),...extra});
+    await addDoc(collection(db,"alertas"),{rutaId,choferId,choferNombre,type,msg,read:false,atendida:false,createdAt:serverTimestamp(),...extra});
   }catch(e){console.warn("alert fail",e);}
 }
 
@@ -7983,7 +8327,7 @@ function LiveTracking(){
   useEffect(()=>{
     const u1=onSnapshot(collection(db,"driverLocations"),s=>setDriverLocs(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status==="En curso")));
-    const u3=onSnapshot(collection(db,"alerts"),s=>setAlerts(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,50)));
+    const u3=onSnapshot(query(collection(db,"alertas"),limit(500)),s=>setAlerts(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,50)));
     return()=>{u1();u2();u3();};
   },[]);
 
@@ -11010,12 +11354,39 @@ function PinScreen({userProfile,onVerified,onBack}){
   const color=isAdmin?A:BLUE;
   const initials=(n)=>(n||"?").split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
 
+  // F0.5: sin PIN ya NO se entra con un clic — se fuerza crear contraseña aquí.
+  const [creando,setCreando]=useState(!userProfile?.pin);
+  const [pin2,setPin2]=useState("");
+  const crearPin=async()=>{
+    if(pin.trim().length<6){setErr("Mínimo 6 caracteres");return;}
+    if(pin!==pin2){setErr("Las contraseñas no coinciden");return;}
+    setLoading(true);setErr("");
+    try{
+      // Verificación de identidad con Google ANTES de crear la contraseña:
+      // 1) prueba que quien crea el PIN es el dueño real del perfil,
+      // 2) las reglas de Firestore solo permiten escribir dmov_usuarios/{uid}
+      //    al propio uid — la sesión anónima del panel sería denegada.
+      const cred=await signInWithPopup(auth,googleProvider);
+      if(cred.user.uid!==userProfile.uid){
+        setErr("Esa cuenta Google no corresponde a este perfil ("+(userProfile.email||"")+")");
+        setLoading(false);return;
+      }
+      const hashed=await hashPin(pin,userProfile.uid);
+      await updateDoc(doc(db,"dmov_usuarios",userProfile.uid),{pin:hashed,pinSaltED:true,pinCreadoEn:new Date().toISOString().slice(0,10)});
+      onVerified();
+    }catch(e){
+      setErr(e.code==="auth/popup-closed-by-user"?"Verificación cancelada — se requiere confirmar identidad con Google":e.message);
+      setLoading(false);
+    }
+  };
   const verify=async()=>{
-    if(!userProfile?.pin){onVerified();return;}
+    if(!userProfile?.pin){setCreando(true);return;}
     if(!pin.trim()){setErr("Ingresa tu contraseña");return;}
     setLoading(true);setErr("");
-    const hashed=await hashPin(pin);
-    if(hashed===userProfile?.pin){
+    // Compatibilidad: intenta hash con salt (esquema nuevo) y sin salt (legacy)
+    const hashed=await hashPin(pin,userProfile.uid);
+    const hashedLegacy=await hashPin(pin);
+    if(hashed===userProfile?.pin||hashedLegacy===userProfile?.pin){
       onVerified();
     } else {
       const next=attempts+1;
@@ -11060,11 +11431,17 @@ function PinScreen({userProfile,onVerified,onBack}){
           </div>
         </div>
 
+        {/* Aviso de creación obligatoria (perfil sin PIN) */}
+        {creando&&<div style={{background:AMBER+"12",border:"1.5px solid "+AMBER+"40",borderRadius:12,padding:"11px 14px",marginBottom:14,fontSize:12,color:TEXT,lineHeight:1.5}}>
+          <strong style={{color:AMBER}}>🔐 Primera vez:</strong> tu perfil no tiene contraseña. Crea una ahora (mínimo 6 caracteres) — se te pedirá confirmar identidad con tu cuenta Google.
+          <div style={{marginTop:6,fontSize:11,color:MUTED}}>¿Tu perfil no tiene cuenta Google asociada? Pide al administrador que te asigne una contraseña en <strong>Usuarios &amp; Roles</strong>.</div>
+        </div>}
+
         {/* Input contraseña */}
         <div style={{marginBottom:16}}>
           <div style={{fontSize:13,fontWeight:700,color:TEXT,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
             <Shield size={13} color={color}/>
-            Contraseña de acceso
+            {creando?"Crea tu contraseña":"Contraseña de acceso"}
           </div>
           <div style={{position:"relative"}}>
             <input
@@ -11087,13 +11464,27 @@ function PinScreen({userProfile,onVerified,onBack}){
           {err&&<div style={{fontSize:12,color:ROSE,marginTop:6,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><AlertCircle size={12}/>{err}</div>}
         </div>
 
+        {/* Confirmación de contraseña (solo en modo creación) */}
+        {creando&&<div style={{marginBottom:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:TEXT,marginBottom:8}}>Confirma tu contraseña</div>
+          <input
+            type={showPin?"text":"password"}
+            value={pin2}
+            onChange={e=>{setPin2(e.target.value);setErr("");}}
+            onKeyDown={e=>e.key==="Enter"&&!loading&&crearPin()}
+            placeholder="••••••••"
+            autoComplete="new-password"
+            style={{width:"100%",padding:"13px 16px",borderRadius:12,border:"1.5px solid "+(err?ROSE:BD2),fontSize:16,fontFamily:SANS,outline:"none",boxSizing:"border-box",background:"#fafafa"}}
+          />
+        </div>}
+
         <button
-          onClick={verify}
+          onClick={creando?crearPin:verify}
           disabled={loading||resetting}
           className="btn"
           style={{width:"100%",padding:"14px",borderRadius:12,background:(loading||resetting)?"#f5f5f5":"linear-gradient(135deg,"+color+","+color+"cc)",color:(loading||resetting)?"#999":"#fff",fontFamily:SANS,fontWeight:700,fontSize:15,border:"none",cursor:(loading||resetting)?"not-allowed":"pointer",boxShadow:(loading||resetting)?"none":"0 4px 16px "+color+"30",transition:"all .15s"}}
         >
-          {loading?"Verificando…":"Ingresar →"}
+          {loading?(creando?"Creando…":"Verificando…"):(creando?"Crear contraseña e ingresar →":"Ingresar →")}
         </button>
 
         {/* Opción de reset después de varios intentos */}
@@ -11224,8 +11615,8 @@ function Usuarios(){
     if(pin.length<4){showT("Mínimo 4 caracteres","err");return;}
     setSavingPin(prev=>({...prev,[uid]:true}));
     try{
-      const hashed=await hashPin(pin);
-      await updateDoc(doc(db,"dmov_usuarios",uid),{pin:hashed});
+      const hashed=await hashPin(pin,uid);
+      await updateDoc(doc(db,"dmov_usuarios",uid),{pin:hashed,pinSaltED:true});
       setEditPin(prev=>({...prev,[uid]:""}));
       showT("✓ Contraseña actualizada");
     }catch(e){showT(e.message,"err");}
@@ -11406,6 +11797,7 @@ export default function App(){
   const [rutas,setRutas]=useState([]);
   const [entregas,setEntregas]=useState([]);
   const [viat,setViat]=useState([]);
+  const [gastosCh,setGastosCh]=useState([]);
   const [clientes,setClientes]=useState([]);
   const [prospectos,setProspectos]=useState([]);
   const [choferes,setChoferes]=useState([]);
@@ -11443,21 +11835,27 @@ export default function App(){
   useEffect(()=>{
     if(!authUser) return; // sin auth, no configurar listeners
     const onErr=()=>{}; // silencia errores de permisos
-    const u1=onSnapshot(collection(db,"cotizaciones"),s=>{setCots(s.docs.map(d=>({id:d.id,...d.data()})));setFbOk(true);},onErr);
-    const u2=onSnapshot(collection(db,"facturas"),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
-    const u3=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
-    const u4=onSnapshot(collection(db,"entregas"),s=>setEntregas(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
-    const u5=onSnapshot(collection(db,"viaticos"),s=>{
+    // limit(N) = válvula de seguridad: hoy ninguna colección se acerca al tope,
+    // pero sin límite el costo de lectura y memoria crecen sin techo con la
+    // historia del negocio (F0 quick win QW10). Subir N cuando haya paginación real.
+    const CAP=1000;
+    const u1=onSnapshot(query(collection(db,"cotizaciones"),limit(CAP)),s=>{setCots(s.docs.map(d=>({id:d.id,...d.data()})));setFbOk(true);},onErr);
+    const u2=onSnapshot(query(collection(db,"facturas"),limit(2000)),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u3=onSnapshot(query(collection(db,"rutas"),limit(CAP)),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u4=onSnapshot(query(collection(db,"entregas"),limit(CAP)),s=>setEntregas(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u5=onSnapshot(query(collection(db,"viaticos"),limit(2000)),s=>{
       const list=s.docs.map(d=>({id:d.id,...d.data()}));
       setViat(list);
       try{window.__DMOV_VIATICOS__=list;}catch(e){}
     },onErr);
-    const u9=onSnapshot(collection(db,"gastosChofer"),s=>{
-      try{window.__DMOV_GASTOS_CHOFER__=s.docs.map(d=>({id:d.id,...d.data()}));}catch(e){}
+    const u9=onSnapshot(query(collection(db,"gastosChofer"),limit(CAP)),s=>{
+      const list=s.docs.map(d=>({id:d.id,...d.data()}));
+      setGastosCh(list);
+      try{window.__DMOV_GASTOS_CHOFER__=list;}catch(e){}
     },onErr);
-    const u6=onSnapshot(collection(db,"cuentas"),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
-    const u7=onSnapshot(collection(db,"prospeccion"),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
-    const u8=onSnapshot(collection(db,"choferes"),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u6=onSnapshot(query(collection(db,"cuentas"),limit(CAP)),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u7=onSnapshot(query(collection(db,"prospeccion"),limit(CAP)),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u8=onSnapshot(query(collection(db,"choferes"),limit(CAP)),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     return()=>{u1();u2();u3();u4();u5();u6();u7();u8();u9&&u9();};
   },[authUser?.uid]); // re-ejecutar solo cuando cambia el uid
 
@@ -11498,10 +11896,12 @@ export default function App(){
   /* ── App principal ── */
   const VIEWS={
     dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    ejecutivo:isAdmin?<DashboardEjecutivo facts={facts} viat={viat} gastosCh={gastosCh} rutas={rutas} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     choferes:<Choferes/>,
+    unidades:<Unidades/>,
     tracking:<LiveTracking/>,
     rutas:<PlanificadorRutas/>,
     nacional:isAdmin?<PlanificadorNacional/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,

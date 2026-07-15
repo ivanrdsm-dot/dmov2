@@ -1,8 +1,52 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Tracking público — clientes ven su ruta sin login
+    match /rutas/{rutaId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Ubicación del chofer en vivo — el tracking público /track/:id la lee
+    match /driverLocations/{choferId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Alertas — colección canónica unificada (F0). El panel autenticado la lee;
+    // los choferes (auth anónima) escriben SOS/geofence aquí.
+    match /alertas/{alertId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // Colección legacy "alerts" (inglés) — migrada a "alertas" en F0.
+    // Escritura bloqueada para que nada nuevo caiga aquí por error.
+    match /alerts/{alertId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Perfiles de usuario RBAC — solo el propio usuario o un admin puede escribir
+    match /dmov_usuarios/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (
+        request.auth.uid == uid ||
+        get(/databases/$(database)/documents/dmov_usuarios/$(request.auth.uid)).data.rol == "admin"
+      );
+      // Permitir create propio perfil (primer login — no hay doc aún)
+      allow create: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Todo lo demás requiere Firebase Auth
+    // (Google para oficina, Anónimo para choferes)
+    // NOTA F0: sigue siendo demasiado permisivo — cualquier sesión anónima puede
+    // leer/escribir datos financieros. El RBAC real requiere migrar la oficina a
+    // Google Sign-In con custom claims (ver EVOLUCION-THE-MOVIMIENTO.md §7).
+    // No se endurece aquí todavía porque rompería producción sin ese cambio de auth.
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
   }
 }

@@ -5,3 +5,9 @@ dist
 .DS_Store
 *.log
 .vite
+.vercel
+# Respaldos de datos de producción — NUNCA al repo
+backups/
+operacion-mayo-junio-2026/backup-*.json
+operacion-mayo-junio-2026/import-log-*.json
+operacion-mayo-junio-2026/_servicios.json
