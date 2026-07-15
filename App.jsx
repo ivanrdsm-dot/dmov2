@@ -1210,8 +1210,12 @@ function lookupPlanForCliente(rawCliente){
 }
 
 /* ─── UTILS ──────────────────────────────────────────────────────────────── */
-const fmt  = n => "$"+Math.round(n).toLocaleString("es-MX");
-const fmtK = n => n>=1e6?"$"+(n/1e6).toFixed(2)+"M":n>=1e3?"$"+(n/1e3).toFixed(1)+"k":"$"+Math.round(n);
+const fmt  = n => (n<0?"−$":"$")+Math.abs(Math.round(n)).toLocaleString("es-MX");
+const fmtK = n => {
+  const neg=n<0, v=Math.abs(n);
+  const s=v>=1e6?"$"+(v/1e6).toFixed(2)+"M":v>=1e3?"$"+(v/1e3).toFixed(0)+"k":"$"+Math.round(v).toLocaleString("es-MX");
+  return (neg?"−":"")+s;
+};
 const uid  = () => Math.random().toString(36).slice(2,8).toUpperCase();
 /* Viáticos 2026: hotel $1,100/noche POR UNIDAD (1 o 2 personas comparten
    habitación) · comida $700/día POR PERSONA. Casetas: incluidas vía TAG propio. */
@@ -2409,16 +2413,16 @@ function RowItem({l,v,c=TEXT,bold}){
     </div>
   );
 }
-function KpiCard({icon:Icon,color,label,value,sub,onClick,trend}){
+function KpiCard({icon:Icon,color,label,value,sub,onClick,trend,valueColor,accent}){
   return(
-    <div onClick={onClick} className="ch au" style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"20px 22px",cursor:onClick?"pointer":"default",boxShadow:"0 1px 4px rgba(12,24,41,.05)"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+    <div onClick={onClick} className="ch au" style={{background:"#fff",border:"1px solid "+(accent?color+"35":BORDER),borderRadius:16,padding:"18px 20px",cursor:onClick?"pointer":"default",boxShadow:accent?"0 2px 12px "+color+"18":"0 1px 4px rgba(12,24,41,.05)",borderTop:accent?"3px solid "+color:undefined}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
         <div style={{width:38,height:38,borderRadius:11,background:color+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Icon size={17} color={color}/></div>
-        {trend!==undefined&&<span style={{fontSize:11,fontWeight:700,color:trend>=0?GREEN:ROSE}}>{trend>=0?"+":""}{trend}%</span>}
+        {trend!==undefined&&<span style={{fontSize:11,fontWeight:800,color:trend>=0?GREEN:ROSE,background:(trend>=0?GREEN:ROSE)+"12",borderRadius:7,padding:"2px 8px"}}>{trend>=0?"▲ +":"▼ "}{trend}%</span>}
       </div>
-      <div style={{fontFamily:MONO,fontSize:26,fontWeight:700,color:TEXT,lineHeight:1,marginBottom:4}}>{value}</div>
-      <div style={{fontSize:12,fontWeight:600,color:MUTED}}>{label}</div>
-      {sub&&<div style={{fontSize:11,color:MUTED+"90",marginTop:2}}>{sub}</div>}
+      <div style={{fontFamily:MONO,fontSize:29,fontWeight:800,color:valueColor||TEXT,lineHeight:1,marginBottom:5,letterSpacing:"-0.02em"}}>{value}</div>
+      <div style={{fontSize:12,fontWeight:700,color:TEXT+"cc"}}>{label}</div>
+      {sub&&<div style={{fontSize:11,color:MUTED,marginTop:2}}>{sub}</div>}
     </div>
   );
 }
@@ -3535,24 +3539,40 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const sosSinAtender = alertasItems.filter(a=>a.type==="sos"&&!a.atendida).length;
   const alertasCriticas = alertasItems.filter(a=>(a.type==="sos"||a.type==="geofence")&&!a.atendida).length;
 
-  const totalFac=facts.reduce((a,f)=>a+(f.total||0),0);
-  const cobrado=facts.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
-  const pendiente=facts.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
-  // Cartera vencida — facturas con fechaVenc < hoy y status != Pagada
+  /* Facturas EMITIDAS con monto — la base de todo lo financiero.
+     Se excluyen canceladas, solicitudes a Katia y los stubs de bitácora en $0. */
+  const factsEmitidas=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0);
+  const totalFac=factsEmitidas.reduce((a,f)=>a+(f.total||0),0);
+  const cobrado=factsEmitidas.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
+  const pendiente=factsEmitidas.filter(f=>f.status!=="Pagada").reduce((a,f)=>a+(f.total||0),0);
+  const nPendientes=factsEmitidas.filter(f=>f.status!=="Pagada").length;
+  /* Servicios sin facturar: stubs de bitácora ($0) + solicitadas a Katia —
+     trabajo ya hecho cuyo dinero aún no entra al ciclo de cobranza. */
+  const sinFacturar=facts.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia"));
+  // Cartera vencida — facturas emitidas con fechaVenc < hoy sin pagar
   const hoyTs = Date.now();
-  const cartera = facts.filter(f=>{
-    if(f.status==="Pagada"||f.status==="Cancelada") return false;
-    if(!f.fechaVenc) return false;
+  const cartera = factsEmitidas.filter(f=>{
+    if(f.status==="Pagada") return false;
+    if(!f.fechaVenc) return f.status==="Vencida";
     return new Date(f.fechaVenc).getTime() < hoyTs;
   });
   const carteraVencida = cartera.reduce((a,f)=>a+(f.total||0),0);
   const pctCob=totalFac>0?Math.round(cobrado/totalFac*100):0;
   const totalGastos=viat.reduce((a,g)=>a+(g.monto||0),0);
-  const margen=cobrado-totalGastos;
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const mesActual=MESES[new Date().getMonth()];
+  /* P&L contable real (mismo motor que Reportes): ingresos sin IVA − costos,
+     cuadra con las balanzas de comprobación conciliadas. */
+  const plYtd=useMemo(()=>buildPLData(facts,viat,"Ene",mesActual,"2026"),[facts,viat,mesActual]);
+  const ingYtd=plYtd.reduce((a,d)=>a+d.subtotal,0);
+  const cosYtd=plYtd.reduce((a,d)=>a+d.totalCostos,0);
+  const utilYtd=ingYtd-cosYtd;
+  const margYtd=ingYtd>0?utilYtd/ingYtd:null;
+  const plMes=plYtd[plYtd.length-1]||{subtotal:0,totalCostos:0,utilidad:0};
+  const plMesPrev=plYtd[plYtd.length-2]||null;
+  const deltaMes=plMesPrev&&plMesPrev.subtotal>0?Math.round((plMes.subtotal-plMesPrev.subtotal)/plMesPrev.subtotal*100):null;
   const chartData=MESES.map(m=>{
-    const mf=facts.filter(f=>f.mesOp===m);
+    const mf=factsEmitidas.filter(f=>f.mesOp===m);
     return {m,fac:mf.reduce((a,f)=>a+(f.total||0),0),cob:mf.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0)};
   });
   const maxV=Math.max(...chartData.map(d=>d.fac),1);
@@ -3565,9 +3585,9 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const healthColor=healthScore>=70?GREEN:healthScore>=40?AMBER:ROSE;
   // Top clients
   const topClients=useMemo(()=>{
-    const map={};facts.forEach(f=>{const k=f.empresa||f.cliente||"—";map[k]=(map[k]||0)+(f.total||0);});
+    const map={};factsEmitidas.forEach(f=>{const k=f.empresa||f.cliente||"—";map[k]=(map[k]||0)+(f.total||0);});
     return Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  },[facts]);
+  },[factsEmitidas]);
   const topMax=topClients[0]?topClients[0][1]:1;
   // Activity feed
   const feed=useMemo(()=>{
@@ -3610,19 +3630,67 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
         </div>
       </div>
 
+      {/* ── BANNER P&L REAL (conciliado con balanzas) ── */}
+      {isAdmin&&(
+        <div className="au2" style={{
+          background:"linear-gradient(135deg,#0a1628 0%,#12274a 100%)",
+          borderRadius:20,padding:"22px 26px",marginBottom:16,color:"#fff",
+          boxShadow:"0 8px 32px rgba(10,22,40,.35)",position:"relative",overflow:"hidden"
+        }}>
+          <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:"linear-gradient(90deg,"+A+",#fb923c,"+GREEN+")"}}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,flexWrap:"wrap",gap:8}}>
+            <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.1em",textTransform:"uppercase",color:"#fdba74"}}>
+              📊 Estado de resultados 2026 · Ene – {mesActual} · conciliado con contabilidad
+            </div>
+            <button onClick={()=>setView("reportes")} className="btn" style={{fontSize:11,fontWeight:700,color:"#fff",background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.18)",borderRadius:9,padding:"5px 12px"}}>Ver reportes →</button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))",gap:18}}>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Ingresos (sin IVA)</div>
+              <div style={{fontFamily:MONO,fontSize:34,fontWeight:900,color:"#4ade80",lineHeight:1,letterSpacing:"-0.02em"}}>{fmtK(ingYtd)}</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{plYtd.reduce((a,d)=>a+d.nFacts,0)} facturas emitidas</div>
+            </div>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Costos</div>
+              <div style={{fontFamily:MONO,fontSize:34,fontWeight:900,color:"#fb7185",lineHeight:1,letterSpacing:"-0.02em"}}>{fmtK(cosYtd)}</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{ingYtd>0?Math.round(cosYtd/ingYtd*100)+"% de los ingresos":"—"}</div>
+            </div>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Utilidad</div>
+              <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                <div style={{fontFamily:MONO,fontSize:34,fontWeight:900,color:utilYtd>=0?"#4ade80":"#fb7185",lineHeight:1,letterSpacing:"-0.02em"}}>{fmtK(utilYtd)}</div>
+                {margYtd!==null&&<span style={{fontSize:12,fontWeight:900,color:"#0a1628",background:margYtd>=0.15?"#4ade80":margYtd>=0?"#fbbf24":"#fb7185",borderRadius:8,padding:"2px 9px"}}>{Math.round(margYtd*100)}%</span>}
+              </div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>margen sobre ingresos sin IVA</div>
+            </div>
+            <div style={{borderLeft:"1px solid rgba(255,255,255,.12)",paddingLeft:18}}>
+              <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{plMes.mesFull||mesActual} (mes en curso)</div>
+              <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                <div style={{fontFamily:MONO,fontSize:26,fontWeight:900,color:"#fff",lineHeight:1}}>{fmtK(plMes.subtotal)}</div>
+                {deltaMes!==null&&<span style={{fontSize:11,fontWeight:800,color:deltaMes>=0?"#4ade80":"#fb7185"}}>{deltaMes>=0?"▲ +":"▼ "}{deltaMes}% vs mes ant.</span>}
+              </div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>
+                costos {fmtK(plMes.totalCostos)} · utilidad <span style={{color:plMes.utilidad>=0?"#4ade80":"#fb7185",fontWeight:700}}>{fmtK(plMes.utilidad)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SEGUIMIENTO: cobranza y facturación pendiente ── */}
       {isAdmin&&(
         <div className="g4 au2" style={{marginBottom:16}}>
-          <KpiCard icon={DollarSign} color={A} label="Cotizaciones" value={cots.length} sub="total generadas" onClick={()=>setView("cotizador")}/>
-          <KpiCard icon={TrendingUp} color={GREEN} label="Facturado total" value={fmtK(totalFac)} sub={pctCob+"% cobrado"} onClick={()=>setView("facturas")}/>
-          <KpiCard icon={Clock} color={AMBER} label="Por cobrar" value={fmtK(pendiente)} sub={facts.filter(f=>f.status==="Pendiente").length+" facturas"} onClick={()=>setView("facturas")}/>
-          <KpiCard icon={Zap} color={ROSE} label="Gastos operativos" value={fmtK(totalGastos)} sub={viat.length+" registros"} onClick={()=>setView("viaticos")}/>
+          <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" facturas emitidas sin pagar"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":"al corriente ✓"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={FileText} color={VIOLET} accent={sinFacturar.length>0} label="Sin facturar" value={sinFacturar.length} valueColor={VIOLET} sub="servicios por solicitar a Katia" onClick={()=>setView("facturas")}/>
+          <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"} onClick={()=>setView("facturas")}/>
         </div>
       )}
       {isAdmin?(
         <div className="g4" style={{marginBottom:16}}>
           <KpiCard icon={Package} color={BLUE} label="Entregas completadas" value={entregados+"/"+entregas.length} sub={pctEnt+"% completado"} onClick={()=>setView("entregas")}/>
           <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutasActivas} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
-          <KpiCard icon={TrendingUp} color={margen>=0?GREEN:ROSE} label="Margen neto" value={fmtK(margen)} sub="cobrado - gastos"/>
+          <KpiCard icon={DollarSign} color={A} label="Cotizaciones" value={cots.length} sub="total generadas" onClick={()=>setView("cotizador")}/>
           <KpiCard icon={Building2} color={BLUE} label="Clientes activos" value={clientes.length} sub="en la base" onClick={()=>setView("clientes")}/>
         </div>
       ):(
@@ -3730,11 +3798,11 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           {isAdmin&&(
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"14px 16px",marginTop:4}}>
             <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10}}>Resumen financiero</div>
-            <RowItem l="Facturado" v={fmtK(totalFac)} c={TEXT}/>
-            <RowItem l="Cobrado" v={fmtK(cobrado)} c={GREEN}/>
+            <RowItem l="Ingresos año (s/IVA)" v={fmtK(ingYtd)} c={GREEN}/>
+            <RowItem l="Costos año" v={fmtK(cosYtd)} c={ROSE}/>
+            <RowItem l="Utilidad año" v={fmtK(utilYtd)} c={utilYtd>=0?GREEN:ROSE} bold/>
+            <RowItem l="Cobrado (c/IVA)" v={fmtK(cobrado)} c={GREEN}/>
             <RowItem l="Por cobrar" v={fmtK(pendiente)} c={AMBER}/>
-            <RowItem l="Gastos" v={fmtK(totalGastos)} c={ROSE}/>
-            <RowItem l="Margen neto" v={fmtK(margen)} c={margen>=0?GREEN:ROSE} bold/>
             <div style={{marginTop:8}}><MiniBar pct={pctCob} color={GREEN}/><div style={{fontSize:10,color:MUTED,marginTop:3}}>{pctCob}% cobrado del total facturado</div></div>
           </div>
           )}
