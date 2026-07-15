@@ -513,14 +513,25 @@ button:focus-visible{outline:2px solid ${A};outline-offset:2px;border-radius:8px
 @media print{.noprint{display:none!important}body{background:#fff}}
 `;
 
-/* ─── TARIFARIO LOCAL 2026 ───────────────────────────────────────────────── */
+/* ─── TARIFARIO LOCAL 2026 (hoja "locales" TARIFARIOS DMOVIMIENTO 2026-2) ── */
 const LOC = {
   eur:{ normal:2500,ayudante:3000,urgente:2500,urgente_ay:3000,resguardo:1800,renta_dia:1600,renta_chofer:3500,renta_mes:36000 },
-  cam:{ normal:3200,ayudante:3700,urgente:3200,urgente_ay:3700,resguardo:3200,renta_dia:2800,renta_chofer:5800,renta_mes:63000 },
-  kra:{ normal:3600,ayudante:4100,urgente:3600,urgente_ay:4100,resguardo:3600 },
+  cam:{ normal:3200,ayudante:4300,urgente:3200,urgente_ay:4300,resguardo:3200,renta_dia:2800,renta_chofer:5800,renta_mes:63000 },
+  kra:{ normal:3600,ayudante:5000,urgente:3600,urgente_ay:5000,resguardo:3600 },
+  rab:{ normal:6000,ayudante:8000,urgente:6000,urgente_ay:8000,resguardo:6000 },
+  mud:{ normal:8000,ayudante:10000,urgente:8000,urgente_ay:10000,resguardo:8000 },
 };
 /* Ayudante = +$500 sobre tarifa base en todos los vehículos */
 const AYUD_EXTRA = 500;
+
+/* ─── ENTREGA ADICIONAL (punto extra en destino) ─────────────────────────────
+   Base CDMX por vehículo. En otras ciudades aumenta por factor de distancia.
+   El precio siempre es editable en el cotizador; esto es el sugerido.
+   Descuento por volumen: cada 20 puntos → 5% (tope 20%). */
+const PUNTO_ADIC = { eur:2000, kra:2200, cam:2500, rab:3500, mud:4500 };
+const puntoFactor = km => !km||km<=60?1 : km<250?1.05 : km<700?1.15 : km<1300?1.25 : 1.40;
+const sugerirPunto = (veh,km)=>Math.round(((PUNTO_ADIC[veh]||2000)*puntoFactor(km))/50)*50;
+const descPuntos = n => Math.min(0.20, Math.floor((n||0)/20)*0.05);
 
 /* ─── TARIFARIO FORÁNEO 2026 ─────────────────────────────────────────────── */
 /* Helper: calcula tarifas por km basado en estructura promedio del tarifario.
@@ -531,11 +542,11 @@ const AYUD_EXTRA = 500;
 const _T = (km,zona="foraneo")=>{
   if(zona==="local-edomex"){
     // Zona conurbada CDMX/EdoMex (<50km) — usa estructura local CDMX con pequeño extra por km
-    return {km,eur:2500+km*30,cam:3200+km*45,kra:3600+km*50};
+    return {km,eur:2500+km*30,cam:3200+km*45,kra:3600+km*50,rab:6000+km*70,mud:8000+km*90};
   }
   if(zona==="metro-edomex"){
     // Edomex zona metro extendida 50-120km
-    return {km,eur:Math.round(2500+km*38),cam:Math.round(3200+km*60),kra:Math.round(3600+km*68)};
+    return {km,eur:Math.round(2500+km*38),cam:Math.round(3200+km*60),kra:Math.round(3600+km*68),rab:Math.round(6000+km*85),mud:Math.round(8000+km*105)};
   }
   if(km<200){
     // Foráneo cercano
@@ -553,8 +564,8 @@ const _T = (km,zona="foraneo")=>{
 
 const TAR = [
   /* ═══ CDMX Y ZONA METROPOLITANA ═══ */
-  {c:"Ciudad de México",km:0,eur:2500,cam:3200,kra:3600,local:true},
-  {c:"Estado de México",km:30,eur:3400,cam:4500,kra:5100,local:true},
+  {c:"Ciudad de México",km:0,eur:2500,cam:3200,kra:3600,rab:6000,mud:8000,local:true},
+  {c:"Estado de México",km:30,eur:3400,cam:4500,kra:5100,rab:7500,mud:9800,local:true},
   // Municipios EdoMex zona conurbada (servicio local extendido)
   {c:"Naucalpan",...{..._T(15,"local-edomex"),km:15},local:true},
   {c:"Tlalnepantla",...{..._T(18,"local-edomex"),km:18},local:true},
@@ -584,71 +595,71 @@ const TAR = [
   {c:"Ixtlahuaca",..._T(95,"metro-edomex")},
   {c:"Tejupilco",..._T(160,"metro-edomex")},
   // CDMX original cities ya en el tarifario
-  {c:"Acapulco",km:395,eur:13310,cam:20086,kra:22082},
-  {c:"Aguascalientes",km:513,eur:15178,cam:22215,kra:24437},
-  {c:"Apizaco",km:145,eur:6899,cam:11540,kra:12858},
-  {c:"Campeche",km:1155,eur:29667,cam:40241,kra:44657},
-  {c:"Cancún",km:1649,eur:40204,cam:58455,kra:64476},
-  {c:"Cd. Juárez",km:1863,eur:47542,cam:60437,kra:67612},
-  {c:"Cd. Obregón",km:1671,eur:41119,cam:53952,kra:59347},
-  {c:"Cd. Victoria",km:721,eur:20560,cam:28977,kra:31874},
-  {c:"Celaya",km:263,eur:8279,cam:12695,kra:13964},
-  {c:"Chetumal",km:1345,eur:30356,cam:46225,kra:50847},
-  {c:"Chiapas",km:1015,eur:23206,cam:31485,kra:35123},
-  {c:"Chihuahua",km:1487,eur:33806,cam:49674,kra:54642},
-  {c:"Chilpancingo",km:278,eur:9659,cam:15178,kra:16696},
-  {c:"Coatzacoalcos",km:601,eur:17938,cam:24561,kra:27017},
-  {c:"Colima",km:744,eur:19732,cam:28839,kra:31723},
-  {c:"Cozumel",km:1550,eur:48922,cam:69996,kra:77008},
-  {c:"Cuernavaca",km:89,eur:3864,cam:6899,kra:7589},
-  {c:"Culiacán",km:1262,eur:29805,cam:46225,kra:50847},
-  {c:"Durango",km:915,eur:23043,cam:28977,kra:31874},
-  {c:"Ensenada",km:2961,eur:59333,cam:75891,kra:83480},
-  {c:"Gómez Palacio",km:985,eur:22767,cam:33116,kra:36428},
-  {c:"Guadalajara",km:542,eur:15178,cam:22215,kra:24437},
-  {c:"Hermosillo",km:1959,eur:48018,cam:63887,kra:70275},
-  {c:"Iguala",km:203,eur:8279,cam:13108,kra:14419},
-  {c:"Irapuato",km:323,eur:12419,cam:18628,kra:20491},
-  {c:"Jalapa/Xalapa",km:322,eur:12419,cam:18628,kra:20491},
-  {c:"La Paz BCS",km:4312,eur:77271,cam:104868,kra:115355},
-  {c:"Laredo",km:1117,eur:26493,cam:37394,kra:41133},
-  {c:"León",km:387,eur:13798,cam:20823,kra:22893},
-  {c:"Los Mochis",km:1442,eur:33806,cam:48984,kra:53883},
-  {c:"Matamoros",km:975,eur:23871,cam:34220,kra:37642},
-  {c:"Mazatlán",km:1042,eur:26631,cam:37394,kra:41133},
-  {c:"Mérida",km:1332,eur:32991,cam:47604,kra:52622},
-  {c:"Mexicali",km:2661,eur:56573,cam:73132,kra:80445},
-  {c:"Minatitlán",km:579,eur:17938,cam:24561,kra:27017},
-  {c:"Monclova",km:1021,eur:26970,cam:38636,kra:42524},
-  {c:"Monterrey",km:933,eur:21325,cam:28475,kra:31423},
-  {c:"Morelia",km:302,eur:12419,cam:18628,kra:20491},
-  {c:"Oaxaca",km:470,eur:12419,cam:18628,kra:20491},
-  {c:"Orizaba",km:269,eur:11039,cam:18628,kra:20491},
-  {c:"Pachuca",km:95,eur:4390,cam:7777,kra:8655},
-  {c:"Piedras Negras",km:1286,eur:34621,cam:51807,kra:58204},
-  {c:"Poza Rica",km:273,eur:12419,cam:17938,kra:19732},
-  {c:"Puebla",km:123,eur:5080,cam:7727,kra:8718},
-  {c:"Puerto Vallarta",km:875,eur:21450,cam:30218,kra:34496},
-  {c:"Querétaro",km:211,eur:6899,cam:11917,kra:12143},
-  {c:"Reynosa",km:1002,eur:25251,cam:35600,kra:39160},
-  {c:"Río Blanco",km:279,eur:11039,cam:18628,kra:20491},
-  {c:"Saltillo",km:849,eur:17938,cam:25527,kra:28080},
-  {c:"San Juan del Río",km:162,eur:5519,cam:10211,kra:11232},
-  {c:"San Luis Potosí",km:415,eur:13108,cam:18628,kra:20491},
-  {c:"Tampico",km:486,eur:16558,cam:25251,kra:27776},
-  {c:"Tapachula",km:1157,eur:29102,cam:42900,kra:47291},
-  {c:"Taxco",km:187,eur:8279,cam:13108,kra:14419},
-  {c:"Tepic",km:756,eur:21939,cam:28839,kra:31723},
-  {c:"Tijuana",km:2848,eur:63347,cam:81787,kra:90066},
-  {c:"Tlaxcala",km:118,eur:5381,cam:9659,kra:10625},
-  {c:"Toluca",km:66,eur:3808,cam:6944,kra:7952},
-  {c:"Torreón",km:1012,eur:22767,cam:31184,kra:34303},
-  {c:"Tuxpan",km:324,eur:13108,cam:20284,kra:22312},
-  {c:"Tuxtla Gutiérrez",km:1015,eur:25966,cam:35261,kra:39338},
-  {c:"Veracruz",km:402,eur:14676,cam:22705,kra:25025},
-  {c:"Villahermosa",km:768,eur:20698,cam:31874,kra:35062},
-  {c:"Zacatecas",km:605,eur:19318,cam:26217,kra:28839},
-  {c:"Zamora",km:430,eur:13108,cam:18628,kra:20491},
+  {c:"Acapulco",km:395,eur:13310,cam:20086,kra:22082,rab:26741,mud:32561},
+  {c:"Aguascalientes",km:513,eur:15178,cam:22215,kra:24437,rab:30356,mud:36566},
+  {c:"Apizaco",km:145,eur:6899,cam:11540,kra:12858,rab:17399,mud:22103},
+  {c:"Campeche",km:1155,eur:29667,cam:40241,kra:44657,rab:50678,mud:61817},
+  {c:"Cancún",km:1649,eur:40204,cam:58455,kra:64476,rab:73571,mud:88059},
+  {c:"Cd. Juárez",km:1863,eur:47542,cam:60437,kra:67612,rab:83418,mud:92449},
+  {c:"Cd. Obregón",km:1671,eur:41119,cam:53952,kra:59347,rab:74511,mud:81912},
+  {c:"Cd. Victoria",km:721,eur:20560,cam:28977,kra:31874,rab:37256,mud:43741},
+  {c:"Celaya",km:263,eur:8279,cam:12695,kra:13964,rab:18628,mud:24147},
+  {c:"Chetumal",km:1345,eur:30356,cam:46225,kra:50847,rab:55884,mud:64852},
+  {c:"Chiapas",km:1015,eur:23206,cam:31485,kra:35123,rab:42022,mud:50051},
+  {c:"Chihuahua",km:1487,eur:33806,cam:49674,kra:54642,rab:64852,mud:74511},
+  {c:"Chilpancingo",km:278,eur:9659,cam:15178,kra:16696,rab:22077,mud:26907},
+  {c:"Coatzacoalcos",km:601,eur:17938,cam:24561,kra:27017,rab:29391,mud:35876},
+  {c:"Colima",km:744,eur:19732,cam:28839,kra:31723,rab:35876,mud:42775},
+  {c:"Cozumel",km:1550,eur:48922,cam:69996,kra:77008,rab:83292,mud:101983},
+  {c:"Cuernavaca",km:89,eur:3864,cam:6899,kra:7589,rab:10763,mud:15454},
+  {c:"Culiacán",km:1262,eur:29805,cam:46225,kra:50847,rab:55884,mud:64602},
+  {c:"Durango",km:915,eur:23043,cam:28977,kra:31874,rab:38636,mud:44845},
+  {c:"Ensenada",km:2961,eur:59333,cam:75891,kra:83480,rab:89690,mud:107628},
+  {c:"Gómez Palacio",km:985,eur:22767,cam:33116,kra:36428,rab:45535,mud:52434},
+  {c:"Guadalajara",km:542,eur:15178,cam:22215,kra:24437,rab:30356,mud:36566},
+  {c:"Hermosillo",km:1959,eur:48018,cam:63887,kra:70275,rab:74386,mud:84170},
+  {c:"Iguala",km:203,eur:8279,cam:13108,kra:14419,rab:21388,mud:23871},
+  {c:"Irapuato",km:323,eur:12419,cam:18628,kra:20491,rab:25527,mud:32313},
+  {c:"Jalapa/Xalapa",km:322,eur:12419,cam:18628,kra:20491,rab:25527,mud:29805},
+  {c:"La Paz BCS",km:4312,eur:77271,cam:104868,kra:115355,rab:124186,mud:135224},
+  {c:"Laredo",km:1117,eur:26493,cam:37394,kra:41133,rab:49536,mud:59935},
+  {c:"León",km:387,eur:13798,cam:20823,kra:22893,rab:27722,mud:33756},
+  {c:"Los Mochis",km:1442,eur:33806,cam:48984,kra:53883,rab:59333,mud:68302},
+  {c:"Matamoros",km:975,eur:23871,cam:34220,kra:37642,rab:46225,mud:53124},
+  {c:"Mazatlán",km:1042,eur:26631,cam:37394,kra:41133,rab:50502,mud:60023},
+  {c:"Mérida",km:1332,eur:32991,cam:47604,kra:52622,rab:62532,mud:71990},
+  {c:"Mexicali",km:2661,eur:56573,cam:73132,kra:80445,rab:91069,mud:106248},
+  {c:"Minatitlán",km:579,eur:17938,cam:24561,kra:27017,rab:29391,mud:35876},
+  {c:"Monclova",km:1021,eur:26970,cam:38636,kra:42524,rab:50301,mud:58580},
+  {c:"Monterrey",km:933,eur:21325,cam:28475,kra:31423,rab:43904,mud:54566},
+  {c:"Morelia",km:302,eur:12419,cam:18628,kra:20491,rab:25527,mud:32313},
+  {c:"Oaxaca",km:470,eur:12419,cam:18628,kra:20491,rab:25527,mud:32313},
+  {c:"Orizaba",km:269,eur:11039,cam:18628,kra:20491,rab:24147,mud:28977},
+  {c:"Pachuca",km:95,eur:4390,cam:7777,kra:8655,rab:12293,mud:16934},
+  {c:"Piedras Negras",km:1286,eur:34621,cam:51807,kra:58204,rab:69556,mud:80633},
+  {c:"Poza Rica",km:273,eur:12419,cam:17938,kra:19732,rab:25527,mud:32313},
+  {c:"Puebla",km:123,eur:5080,cam:7727,kra:8718,rab:13610,mud:16809},
+  {c:"Puerto Vallarta",km:875,eur:21450,cam:30218,kra:34496,rab:44218,mud:49737},
+  {c:"Querétaro",km:211,eur:6899,cam:11917,kra:12143,rab:17800,mud:22767},
+  {c:"Reynosa",km:1002,eur:25251,cam:35600,kra:39160,rab:43189,mud:51769},
+  {c:"Río Blanco",km:279,eur:11039,cam:18628,kra:20491,rab:24147,mud:28977},
+  {c:"Saltillo",km:849,eur:17938,cam:25527,kra:28080,rab:35600,mud:42085},
+  {c:"San Juan del Río",km:162,eur:5519,cam:10211,kra:11232,rab:16006,mud:20284},
+  {c:"San Luis Potosí",km:415,eur:13108,cam:18628,kra:20491,rab:25113,mud:30231},
+  {c:"Tampico",km:486,eur:16558,cam:25251,kra:27776,rab:34220,mud:42085},
+  {c:"Tapachula",km:1157,eur:29102,cam:42900,kra:47291,rab:56385,mud:67863},
+  {c:"Taxco",km:187,eur:8279,cam:13108,kra:14419,rab:19732,mud:25251},
+  {c:"Tepic",km:756,eur:21939,cam:28839,kra:31723,rab:39739,mud:50991},
+  {c:"Tijuana",km:2848,eur:63347,cam:81787,kra:90066,rab:104993,mud:120548},
+  {c:"Tlaxcala",km:118,eur:5381,cam:9659,kra:10625,rab:12419,mud:16420},
+  {c:"Toluca",km:66,eur:3808,cam:6944,kra:7952,rab:11415,mud:16182},
+  {c:"Torreón",km:1012,eur:22767,cam:31184,kra:34303,rab:43465,mud:51368},
+  {c:"Tuxpan",km:324,eur:13108,cam:20284,kra:22312,rab:25665,mud:34822},
+  {c:"Tuxtla Gutiérrez",km:1015,eur:25966,cam:35261,kra:39338,rab:48445,mud:62344},
+  {c:"Veracruz",km:402,eur:14676,cam:22705,kra:25025,rab:29478,mud:37331},
+  {c:"Villahermosa",km:768,eur:20698,cam:31874,kra:35062,rab:40843,mud:49147},
+  {c:"Zacatecas",km:605,eur:19318,cam:26217,kra:28839,rab:36497,mud:45535},
+  {c:"Zamora",km:430,eur:13108,cam:18628,kra:20491,rab:24561,mud:33116},
 
   /* ═══ NUEVOS DESTINOS NACIONALES ═══ */
   // Bajío y Centro
@@ -888,6 +899,13 @@ const TAR = [
   {c:"Mulegé",km:3600,..._T(3600)},
   {c:"Ciudad Constitución",km:3880,..._T(3880)},
 ];
+/* Normalización: toda ciudad sin tarifa explícita de Rabón/Mudancero recibe
+   un estimado a partir de la Camioneta 3.5 (razón promedio del tarifario 2026).
+   Los 65 destinos oficiales del Excel ya traen el valor exacto. */
+TAR.forEach(t=>{
+  if(t.rab==null) t.rab = Math.round((t.cam||0)*1.38);
+  if(t.mud==null) t.mud = Math.round((t.cam||0)*1.65);
+});
 
 /* ── Mapa ciudad → estado (para filtro por estado en cotizador) ── */
 const CIUDAD_ESTADO = {
@@ -1013,9 +1031,11 @@ const CIUDAD_ESTADO = {
 const ESTADOS_LIST = ["(Todos)",...[...new Set(Object.values(CIUDAD_ESTADO))].sort()];
 
 const VEHK = [
-  {k:"eur",label:"Eurovan 1T",    cap:"8 m³", crew:1,icon:"🚐"},
-  {k:"cam",label:"Camioneta 3.5T",cap:"16 m³",crew:1,icon:"🚛"},
-  {k:"kra",label:"Krafter",       cap:"20 m³",crew:1,icon:"🚐"},
+  {k:"eur",label:"Transporter 1T", cap:"8 m³", crew:1,icon:"🚐",alias:"Eurovan / Transporter"},
+  {k:"kra",label:"Sprinter 1.5T",  cap:"14 m³",crew:1,icon:"🚐",alias:"Krafter / Sprinter"},
+  {k:"cam",label:"Camión 3.5T",    cap:"16 m³",crew:1,icon:"🚛",alias:"Camioneta 3½ ton"},
+  {k:"rab",label:"Rabón",          cap:"40 m³",crew:2,icon:"🚚",alias:"Camión rabón"},
+  {k:"mud",label:"Mudancero",      cap:"70 m³",crew:2,icon:"🚛",alias:"Camión mudancero"},
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1193,18 +1213,25 @@ function lookupPlanForCliente(rawCliente){
 const fmt  = n => "$"+Math.round(n).toLocaleString("es-MX");
 const fmtK = n => n>=1e6?"$"+(n/1e6).toFixed(2)+"M":n>=1e3?"$"+(n/1e3).toFixed(1)+"k":"$"+Math.round(n);
 const uid  = () => Math.random().toString(36).slice(2,8).toUpperCase();
-const KM_DIA=550, COMIDA=350, HOTEL=900, ADIC=1200, AYUD=2800;
+/* Viáticos 2026: hotel $1,100/noche POR UNIDAD (1 o 2 personas comparten
+   habitación) · comida $700/día POR PERSONA. Casetas: incluidas vía TAG propio. */
+const KM_DIA=550, COMIDA=700, HOTEL=1100, ADIC=2000, AYUD=2800;
 
 function diasRuta(km){
   if(!km) return {ida:0,noches:0,total:0};
   const ida=Math.ceil(km/KM_DIA);
   return {ida,noches:km>300?ida:0,total:ida*2};
 }
-function calcViaticos(km,crew,comida=COMIDA,hotel=HOTEL){
-  const {total,noches}=diasRuta(km);
-  const xC=comida*crew*total;
-  const xH=hotel*crew*noches;
-  return {xC,xH,total:xC+xH,dias:total,noches};
+/* personas = cuántos van en la(s) unidad(es) (comida se multiplica).
+   unidades = habitaciones de hotel (1 por unidad, sin importar 1 o 2 personas).
+   diasOv/nochesOv permiten fijar días manualmente desde el cotizador. */
+function calcViaticos(km,personas,comida=COMIDA,hotel=HOTEL,unidades=1,diasOv=null,nochesOv=null){
+  const auto=diasRuta(km);
+  const dias=diasOv!=null?diasOv:auto.total;
+  const noches=nochesOv!=null?nochesOv:auto.noches;
+  const xC=comida*personas*dias;
+  const xH=hotel*noches*unidades;
+  return {xC,xH,total:xC+xH,dias,noches};
 }
 function calcFlota(pdv,maxDia,plazo){
   const vans=Math.max(1,Math.ceil(pdv/(maxDia*plazo)));
@@ -2256,29 +2283,39 @@ function exportCotizadorXLSX({modo,cliente,notas,ciudades,veh,total,vehLabel,fec
   ws["B7"]={...s("Estado"),s:{...H}};
   ws["C7"]={...s("Km"),s:{...H}};
   ws["D7"]={...s("Días tránsito"),s:{...H}};
-  ws["E7"]={...s("PDVs"),s:{...H}};
-  ws["F7"]={...s("Tarifa ("+vehLabel+")"),s:{...H}};
-  ws["G7"]={...s("$/km"),s:{...H}};
+  ws["E7"]={...s("Puntos entrega"),s:{...H}};
+  ws["F7"]={...s("Tarifa base ("+vehLabel+")"),s:{...H}};
+  ws["G7"]={...s("$/punto adic."),s:{...H}};
+  ws["H7"]={...s("Desc. vol."),s:{...H}};
+  ws["I7"]={...s("Extra puntos"),s:{...H}};
+  ws["J7"]={...s("Total ciudad"),s:{...H}};
   let row=8;
   for(const c of (ciudades||[])){
     const dias=c.km?Math.max(1,Math.ceil(c.km/550)):0;
     const tarifa=c[veh]||c.tarifa||0;
-    const pxkm=c.km>0?Math.round(tarifa/c.km):0;
+    const nPts=Math.max(1,c.puntos||1);
+    const pp=c.pp!=null?c.pp:sugerirPunto(veh,c.km);
+    const d=descPuntos(nPts);
+    const xPts=Math.round((nPts-1)*pp*(1-d));
     ws["A"+row]={...s(c.c),s:DAT};
     ws["B"+row]={...s(CIUDAD_ESTADO[c.c]||"–"),s:DAT};
     ws["C"+row]={...s(c.km||0),s:{numFmt:"#,##0",alignment:{horizontal:"center"}}};
     ws["D"+row]={...s(dias+" día"+(dias>1?"s":"")),s:{alignment:{horizontal:"center"}}};
-    ws["E"+row]={...s(c.pdv||0),s:{numFmt:"#,##0",alignment:{horizontal:"center"}}};
+    ws["E"+row]={...s(nPts),s:{numFmt:"#,##0",alignment:{horizontal:"center"},font:{bold:true,color:{rgb:"2563EB"}}}};
     ws["F"+row]={...s(tarifa),s:{numFmt:"$#,##0.00",alignment:{horizontal:"right"},font:{bold:true}}};
-    ws["G"+row]={...s(pxkm),s:{numFmt:"$#,##0",alignment:{horizontal:"right"},font:{color:{rgb:"7C3AED"}}}};
+    ws["G"+row]={...s(pp),s:{numFmt:"$#,##0",alignment:{horizontal:"right"}}};
+    ws["H"+row]={...s(d>0?"-"+Math.round(d*100)+"%":"–"),s:{alignment:{horizontal:"center"},font:{color:{rgb:"16A34A"},bold:d>0}}};
+    ws["I"+row]={...s(xPts),s:{numFmt:"$#,##0.00",alignment:{horizontal:"right"},font:{color:{rgb:"2563EB"}}}};
+    ws["J"+row]={...s(tarifa+xPts),s:{numFmt:"$#,##0.00",alignment:{horizontal:"right"},font:{bold:true,color:{rgb:"D97706"}}}};
     row++;
   }
-  row++;
-  ws["E"+row]={...s("TOTAL"),s:{font:{bold:true}}};
-  ws["F"+row]={...s(total),s:{numFmt:"$#,##0.00",font:{bold:true,color:{rgb:"D97706"}},fill:{fgColor:{rgb:"FFF7ED"}}}};
-  ws["!ref"]="A1:G"+row;
-  ws["!cols"]=[{wch:22},{wch:16},{wch:8},{wch:12},{wch:8},{wch:16},{wch:10}];
-  ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:6}}];
+  ws["A"+row]={...s("🛣️ Casetas y peajes: INCLUIDOS (TAG DMovimiento) · 🏨 Hotel $1,100/unidad/noche · 🍽️ Comida $700/persona/día"),s:{font:{italic:true,sz:9,color:{rgb:"16A34A"}}}};
+  row+=2;
+  ws["I"+row]={...s("TOTAL CON IVA"),s:{font:{bold:true}}};
+  ws["J"+row]={...s(total),s:{numFmt:"$#,##0.00",font:{bold:true,color:{rgb:"D97706"}},fill:{fgColor:{rgb:"FFF7ED"}}}};
+  ws["!ref"]="A1:J"+row;
+  ws["!cols"]=[{wch:22},{wch:14},{wch:8},{wch:11},{wch:12},{wch:17},{wch:12},{wch:9},{wch:12},{wch:14}];
+  ws["!merges"]=[{s:{r:0,c:0},e:{r:0,c:9}}];
   XLSX.utils.book_append_sheet(wb,ws,"Cotización DMOV");
   XLSX.writeFile(wb,`Cotizacion_DMOV_${(cliente||"sin-cliente").replace(/\s+/g,"-")}_${fecha}.xlsx`);
 }
@@ -3863,6 +3900,7 @@ function Cotizador({onSaved}){
   const [lAyud,setLAyud]=useState(false);
   const [lRes,setLRes]=useState(false);
   const [lPuntos,setLPuntos]=useState([{id:uid(),dir:"",ref:""}]);
+  const [lPP,setLPP]=useState(null); // precio por punto adicional (null = sugerido por vehículo)
   const addLPunto=()=>setLPuntos(p=>[...p,{id:uid(),dir:"",ref:""}]);
   const rmLPunto=id=>setLPuntos(p=>p.filter(x=>x.id!==id));
   const updLPunto=(id,k,v)=>setLPuntos(p=>p.map(x=>x.id===id?{...x,[k]:v}:x));
@@ -3876,9 +3914,11 @@ function Cotizador({onSaved}){
   const [fMani,setFMani]=useState(false);
   const [fNumAyud,setFNumAyud]=useState(1);
   const [fRes,setFRes]=useState(false);
-  const [fExtra,setFExtra]=useState(0);
+  const [fPersonas,setFPersonas]=useState(1); // 1 o 2 en la unidad: hotel igual, comida se duplica
   const [fComida,setFComida]=useState(COMIDA);
   const [fHotel,setFHotel]=useState(HOTEL);
+  const [fDiasOv,setFDiasOv]=useState(null);   // override manual de días de ruta
+  const [fNochesOv,setFNochesOv]=useState(null);
 
   // ── MASIVO
   const [mVeh,setMVeh]=useState("cam");
@@ -3913,14 +3953,35 @@ function Cotizador({onSaved}){
 
   // ── CALC FORÁNEO
   const fVD=VEHK.find(v=>v.k===fVeh);
-  const fCrew=(fVD?.crew||1)+fExtra;
+  const fCrew=fPersonas;
   const fMaxKm=fCiudades.length>0?Math.max(...fCiudades.map(c=>c.km)):0;
-  const fBaseTotal=fCiudades.reduce((a,c)=>a+(c[fVeh]||0),0);
-  const {xC:fXC,xH:fXH,total:fXV,dias:fDias,noches:fNoches}=useMemo(()=>fMaxKm>0?calcViaticos(fMaxKm,fCrew,fComida,fHotel):{xC:0,xH:0,total:0,dias:0,noches:0},[fMaxKm,fCrew,fComida,fHotel]);
-  const fXU=fUrg?fBaseTotal*.35:0;
+  /* Por ciudad: tarifa base (1er punto incluido) + puntos adicionales con
+     descuento por volumen (cada 20 puntos −5%, tope 20%). Precio editable. */
+  const fCityRows=fCiudades.map(c=>{
+    const base=c[fVeh]||0;
+    const nPts=Math.max(1,c.puntos||1);
+    const nAd=nPts-1;
+    const pp=c.pp!=null?c.pp:sugerirPunto(fVeh,c.km);
+    const d=descPuntos(nPts);
+    const xPts=Math.round(nAd*pp*(1-d));
+    return {...c,base,nPts,nAd,pp,d,xPts,cityTotal:base+xPts};
+  });
+  const fBaseTotal=fCityRows.reduce((a,c)=>a+c.base,0);
+  const fPtsTotal=fCityRows.reduce((a,c)=>a+c.xPts,0);
+  const fTotPuntos=fCityRows.reduce((a,c)=>a+c.nPts,0);
+  /* Días de ruta: tránsito ida y vuelta + días extra de trabajo en ciudad.
+     Editables — el auto es sugerencia. Hotel por unidad, comida por persona. */
+  const fDiasAuto=fMaxKm>0?diasRuta(fMaxKm).total+fCiudades.reduce((a,c)=>a+Math.max(0,(c.dias||1)-1),0):0;
+  const fNochesAuto=fMaxKm>300?Math.max(1,fDiasAuto-1):0;
+  const fDias=fDiasOv!=null?fDiasOv:fDiasAuto;
+  const fNoches=fNochesOv!=null?fNochesOv:(fDiasOv!=null?(fMaxKm>300?Math.max(0,fDiasOv-1):0):fNochesAuto);
+  const fXC=fComida*fPersonas*fDias;
+  const fXH=fHotel*fNoches;
+  const fXV=fXC+fXH;
+  const fXU=fUrg?(fBaseTotal+fPtsTotal)*.35:0;
   const fXM=fMani?AYUD*fNumAyud:0;
   const fXR=fRes&&fCiudades.length>0?(LOC[fVeh]?.resguardo||0):0;
-  const fSub=fBaseTotal+fXU+fXM+fXR+fXV;
+  const fSub=fBaseTotal+fPtsTotal+fXU+fXM+fXR+fXV;
   const fIva=fSub*.16;const fTot=fSub+fIva;
 
   // ── CALC LOCAL
@@ -3929,8 +3990,11 @@ function Cotizador({onSaved}){
   if(lUrg&&lAyud) lBase=lD.urgente_ay;
   else if(lAyud)  lBase=lD.ayudante;
   else if(lUrg)   lBase=lD.urgente;
-  const lPuntosExtra=Math.max(0,lPuntos.filter(p=>p.dir.trim()).length-1);
-  const lXP=lPuntosExtra*ADIC;
+  const lNumPuntos=lPuntos.filter(p=>p.dir.trim()).length;
+  const lPuntosExtra=Math.max(0,lNumPuntos-1);
+  const lPPef=lPP!=null?lPP:(PUNTO_ADIC[lVeh]||ADIC);
+  const lDesc=descPuntos(lNumPuntos);
+  const lXP=Math.round(lPuntosExtra*lPPef*(1-lDesc));
   const lXR=lRes?(lD.resguardo||0):0;
   const lSub=lBase+lXP+lXR;const lIva=lSub*.16;const lTot=lSub+lIva;
 
@@ -3941,7 +4005,7 @@ function Cotizador({onSaved}){
   const mBaseTotal=mCiudades.reduce((a,c)=>a+(c.tarifa||0)*c.vans,0);
   const mXU=mUrg?mBaseTotal*.35:0;
   const mMaxKm=mCiudades.length>0?Math.max(...mCiudades.map(c=>c.km)):0;
-  const {xC:mXC,xH:mXH,total:mXV}=useMemo(()=>mMaxKm>0?calcViaticos(mMaxKm,mPersonasT,mComida,mHotel):{xC:0,xH:0,total:0},[mMaxKm,mPersonasT,mComida,mHotel]);
+  const {xC:mXC,xH:mXH,total:mXV}=useMemo(()=>mMaxKm>0?calcViaticos(mMaxKm,mPersonasT,mComida,mHotel,mTotVans):{xC:0,xH:0,total:0},[mMaxKm,mPersonasT,mComida,mHotel,mTotVans]);
   const mSub=mBaseTotal+mXU+mXV;const mIva=mSub*.16;const mTot=mSub+mIva;
 
   const total=modo==="foraneo"?fTot:modo==="local"?lTot:mTot;
@@ -3954,13 +4018,17 @@ function Cotizador({onSaved}){
       destino:fCiudades.map(c=>c.c).join(", "),km:fMaxKm,vehiculoLabel:fVD?.label,modoLabel:"FORÁNEO",
       stops:[{city:"Ciudad de México"},...fCiudades.map(c=>({city:c.c,pdv:c.pdv||0}))],
       lines:[
-        ...fCiudades.map(c=>({label:"📍 "+c.c+(c.pdv?" · "+c.pdv+" PDVs":"")+" · "+c.km+"km",value:fmt(c[fVeh]||0)})),
-        fCiudades.length>1&&{label:"Total tarifas ("+fCiudades.length+" ciudades)",value:fmt(fBaseTotal)},
+        ...fCityRows.flatMap(c=>[
+          {label:"📍 "+c.c+" · "+c.km+"km · base (1er punto incluido)",value:fmt(c.base)},
+          c.nAd>0?{label:"   ↳ "+c.nAd+" punto(s) adicional(es) × "+fmt(c.pp)+(c.d>0?" · desc. −"+Math.round(c.d*100)+"%":""),value:"+"+fmt(c.xPts),color:BLUE}:null,
+        ]).filter(Boolean),
+        fCiudades.length>1&&{label:"Total tarifas ("+fCiudades.length+" ciudades)",value:fmt(fBaseTotal+fPtsTotal)},
         fUrg&&{label:"⚡ Urgente +35%",value:"+"+fmt(fXU),color:ROSE},
-        fMani&&{label:"💪 Ayudantes ("+fNumAyud+")",value:"+"+fmt(fXM),color:VIOLET},
+        fMani&&{label:"💪 Ayudantes maniobras ("+fNumAyud+")",value:"+"+fmt(fXM),color:VIOLET},
         fRes&&{label:"🛡️ Resguardo 1 día",value:"+"+fmt(fXR),color:GREEN},
-        fXC>0&&{label:"🍽️ Comidas · "+fCrew+"p × "+fDias+"d",value:"+"+fmt(fXC),color:AMBER},
-        fXH>0&&{label:"🏨 Hotel · "+fCrew+"p \u00d7 "+fNoches+"n",value:"+"+fmt(fXH),color:BLUE},
+        fXC>0&&{label:"🍽️ Comida · "+fPersonas+" persona(s) × "+fDias+" día(s) × "+fmt(fComida),value:"+"+fmt(fXC),color:AMBER},
+        fXH>0&&{label:"🏨 Hotel · "+fNoches+" noche(s) × "+fmt(fHotel)+" por unidad",value:"+"+fmt(fXH),color:BLUE},
+        {label:"🛣️ Casetas y peajes — TAG DMovimiento",value:"Incluido",color:GREEN},
         {label:"Subtotal",value:fmt(fSub)},{label:"IVA 16%",value:fmt(fIva),color:MUTED},
         {label:"TOTAL CON IVA",value:fmt(fTot),bold:true,color:A},
       ].filter(Boolean)};
@@ -3968,7 +4036,7 @@ function Cotizador({onSaved}){
       stops:lPuntos.filter(p=>p.dir.trim()).map(p=>({city:p.dir})),
       lines:[
         {label:VEHK.find(v=>v.k===lVeh)?.label+" · "+(lUrg?"Urgente":"Normal")+(lAyud?" + Ayudante":""),value:fmt(lBase)},
-        lPuntosExtra>0&&{label:"📦 Paradas extra ("+lPuntosExtra+")",value:"+"+fmt(lXP),color:BLUE},
+        lPuntosExtra>0&&{label:"📦 "+lPuntosExtra+" punto(s) adicional(es) × "+fmt(lPPef)+(lDesc>0?" · desc. −"+Math.round(lDesc*100)+"%":""),value:"+"+fmt(lXP),color:BLUE},
         lRes&&{label:"🛡️ Resguardo",value:"+"+fmt(lXR),color:GREEN},
         {label:"Subtotal",value:fmt(lSub)},{label:"IVA 16%",value:fmt(lIva),color:MUTED},
         {label:"TOTAL CON IVA",value:fmt(lTot),bold:true,color:A},
@@ -4053,8 +4121,8 @@ function Cotizador({onSaved}){
       nombre: nombre.trim(),
       modo,
       plazo,
-      local:{veh:lVeh,urg:lUrg,ayud:lAyud,res:lRes,puntos:lPuntos},
-      foraneo:{veh:fVeh,ciudades:fCiudades,urg:fUrg,mani:fMani,numAyud:fNumAyud,res:fRes,extra:fExtra},
+      local:{veh:lVeh,urg:lUrg,ayud:lAyud,res:lRes,puntos:lPuntos,pp:lPP},
+      foraneo:{veh:fVeh,ciudades:fCiudades,urg:fUrg,mani:fMani,numAyud:fNumAyud,res:fRes,personas:fPersonas},
       masivo:{veh:mVeh,maxDia:mMaxDia,personas:mPersonas,ayud:mAyud,urg:mUrg,ciudades:mCiudades},
       createdAt: serverTimestamp(),
     };
@@ -4072,12 +4140,14 @@ function Cotizador({onSaved}){
       setLVeh(p.local.veh||"cam");
       setLUrg(!!p.local.urg);setLAyud(!!p.local.ayud);setLRes(!!p.local.res);
       setLPuntos(p.local.puntos||[{id:uid(),dir:"",ref:""}]);
+      setLPP(p.local.pp!=null?p.local.pp:null);
     }
     if(p.foraneo){
       setFVeh(p.foraneo.veh||"cam");
       setFCiudades(p.foraneo.ciudades||[]);
       setFUrg(!!p.foraneo.urg);setFMani(!!p.foraneo.mani);
-      setFNumAyud(p.foraneo.numAyud||1);setFRes(!!p.foraneo.res);setFExtra(p.foraneo.extra||0);
+      setFNumAyud(p.foraneo.numAyud||1);setFRes(!!p.foraneo.res);
+      setFPersonas(p.foraneo.personas||(p.foraneo.extra?2:1));
     }
     if(p.masivo){
       setMVeh(p.masivo.veh||"cam");
@@ -4099,33 +4169,38 @@ function Cotizador({onSaved}){
   // Comparador — calcula el total con cada tipo de vehículo
   const compararVehiculos = useMemo(()=>{
     if(modo==="local"){
-      return Object.keys(LOC).map(k=>{
-        const d = LOC[k];
+      const n = lPuntos.filter(p=>p.dir.trim()).length;
+      return VEHK.map(v=>{
+        const d = LOC[v.k];
         let base = d.normal;
         if(lUrg&&lAyud) base = d.urgente_ay;
         else if(lAyud) base = d.ayudante;
         else if(lUrg) base = d.urgente;
-        const pe = Math.max(0,lPuntos.filter(p=>p.dir.trim()).length-1);
-        const xp = pe*ADIC;
+        const pe = Math.max(0,n-1);
+        const xp = Math.round(pe*(PUNTO_ADIC[v.k]||ADIC)*(1-descPuntos(n)));
         const xr = lRes?(d.resguardo||0):0;
         const sub = base+xp+xr;
-        return {veh:k,label:VEHK.find(v=>v.k===k)?.label||k,total:sub*1.16,subtotal:sub};
+        return {veh:v.k,label:v.label,total:sub*1.16,subtotal:sub};
       }).sort((a,b)=>a.total-b.total);
     }else if(modo==="foraneo"&&fCiudades.length>0){
-      return Object.keys(LOC).map(k=>{
-        const vd = VEHK.find(v=>v.k===k);
-        const crew = (vd?.crew||1)+fExtra;
+      return VEHK.map(v=>{
+        const k = v.k;
         const baseTotal = fCiudades.reduce((a,c)=>a+(c[k]||0),0);
-        const {total:xv} = calcViaticos(fMaxKm,crew,fComida,fHotel);
-        const xu = fUrg?baseTotal*.35:0;
+        const ptsTotal = fCiudades.reduce((a,c)=>{
+          const nPts=Math.max(1,c.puntos||1);
+          const pp=c.pp!=null?c.pp:sugerirPunto(k,c.km);
+          return a+Math.round((nPts-1)*pp*(1-descPuntos(nPts)));
+        },0);
+        const xv = fComida*fPersonas*fDias + fHotel*fNoches;
+        const xu = fUrg?(baseTotal+ptsTotal)*.35:0;
         const xm = fMani?AYUD*fNumAyud:0;
-        const xr = fRes&&fCiudades.length>0?(LOC[k]?.resguardo||0):0;
-        const sub = baseTotal+xu+xm+xr+xv;
-        return {veh:k,label:vd?.label||k,total:sub*1.16,subtotal:sub};
+        const xr = fRes?(LOC[k]?.resguardo||0):0;
+        const sub = baseTotal+ptsTotal+xu+xm+xr+xv;
+        return {veh:k,label:v.label,total:sub*1.16,subtotal:sub};
       }).sort((a,b)=>a.total-b.total);
     }
     return [];
-  },[modo,lVeh,lUrg,lAyud,lRes,lPuntos,fCiudades,fUrg,fMani,fNumAyud,fRes,fExtra,fComida,fHotel,fMaxKm]);
+  },[modo,lVeh,lUrg,lAyud,lRes,lPuntos,fCiudades,fUrg,fMani,fNumAyud,fRes,fPersonas,fComida,fHotel,fDias,fNoches]);
 
   return(
     <div style={{flex:1,overflowY:"auto",background:"#f1f4fb"}}>
@@ -4135,7 +4210,7 @@ function Cotizador({onSaved}){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div>
             <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:26,color:TEXT,letterSpacing:"-0.03em"}}>Cotizador Pro</h1>
-            <p style={{color:MUTED,fontSize:12,marginTop:2}}>Tarifas 2026 · Viáticos automáticos · PDF profesional</p>
+            <p style={{color:MUTED,fontSize:12,marginTop:2}}>Tarifario 2026 · 5 vehículos · Puntos con desc. volumen · Viáticos $1,100 hotel + $700 comida · Casetas TAG incluidas</p>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <button onClick={()=>setShowPlantillas(true)} className="btn" style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:11,fontWeight:700,fontSize:12}}>
@@ -4214,10 +4289,11 @@ function Cotizador({onSaved}){
             <S><SH>Vehículo</SH>
               <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:7}}>
                 {VEHK.map(v=>(
-                  <button key={v.k} onClick={()=>setLVeh(v.k)} className="btn" style={{padding:"10px 6px",borderRadius:11,border:"2px solid "+(lVeh===v.k?A:BD2),background:lVeh===v.k?A+"08":"#fff",cursor:"pointer",textAlign:"center",transition:"all .13s"}}>
+                  <button key={v.k} onClick={()=>setLVeh(v.k)} className="btn" title={v.alias} style={{padding:"10px 6px",borderRadius:11,border:"2px solid "+(lVeh===v.k?A:BD2),background:lVeh===v.k?A+"08":"#fff",cursor:"pointer",textAlign:"center",transition:"all .13s"}}>
                     <div style={{fontSize:18}}>{v.icon}</div>
-                    <div style={{fontSize:10,fontWeight:lVeh===v.k?700:500,color:lVeh===v.k?A:MUTED,marginTop:4}}>{v.label.split(" ")[0]}</div>
-                    <div style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:lVeh===v.k?A:TEXT,marginTop:2}}>{fmt(lD?.normal||0)}</div>
+                    <div style={{fontSize:10,fontWeight:lVeh===v.k?700:500,color:lVeh===v.k?A:MUTED,marginTop:4}}>{v.label}</div>
+                    <div style={{fontSize:8,color:MUTED}}>{v.cap}</div>
+                    <div style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:lVeh===v.k?A:TEXT,marginTop:2}}>{fmt(LOC[v.k]?.normal||0)}</div>
                   </button>
                 ))}
               </div>
@@ -4230,9 +4306,16 @@ function Cotizador({onSaved}){
             <S>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:13}}>
                 <SH>Puntos de entrega</SH>
-                <Tag color={BLUE}>{lPuntos.filter(p=>p.dir.trim()).length} punto(s){lPuntosExtra>0?" · +"+fmt(lPuntosExtra*ADIC):""}</Tag>
+                <Tag color={BLUE}>{lNumPuntos} punto(s){lPuntosExtra>0?" · +"+fmt(lXP):""}</Tag>
               </div>
-              <div style={{fontSize:11,color:MUTED,marginBottom:11}}>Primer punto incluido · Cada adicional: <strong style={{color:A}}>{fmt(ADIC)}</strong></div>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:11,padding:"8px 11px",background:BLUE+"06",border:"1px solid "+BLUE+"20",borderRadius:9}}>
+                <span style={{fontSize:11,color:MUTED}}>Primer punto incluido · Cada adicional:</span>
+                <input type="number" value={lPPef} onChange={e=>setLPP(Number(e.target.value)||0)}
+                  style={{width:90,background:"#fff",border:"1.5px solid "+A+"35",borderRadius:8,padding:"5px 9px",fontFamily:MONO,fontSize:13,fontWeight:700,color:A}}/>
+                {lPP!=null&&lPP!==(PUNTO_ADIC[lVeh]||ADIC)&&<button onClick={()=>setLPP(null)} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline"}}>↺ sugerido {fmt(PUNTO_ADIC[lVeh]||ADIC)}</button>}
+                {lDesc>0&&<span style={{fontSize:10,fontWeight:800,color:GREEN,background:GREEN+"12",borderRadius:6,padding:"2px 8px"}}>🎉 Desc. volumen −{Math.round(lDesc*100)}% ({lNumPuntos} puntos)</span>}
+                {lDesc===0&&lNumPuntos>=10&&<span style={{fontSize:10,color:MUTED}}>💡 A partir de 20 puntos: −5% · 40: −10% · 60: −15% (tope −20%)</span>}
+              </div>
               {lPuntos.map((p,i)=>(
                 <div key={p.id} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
                   <div style={{width:22,height:22,borderRadius:"50%",background:i===0?BLUE+"14":A+"14",border:"2px solid "+(i===0?BLUE:A),display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:i===0?BLUE:A,flexShrink:0}}>{i+1}</div>
@@ -4294,42 +4377,69 @@ function Cotizador({onSaved}){
                   </table>
                 </div>
               )}
-              {fCiudades.map((c,i)=>{
+              {fCityRows.map((c,i)=>{
                 const dias=Math.max(1,Math.ceil((c.km||0)/KM_DIA));
-                const pxkm=c.km>0&&c[fVeh]?Math.round(c[fVeh]/c.km):0;
+                const ppSug=sugerirPunto(fVeh,c.km);
                 return(
-                <div key={c.id} style={{background:A+"05",border:"1.5px solid "+A+"20",borderRadius:12,marginBottom:12,overflow:"hidden"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:9,padding:"10px 13px",borderBottom:"1px solid "+A+"15"}}>
-                    <div style={{width:22,height:22,borderRadius:"50%",background:A,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
+                <div key={c.id} style={{background:"#fff",border:"1.5px solid "+A+"25",borderRadius:14,marginBottom:12,overflow:"hidden",boxShadow:"0 1px 6px rgba(12,24,41,.05)"}}>
+                  {/* Header ciudad */}
+                  <div style={{display:"flex",alignItems:"center",gap:9,padding:"11px 13px",background:A+"06",borderBottom:"1px solid "+A+"15"}}>
+                    <div style={{width:24,height:24,borderRadius:"50%",background:A,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:800,color:"#fff",flexShrink:0}}>{i+1}</div>
                     <div style={{flex:1}}>
-                      <div style={{fontWeight:700,fontSize:13}}>{c.c}{CIUDAD_ESTADO[c.c]&&<span style={{fontSize:9,color:MUTED,fontWeight:500,marginLeft:5,background:MUTED+"15",padding:"1px 5px",borderRadius:4}}>{CIUDAD_ESTADO[c.c]}</span>}</div>
+                      <div style={{fontWeight:800,fontSize:14}}>{c.c}{CIUDAD_ESTADO[c.c]&&<span style={{fontSize:9,color:MUTED,fontWeight:500,marginLeft:5,background:MUTED+"15",padding:"1px 5px",borderRadius:4}}>{CIUDAD_ESTADO[c.c]}</span>}</div>
                       <div style={{fontFamily:MONO,fontSize:10,color:MUTED,display:"flex",gap:8,marginTop:2}}>
                         <span>{(c.km||0).toLocaleString()} km</span>
                         <span style={{color:dias<=1?"#16a34a":dias<=2?"#d97706":"#dc2626",fontWeight:700}}>⏱ {dias}d tránsito</span>
-                        <span style={{color:VIOLET}}>≈${pxkm}/km</span>
+                        <span style={{color:GREEN,fontWeight:600}}>🛣️ casetas TAG incluidas</span>
                       </div>
                     </div>
                     <div style={{textAlign:"right",marginRight:6}}>
-                      <div style={{fontFamily:MONO,fontWeight:800,fontSize:13,color:A}}>{fmt(c[fVeh]||0)}</div>
+                      <div style={{fontSize:8,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Total ciudad</div>
+                      <div style={{fontFamily:MONO,fontWeight:800,fontSize:15,color:A}}>{fmt(c.cityTotal)}</div>
                     </div>
                     <button onClick={()=>setFCiudades(p=>p.filter(x=>x.id!==c.id))} className="btn" style={{width:22,height:22,borderRadius:"50%",border:"1px solid "+ROSE+"28",background:ROSE+"08",display:"flex",alignItems:"center",justifyContent:"center",color:ROSE}}><X size={10}/></button>
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:"10px 13px"}}>
+                  {/* Inputs: puntos de entrega · precio punto · días en ciudad · PDVs */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,padding:"11px 13px"}}>
                     <div>
-                      <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>PDVs a entregar</div>
-                      <input type="number" min="0" value={c.pdv||""} onChange={e=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,pdv:parseInt(e.target.value)||0}:x))}
-                        placeholder="Ej: 17" style={{width:"100%",background:"#fff",border:"1.5px solid "+A+"28",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:700,color:A}}/>
+                      <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>Puntos de entrega</div>
+                      <input type="number" min="1" value={c.puntos||1} onChange={e=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,puntos:Math.max(1,parseInt(e.target.value)||1)}:x))}
+                        style={{width:"100%",background:"#fff",border:"2px solid "+BLUE+"45",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:16,fontWeight:800,color:BLUE,textAlign:"center"}}/>
+                      <div style={{fontSize:9,color:MUTED,marginTop:3}}>1º incluido en base</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>$ / punto adicional</div>
+                      <input type="number" min="0" value={c.pp!=null?c.pp:ppSug} onChange={e=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,pp:Number(e.target.value)||0}:x))}
+                        style={{width:"100%",background:"#fff",border:"1.5px solid "+A+"35",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:700,color:A,textAlign:"center"}}/>
+                      {c.pp!=null&&c.pp!==ppSug
+                        ?<button onClick={()=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,pp:null}:x))} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline",marginTop:3}}>↺ sugerido {fmt(ppSug)}</button>
+                        :<div style={{fontSize:9,color:MUTED,marginTop:3}}>sugerido por distancia</div>}
                     </div>
                     <div>
                       <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>Días en ciudad</div>
                       <input type="number" min="1" value={c.dias||""} onChange={e=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,dias:parseInt(e.target.value)||1}:x))}
-                        placeholder="Ej: 2" style={{width:"100%",background:"#fff",border:"1.5px solid "+BLUE+"28",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:700,color:BLUE}}/>
+                        placeholder="1" style={{width:"100%",background:"#fff",border:"1.5px solid "+VIOLET+"30",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:700,color:VIOLET,textAlign:"center"}}/>
+                      <div style={{fontSize:9,color:MUTED,marginTop:3}}>suma viáticos</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>PDVs (opcional)</div>
+                      <input type="number" min="0" value={c.pdv||""} onChange={e=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,pdv:parseInt(e.target.value)||0}:x))}
+                        placeholder="—" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:700,color:MUTED,textAlign:"center"}}/>
                     </div>
                   </div>
-                  {(c.pdv>0||c.dias>0)&&<div style={{padding:"0 13px 10px",display:"flex",gap:12}}>
-                    {c.pdv>0&&c.dias>0&&<span style={{fontSize:10,color:MUTED}}>📦 {Math.ceil(c.pdv/c.dias)} PDVs/día</span>}
-                    <span style={{fontSize:10,color:MUTED}}>⏱️ {c.dias||1} día(s) en destino + {dias} día(s) tránsito</span>
-                  </div>}
+                  {/* Desglose de la ciudad */}
+                  <div style={{padding:"9px 13px",background:"#f8fafc",borderTop:"1px solid "+BORDER,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11}}>
+                    <span style={{color:MUTED}}>Base <strong style={{fontFamily:MONO,color:TEXT}}>{fmt(c.base)}</strong></span>
+                    {c.nAd>0&&<>
+                      <span style={{color:BD2}}>+</span>
+                      <span style={{color:MUTED}}>{c.nAd} punto(s) × <strong style={{fontFamily:MONO,color:BLUE}}>{fmt(c.pp)}</strong></span>
+                      {c.d>0&&<span style={{fontSize:10,fontWeight:800,color:GREEN,background:GREEN+"12",borderRadius:6,padding:"1px 7px"}}>−{Math.round(c.d*100)}% volumen</span>}
+                      <span style={{color:BD2}}>=</span>
+                      <span style={{fontFamily:MONO,fontWeight:700,color:BLUE}}>+{fmt(c.xPts)}</span>
+                    </>}
+                    {c.nAd===0&&<span style={{fontSize:10,color:MUTED,fontStyle:"italic"}}>Entrega única — sin puntos adicionales</span>}
+                    {c.nPts>=10&&c.d===0&&<span style={{fontSize:10,color:AMBER,fontWeight:600}}>💡 con 20+ puntos aplica −5%</span>}
+                  </div>
                 </div>
               );})}
               <div style={{padding:"10px 12px",background:A+"04",border:"1.5px dashed "+A+"30",borderRadius:10}}>
@@ -4339,37 +4449,74 @@ function Cotizador({onSaved}){
                     {ESTADOS_LIST.map(e=><option key={e} value={e}>{e}</option>)}
                   </select>
                 </div>
-                <CitySearch value={fSearch} onChange={setFSearch} onSelect={t=>{setFCiudades(p=>[...p,{...t,id:uid(),pdv:0,dias:1}]);setFSearch("");}} veh={fVeh} exclude={fCiudades.map(c=>c.c)} estadoFilter={fEstadoFil}/>
+                <CitySearch value={fSearch} onChange={setFSearch} onSelect={t=>{setFCiudades(p=>[...p,{...t,id:uid(),pdv:0,dias:1,puntos:1,pp:null}]);setFSearch("");}} veh={fVeh} exclude={fCiudades.map(c=>c.c)} estadoFilter={fEstadoFil}/>
               </div>
             </S>
             <S><SH>Vehículo</SH>
               <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:7}}>
-                {VEHK.map(v=>(
-                  <button key={v.k} onClick={()=>setFVeh(v.k)} className="btn" style={{padding:"9px 5px",borderRadius:11,border:"2px solid "+(fVeh===v.k?A:BD2),background:fVeh===v.k?A+"08":"#fff",cursor:"pointer",textAlign:"center",transition:"all .13s"}}>
-                    <div style={{fontSize:16}}>{v.icon}</div>
-                    <div style={{fontSize:10,fontWeight:fVeh===v.k?700:500,color:fVeh===v.k?A:MUTED,marginTop:3}}>{v.label.split(" ")[0]}</div>
+                {VEHK.map(v=>{
+                  const tarV=fCiudades.reduce((a,c)=>a+(c[v.k]||0),0);
+                  return(
+                  <button key={v.k} onClick={()=>setFVeh(v.k)} className="btn" title={v.alias} style={{padding:"10px 5px",borderRadius:11,border:"2px solid "+(fVeh===v.k?A:BD2),background:fVeh===v.k?A+"08":"#fff",cursor:"pointer",textAlign:"center",transition:"all .13s"}}>
+                    <div style={{fontSize:17}}>{v.icon}</div>
+                    <div style={{fontSize:10,fontWeight:fVeh===v.k?800:500,color:fVeh===v.k?A:MUTED,marginTop:3,lineHeight:1.2}}>{v.label}</div>
+                    <div style={{fontSize:8,color:MUTED}}>{v.cap}</div>
+                    {fCiudades.length>0&&<div style={{fontFamily:MONO,fontSize:10,fontWeight:700,color:fVeh===v.k?A:TEXT,marginTop:2}}>{fmt(tarV)}</div>}
                   </button>
-                ))}
+                );})}
               </div>
             </S>
-            <S><SH>Extras y viáticos</SH>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:13}}>
-                <Spin label="Ayudantes extra" value={fExtra} onChange={setFExtra} min={0} max={4}/>
-                <Spin label="Núm. ayudantes" value={fNumAyud} onChange={setFNumAyud} min={1} max={10}/>
+            <S><SH>Personas, viáticos y días de ruta</SH>
+              {/* Personas en la unidad: hotel por unidad, comida por persona */}
+              <div style={{marginBottom:13}}>
+                <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>¿Cuántas personas van en la ruta?</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  {[1,2].map(n=>(
+                    <button key={n} onClick={()=>setFPersonas(n)} className="btn" style={{padding:"11px 8px",borderRadius:11,border:"2px solid "+(fPersonas===n?BLUE:BD2),background:fPersonas===n?BLUE+"08":"#fff",textAlign:"center"}}>
+                      <div style={{fontSize:16}}>{n===1?"👤":"👥"}</div>
+                      <div style={{fontSize:12,fontWeight:fPersonas===n?800:600,color:fPersonas===n?BLUE:MUTED,marginTop:2}}>{n===1?"1 persona (solo chofer)":"2 personas (chofer + ayudante)"}</div>
+                      <div style={{fontSize:9,color:MUTED,marginTop:2}}>{n===1?"Hotel 1 hab · 1 comida/día":"Hotel misma hab · comida doble"}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Días de ruta — auto con override manual */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginBottom:13}}>
                 <div>
-                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Comida/persona/día</div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Días de ruta</div>
+                  <input type="number" min="0" value={fDias} onChange={e=>setFDiasOv(Math.max(0,parseInt(e.target.value)||0))}
+                    style={{width:"100%",background:"#fff",border:"1.5px solid "+(fDiasOv!=null?AMBER:BD2),borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700,textAlign:"center"}}/>
+                  {fDiasOv!=null
+                    ?<button onClick={()=>{setFDiasOv(null);setFNochesOv(null);}} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline",marginTop:3}}>↺ auto ({fDiasAuto}d)</button>
+                    :<div style={{fontSize:9,color:MUTED,marginTop:3}}>auto: tránsito + días en ciudad</div>}
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Noches de hotel</div>
+                  <input type="number" min="0" value={fNoches} onChange={e=>setFNochesOv(Math.max(0,parseInt(e.target.value)||0))}
+                    style={{width:"100%",background:"#fff",border:"1.5px solid "+(fNochesOv!=null?AMBER:BD2),borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700,textAlign:"center"}}/>
+                  {fNochesOv!=null&&<button onClick={()=>setFNochesOv(null)} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline",marginTop:3}}>↺ auto</button>}
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Comida / persona / día</div>
                   <input type="number" value={fComida} onChange={e=>setFComida(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
                 <div>
-                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/persona/noche</div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel / unidad / noche</div>
                   <input type="number" value={fHotel} onChange={e=>setFHotel(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
               </div>
+              {/* Resumen viáticos en vivo */}
+              {fMaxKm>0&&<div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"9px 12px",background:AMBER+"08",border:"1px solid "+AMBER+"25",borderRadius:10,marginBottom:13,fontSize:11}}>
+                <span>🍽️ <strong style={{fontFamily:MONO}}>{fmt(fComida)}</strong> × {fPersonas}p × {fDias}d = <strong style={{fontFamily:MONO,color:AMBER}}>{fmt(fXC)}</strong></span>
+                <span>🏨 <strong style={{fontFamily:MONO}}>{fmt(fHotel)}</strong> × {fNoches} noche(s) = <strong style={{fontFamily:MONO,color:BLUE}}>{fmt(fXH)}</strong></span>
+                <span style={{color:GREEN,fontWeight:700}}>🛣️ Casetas: incluidas (TAG DMovimiento)</span>
+              </div>}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
                 <Tog checked={fUrg} onChange={setFUrg} label="⚡ Urgente +35%" color={ROSE}/>
                 <Tog checked={fMani} onChange={setFMani} label="💪 Maniobras" color={VIOLET}/>
                 <Tog checked={fRes} onChange={setFRes} label="🛡️ Resguardo" color={GREEN}/>
               </div>
+              {fMani&&<div style={{marginTop:10,maxWidth:220}}><Spin label="Núm. ayudantes maniobras" value={fNumAyud} onChange={setFNumAyud} min={1} max={10}/></div>}
             </S>
           </>}
 
@@ -4475,10 +4622,11 @@ function Cotizador({onSaved}){
                   <input type="number" value={mComida} onChange={e=>setMComida(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
                 <div>
-                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/persona/noche</div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Hotel/unidad/noche</div>
                   <input type="number" value={mHotel} onChange={e=>setMHotel(Number(e.target.value)||0)} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:15,fontWeight:700}}/>
                 </div>
               </div>
+              <div style={{fontSize:10,color:MUTED,marginTop:8}}>🏨 El hotel se cobra por unidad (1 o 2 personas comparten habitación) · 🛣️ Casetas incluidas con TAG DMovimiento</div>
             </S>
           </>}
 
@@ -4499,20 +4647,24 @@ function Cotizador({onSaved}){
             </div>
             <div style={{padding:"0 20px 14px"}}>
               {modo==="foraneo"&&<>
-                {fCiudades.map(c=><RowItem key={c.id} l={"📍 "+c.c+(c.pdv?" · "+c.pdv+" PDVs":"")} v={fmt(c[fVeh]||0)}/>)}
-                {fCiudades.length>1&&<RowItem l={"Total "+fCiudades.length+" ciudades"} v={fmt(fBaseTotal)}/>}
-                {fXC>0&&<RowItem l={"🍽️ Comidas"} v={"+"+fmt(fXC)} c={AMBER}/>}
-                {fXH>0&&<RowItem l={"🏨 Hotel"} v={"+"+fmt(fXH)} c={BLUE}/>}
+                {fCityRows.map(c=><div key={c.id}>
+                  <RowItem l={"📍 "+c.c+" · base"} v={fmt(c.base)}/>
+                  {c.nAd>0&&<RowItem l={"↳ "+c.nAd+" pto(s) × "+fmt(c.pp)+(c.d>0?" −"+Math.round(c.d*100)+"%":"")} v={"+"+fmt(c.xPts)} c={BLUE}/>}
+                </div>)}
+                {fCiudades.length>1&&<RowItem l={"Total "+fCiudades.length+" ciudades"} v={fmt(fBaseTotal+fPtsTotal)}/>}
+                {fXC>0&&<RowItem l={"🍽️ Comida "+fPersonas+"p × "+fDias+"d"} v={"+"+fmt(fXC)} c={AMBER}/>}
+                {fXH>0&&<RowItem l={"🏨 Hotel "+fNoches+" noche(s)"} v={"+"+fmt(fXH)} c={BLUE}/>}
                 {fXU>0&&<RowItem l={"⚡ Urgente"} v={"+"+fmt(fXU)} c={ROSE}/>}
                 {fXM>0&&<RowItem l={"💪 Maniobras"} v={"+"+fmt(fXM)} c={VIOLET}/>}
                 {fXR>0&&<RowItem l={"🛡️ Resguardo"} v={"+"+fmt(fXR)} c={GREEN}/>}
+                {fCiudades.length>0&&<RowItem l="🛣️ Casetas (TAG propio)" v="Incluidas" c={GREEN}/>}
                 <RowItem l="Subtotal" v={fmt(fSub)}/>
                 <RowItem l="IVA 16%" v={fmt(fIva)} c={MUTED}/>
                 <RowItem l="TOTAL" v={fmt(fTot)} c={A} bold/>
               </>}
               {modo==="local"&&<>
                 <RowItem l={VEHK.find(v=>v.k===lVeh)?.label||""} v={fmt(lBase)}/>
-                {lXP>0&&<RowItem l={"📦 "+lPuntosExtra+" parada(s) extra"} v={"+"+fmt(lXP)} c={BLUE}/>}
+                {lXP>0&&<RowItem l={"📦 "+lPuntosExtra+" pto(s) × "+fmt(lPPef)+(lDesc>0?" −"+Math.round(lDesc*100)+"%":"")} v={"+"+fmt(lXP)} c={BLUE}/>}
                 {lXR>0&&<RowItem l="🛡️ Resguardo" v={"+"+fmt(lXR)} c={GREEN}/>}
                 <RowItem l="Subtotal" v={fmt(lSub)}/>
                 <RowItem l="IVA 16%" v={fmt(lIva)} c={MUTED}/>
@@ -4530,12 +4682,18 @@ function Cotizador({onSaved}){
             </div>
             {modo==="foraneo"&&fCiudades.length>0&&<div style={{padding:"0 20px 14px"}}>
               <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8,paddingTop:8,borderTop:"1px solid "+BORDER}}>Comparar vehículos</div>
-              {VEHK.map(v=>(
+              {VEHK.map(v=>{
+                const tarV=fCiudades.reduce((a,c)=>{
+                  const nPts=Math.max(1,c.puntos||1);
+                  const pp=c.pp!=null?c.pp:sugerirPunto(v.k,c.km);
+                  return a+(c[v.k]||0)+Math.round((nPts-1)*pp*(1-descPuntos(nPts)));
+                },0);
+                return(
                 <div key={v.k} onClick={()=>setFVeh(v.k)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",cursor:"pointer",opacity:fVeh===v.k?1:.7}}>
-                  <span style={{fontSize:11,color:fVeh===v.k?A:TEXT,fontWeight:fVeh===v.k?700:400}}>{v.icon} {v.label}</span>
-                  <span style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:fVeh===v.k?A:TEXT}}>{fmt(fCiudades.reduce((a,c)=>a+(c[v.k]||0),0))}</span>
+                  <span style={{fontSize:11,color:fVeh===v.k?A:TEXT,fontWeight:fVeh===v.k?700:400}}>{v.icon} {v.label} <span style={{fontSize:9,color:MUTED}}>{v.cap}</span></span>
+                  <span style={{fontFamily:MONO,fontSize:11,fontWeight:700,color:fVeh===v.k?A:TEXT}}>{fmt(tarV)}</span>
                 </div>
-              ))}
+              );})}
             </div>}
           </div>
 
@@ -5013,7 +5171,7 @@ function PlanificadorRutas(){
   const {vans,dias:diasOp,capDia}=useMemo(()=>totalPDV>0?calcFlota(totalPDV,maxDia,plazo):{vans:1,dias:0,capDia:maxDia},[totalPDV,maxDia,plazo]);
   const vehD=VEHK.find(v=>v.k===veh);
   const crew=vans*((vehD?.crew||1)+pVan-1+(ayud?1:0));
-  const {xC,xH,total:xViat,dias:diasF,noches}=useMemo(()=>calcViaticos(totalKm,crew,comida,hotel),[totalKm,crew,comida,hotel]);
+  const {xC,xH,total:xViat,dias:diasF,noches}=useMemo(()=>calcViaticos(totalKm,crew,comida,hotel,vans),[totalKm,crew,comida,hotel,vans]);
   const tarifaT=useMemo(()=>stops.filter(s=>!s.isOrigin).reduce((a,s)=>a+(s.base||0),0)*vans,[stops,vans]);
   // Cuenta todas las paradas (puntos específicos) de todos los destinos
   const totalPuntosDestino = useMemo(()=>stops.filter(s=>!s.isOrigin).reduce((a,s)=>a+((s.puntos||[]).length||1),0),[stops]);
