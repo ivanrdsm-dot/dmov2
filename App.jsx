@@ -1292,8 +1292,8 @@ ${q.notas?`<div class="note"><strong>Notas:</strong> ${q.notas}</div>`:""}
 
 /* ─── PDF: FACTURA ───────────────────────────────────────────────────────── */
 function printFactura(f){
-  const sc={Pagada:"#059669",Pendiente:"#d97706",Vencida:"#e11d48"};
-  const bg={Pagada:"#d1fae5",Pendiente:"#fef3c7",Vencida:"#fee2e2"};
+  const sc={Pagada:"#059669",Pendiente:"#d97706",Vencida:"#e11d48","Solicitada a Katia":"#7c3aed"};
+  const bg={Pagada:"#d1fae5",Pendiente:"#fef3c7",Vencida:"#fee2e2","Solicitada a Katia":"#ede9fe"};
   const st=f.status||"Pendiente";
   const sub=Number(f.subtotal||f.monto||0);
   const iva=Number(f.ivaAmt||f.iva||0);
@@ -6528,7 +6528,7 @@ function Facturas({rol="admin"}){
   const proyAnual=porMes.reduce((a,m)=>a+m.fac,0);
   const avgMes=porMes.filter(m=>m.fac>0).reduce((a,m,_,arr)=>a+m.fac/arr.length,0)||0;
   const mesActual=MESES[new Date().getMonth()];
-  const sc={Pendiente:AMBER,Pagada:GREEN,Vencida:ROSE};
+  const sc={Pendiente:AMBER,Pagada:GREEN,Vencida:ROSE,"Solicitada a Katia":VIOLET};
   const sub=parseFloat(form.subtotal)||0;const ivaP=form.iva?sub*.16:0;const totP=sub+ivaP;
 
   return(
@@ -6667,7 +6667,7 @@ function Facturas({rol="admin"}){
                 {isAdmin?<td style={{padding:"10px 12px",fontFamily:MONO,fontSize:13,fontWeight:800}}>{fmt(f.total||0)}</td>:<td style={{padding:"10px 12px",fontSize:12,color:MUTED}}>🔒</td>}
                 <td style={{padding:"10px 12px"}}>
                   <select value={f.status||"Pendiente"} onChange={e=>updStatus(f.id,e.target.value)} style={{background:"transparent",border:"1.5px solid "+(sc[f.status]||MUTED)+"28",borderRadius:8,padding:"3px 7px",color:sc[f.status]||MUTED,fontSize:11,fontWeight:700,cursor:"pointer"}}>
-                    {["Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s}</option>)}
+                    {["Solicitada a Katia","Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s}</option>)}
                   </select>
                 </td>
                 <td style={{padding:"10px 12px"}}>
@@ -6836,7 +6836,7 @@ function Facturas({rol="admin"}){
           <div>
             <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado de pago</div>
             <select value={form.status} onChange={sf("status")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
-              {["Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s}</option>)}
+              {["Solicitada a Katia","Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div>
@@ -6973,12 +6973,15 @@ function buildPLData(facts, viat, mesDesde, mesHasta, anio="2026"){
   const idxH = MESES_REP.indexOf(mesHasta);
   const mesesRange = MESES_REP.slice(idxD, idxH+1);
   return mesesRange.map(m=>{
-    const mFacts = facts.filter(f=>(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(anio));
+    const mAll   = facts.filter(f=>(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(anio));
+    /* Solo facturas EMITIDAS cuentan como ingreso: se excluyen canceladas y
+       las apenas solicitadas a Katia (aún no existen en contabilidad). */
+    const mFacts = mAll.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia");
     const mViat  = viat.filter(v=>v.mes===m&&String(v.anio||"")===String(anio));
     const ingresos = mFacts.reduce((a,f)=>a+(f.total||0),0);
     const subtotal = mFacts.reduce((a,f)=>a+(f.subtotal||0),0);
     const cobrado  = mFacts.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
-    const pendiente= mFacts.filter(f=>f.status!=="Pagada"&&f.status!=="Cancelada").reduce((a,f)=>a+(f.total||0),0);
+    const pendiente= mFacts.filter(f=>f.status!=="Pagada").reduce((a,f)=>a+(f.total||0),0);
     const costosCat={};
     CATS_COSTO.forEach(c=>costosCat[c]=0);
     mViat.forEach(v=>{ const c=getCategoria(v.concepto||""); costosCat[c]=(costosCat[c]||0)+(v.monto||0); });
