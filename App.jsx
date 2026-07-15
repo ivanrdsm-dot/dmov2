@@ -1209,6 +1209,15 @@ function lookupPlanForCliente(rawCliente){
   return null;
 }
 
+/* Nombre canónico de cliente — colapsa variantes en TODAS las agregaciones:
+   "PROMOCIONES AMERICA LATINA" y "...SAPI DE CV" son el mismo cliente;
+   "JBL" factura vía TACRE SA DE CV; "MARKETING AND/& PROMOTION" idem. */
+function normEmpresa(raw){
+  if(!raw) return "—";
+  const m = lookupPlanForCliente(raw);
+  return (m&&m.empresa&&m.empresa!=="POR DEFINIR")?m.empresa:String(raw).trim();
+}
+
 /* ─── UTILS ──────────────────────────────────────────────────────────────── */
 const fmt  = n => (n<0?"−$":"$")+Math.abs(Math.round(n)).toLocaleString("es-MX");
 const fmtK = n => {
@@ -3393,8 +3402,8 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
     // Top clientes del año
     const porCli={};
     fAnio.forEach(f=>{
-      const key=f.clienteId||f.empresa||f.cliente||"—";
-      if(!porCli[key])porCli[key]={id:f.clienteId,nombre:f.solicitante||f.empresa||f.cliente||key,total:0,n:0};
+      const key=f.clienteId||normEmpresa(f.empresa||f.cliente);
+      if(!porCli[key])porCli[key]={id:f.clienteId,nombre:normEmpresa(f.empresa||f.cliente),total:0,n:0};
       porCli[key].total+=Number(f.subtotal||f.monto)||0; porCli[key].n++;
     });
     const topCli=Object.values(porCli).sort((a,b)=>b.total-a.total).slice(0,6);
@@ -3585,7 +3594,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const healthColor=healthScore>=70?GREEN:healthScore>=40?AMBER:ROSE;
   // Top clients
   const topClients=useMemo(()=>{
-    const map={};factsEmitidas.forEach(f=>{const k=f.empresa||f.cliente||"—";map[k]=(map[k]||0)+(f.total||0);});
+    const map={};factsEmitidas.forEach(f=>{const k=normEmpresa(f.empresa||f.cliente);map[k]=(map[k]||0)+(f.total||0);});
     return Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,5);
   },[factsEmitidas]);
   const topMax=topClients[0]?topClients[0][1]:1;
@@ -7232,7 +7241,7 @@ function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
     ["Gastos operación/admin",                       (gCat["Operación"]||0)+(gCat["Administración"]||0),"",""],
     ["Costo/ingreso: Nómina %",                      gI>0?(gCat["Nómina"]||0)/gI:0,"< 40% saludable",""],
     ["Costo/ingreso: Total %",                       gI>0?gC/gI:0,"< 85% objetivo",""],
-    ["Clientes con factura",                         [...new Set(factsF.map(f=>f.empresa||f.cliente))].filter(Boolean).length,"",""],
+    ["Clientes con factura",                         [...new Set(factsF.map(f=>normEmpresa(f.empresa||f.cliente)))].filter(Boolean).length,"",""],
     ["Meses en el período",                          pl.length,"",""],
     ["Promedio ingreso/mes",                         pl.length?gI/pl.length:0,"",""],
     ["Promedio costo/mes",                           pl.length?gC/pl.length:0,"",""],
@@ -7265,7 +7274,7 @@ function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
   merges4.push({s:{r:r4,c:0},e:{r:r4,c:3}}); r4++;
   ["CLIENTE","INGRESOS","% DEL TOTAL","FACTURAS"].forEach((h,i)=>setCell(ws4,XLSX.utils.encode_cell({r:r4,c:i}),h,styleColHeader)); r4++;
   const clienteMap={};
-  factsF.forEach(f=>{const k=f.empresa||f.cliente||"—";if(!clienteMap[k])clienteMap[k]={ing:0,n:0};clienteMap[k].ing+=f.total||0;clienteMap[k].n++;});
+  factsF.forEach(f=>{const k=normEmpresa(f.empresa||f.cliente);if(!clienteMap[k])clienteMap[k]={ing:0,n:0};clienteMap[k].ing+=f.total||0;clienteMap[k].n++;});
   Object.entries(clienteMap).sort((a,b)=>b[1].ing-a[1].ing).slice(0,8).forEach(([cli,d],idx)=>{
     const bg=idx%2===0?XC.ROW_WHITE:XC.ROW_ALT;
     setCell(ws4,XLSX.utils.encode_cell({r:r4,c:0}),cli,styleCell(r4,{bg,bold:true}));
@@ -7277,6 +7286,41 @@ function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
   ws4["!ref"]=`A1:D${r4+1}`; ws4["!cols"]=[{wch:36},{wch:16},{wch:18},{wch:16}];
   ws4["!merges"]=merges4; ws4["!rows"]=Array(r4+1).fill({hpt:20}); ws4["!rows"][0]={hpt:24}; ws4["!rows"][1]={hpt:13}; ws4["!rows"][2]={hpt:28}; ws4["!freeze"]={xSplit:0,ySplit:3};
   XLSX.utils.book_append_sheet(wb,ws4,"KPIs Ejecutivos");
+
+  /* ── HOJA 5: Análisis por Cliente ──────────────────────────────────── */
+  const ws5={}; const merges5=[]; let r5=0;
+  setCell(ws5,"A1",`ANÁLISIS POR CLIENTE — ${tag} ${anio}`,styleTitle);
+  merges5.push({s:{r:0,c:0},e:{r:0,c:6}}); r5=2;
+  ["CLIENTE","FACTURAS","FACTURADO C/IVA","COBRADO","POR COBRAR","% COBRADO","% PARTICIPACIÓN"].forEach((h,i)=>setCell(ws5,XLSX.utils.encode_cell({r:r5,c:i}),h,styleColHeader)); r5++;
+  const cliDet={};
+  factsF.forEach(f=>{
+    const k=normEmpresa(f.empresa||f.cliente);
+    if(!cliDet[k])cliDet[k]={fac:0,cob:0,pen:0,n:0};
+    cliDet[k].fac+=f.total||0; cliDet[k].n++;
+    if(f.status==="Pagada")cliDet[k].cob+=f.total||0; else cliDet[k].pen+=f.total||0;
+  });
+  const cliRows=Object.entries(cliDet).sort((a,b)=>b[1].fac-a[1].fac);
+  cliRows.forEach(([cli,d],idx)=>{
+    const bg=idx%2===0?XC.ROW_WHITE:XC.ROW_ALT;
+    setCell(ws5,XLSX.utils.encode_cell({r:r5,c:0}),cli,styleCell(r5,{bg,bold:true}));
+    setCell(ws5,XLSX.utils.encode_cell({r:r5,c:1}),d.n,styleCell(r5,{bg,align:"center"}));
+    setCell(ws5,XLSX.utils.encode_cell({r:r5,c:2}),d.fac,styleCell(r5,{bg,align:"right",color:XC.INCOME_TX}),NUM_FMT);
+    setCell(ws5,XLSX.utils.encode_cell({r:r5,c:3}),d.cob,styleCell(r5,{bg,align:"right"}),NUM_FMT);
+    setCell(ws5,XLSX.utils.encode_cell({r:r5,c:4}),d.pen,styleCell(r5,{bg,align:"right",color:d.pen>0?"D97706":undefined,bold:d.pen>0}),NUM_FMT);
+    setCell(ws5,XLSX.utils.encode_cell({r:r5,c:5}),d.fac>0?d.cob/d.fac:0,styleCell(r5,{bg,align:"right"}),PCT_FMT);
+    setCell(ws5,XLSX.utils.encode_cell({r:r5,c:6}),gI>0?d.fac/gI:0,styleCell(r5,{bg,align:"right"}),PCT_FMT);
+    r5++;
+  });
+  // Total
+  setCell(ws5,XLSX.utils.encode_cell({r:r5,c:0}),"TOTAL",{...styleMonthRow,alignment:{horizontal:"left",vertical:"center"}});
+  setCell(ws5,XLSX.utils.encode_cell({r:r5,c:1}),cliRows.reduce((a,[,d])=>a+d.n,0),{...styleMonthRow});
+  setCell(ws5,XLSX.utils.encode_cell({r:r5,c:2}),cliRows.reduce((a,[,d])=>a+d.fac,0),{...styleMonthRow},NUM_FMT);
+  setCell(ws5,XLSX.utils.encode_cell({r:r5,c:3}),cliRows.reduce((a,[,d])=>a+d.cob,0),{...styleMonthRow},NUM_FMT);
+  setCell(ws5,XLSX.utils.encode_cell({r:r5,c:4}),cliRows.reduce((a,[,d])=>a+d.pen,0),{...styleMonthRow},NUM_FMT);
+  ws5["!ref"]=`A1:G${r5+1}`;
+  ws5["!cols"]=[{wch:42},{wch:10},{wch:17},{wch:15},{wch:15},{wch:11},{wch:15}];
+  ws5["!merges"]=merges5; ws5["!freeze"]={xSplit:0,ySplit:3};
+  XLSX.utils.book_append_sheet(wb,ws5,"Clientes");
 
   XLSX.writeFile(wb, `DMOV_Reporte_${tag}_${anio}_${fecha}.xlsx`);
 }
@@ -7434,6 +7478,34 @@ function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
   });
   yy+=27;
 
+  /* Resumen ejecutivo — insights automáticos para dirección */
+  const idxD0=MESES_REP.indexOf(mesDesde), idxH0=MESES_REP.indexOf(mesHasta);
+  const mesesR0=MESES_REP.slice(idxD0,idxH0+1);
+  const factsPeriodo=facts.filter(f=>mesesR0.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(anio));
+  const factsReales=factsPeriodo.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0);
+  const sinFacturarN=factsPeriodo.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia")).length;
+  const cliMap={};
+  factsReales.forEach(f=>{const k=normEmpresa(f.empresa||f.cliente);if(!cliMap[k])cliMap[k]={fac:0,cob:0,pen:0,n:0};cliMap[k].fac+=f.total||0;cliMap[k].n++;if(f.status==="Pagada")cliMap[k].cob+=f.total||0;else cliMap[k].pen+=f.total||0;});
+  const cliArr=Object.entries(cliMap).sort((a,b)=>b[1].fac-a[1].fac);
+  const mejorMes=[...pl].sort((a,b)=>b.subtotal-a.subtotal)[0];
+  const topCliShare=cliArr[0]&&totalIngIVA>0?Math.round(cliArr[0][1].fac/totalIngIVA*100):0;
+  const insights=[
+    mejorMes&&mejorMes.subtotal>0?`Mejor mes del período: ${mejorMes.mesFull} con ${money(mejorMes.subtotal)} facturados (sin IVA) y utilidad de ${money(mejorMes.utilidad)}.`:null,
+    cliArr[0]?`Cliente principal: ${cliArr[0][0]} concentra el ${topCliShare}% de la facturación${topCliShare>=50?" — alta dependencia, conviene diversificar":""}.`:null,
+    totalPend>0?`Por cobrar: ${money(totalPend)} en facturas emitidas sin pagar (${pctCob}% ya cobrado).`:`Cobranza al corriente: 100% del facturado está cobrado.`,
+    sinFacturarN>0?`${sinFacturarN} servicio(s) del período aún sin facturar o en solicitud — ingreso pendiente de entrar al ciclo de cobranza.`:null,
+    margen<0?`El período cierra con pérdida contable de ${money(Math.abs(totalUtil))} — los costos superan lo facturado en estos meses.`:margen<0.15?`Margen de ${Math.round(margen*100)}% — por debajo del objetivo de 15%.`:`Margen sano de ${Math.round(margen*100)}% (objetivo ≥15% cumplido).`,
+  ].filter(Boolean);
+  doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(12,24,41);
+  doc.text("Resumen ejecutivo",M,yy); yy+=5;
+  doc.setFont("helvetica","normal"); doc.setFontSize(8); doc.setTextColor(55,70,90);
+  insights.forEach(t=>{
+    const lines=doc.splitTextToSize("•  "+t,PW-2*M-4);
+    doc.text(lines,M+2,yy);
+    yy+=lines.length*3.6+1.4;
+  });
+  yy+=4;
+
   /* Gráfica barras: Ingresos vs Costos por mes (vectorial) */
   doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(12,24,41);
   doc.text("Ingresos vs Costos por mes",M,yy); yy+=3;
@@ -7523,7 +7595,7 @@ function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
   const mesesR=MESES_REP.slice(idxD,idxH+1);
   const mp={};
   facts.filter(f=>mesesR.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(anio))
-       .forEach(f=>{const k=f.empresa||f.cliente||"—";mp[k]=(mp[k]||0)+(f.total||0);});
+       .forEach(f=>{const k=normEmpresa(f.empresa||f.cliente);mp[k]=(mp[k]||0)+(f.total||0);});
   const tops=Object.entries(mp).sort((a,b)=>b[1]-a[1]).slice(0,7);
   const topMaxV=tops[0]?tops[0][1]:1;
   let ty=yy+3;
@@ -7536,6 +7608,36 @@ function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
     doc.setFillColor(235,240,246); doc.rect(tx,ty+1.2,half-4,1.6,"F");
     doc.setFillColor(22,163,74); doc.rect(tx,ty+1.2,Math.max(0.5,(half-4)*(v/topMaxV)),1.6,"F");
     ty+=7.5;
+  });
+
+  /* Análisis por cliente — facturado, cobrado, por cobrar, participación */
+  let yCli=Math.max(cy,ty)+8;
+  if(yCli>240){doc.addPage();yCli=16;}
+  doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(12,24,41);
+  doc.text("Análisis por cliente",M,yCli);
+  autoTable(doc,{
+    startY:yCli+3,
+    margin:{left:M,right:M},
+    head:[["Cliente","Facturas","Facturado c/IVA","Cobrado","Por cobrar","% cobrado","Participación"]],
+    body:cliArr.map(([cli,v])=>[
+      cli,
+      String(v.n),
+      money(v.fac),
+      money(v.cob),
+      v.pen>0?money(v.pen):"—",
+      v.fac>0?Math.round(v.cob/v.fac*100)+"%":"—",
+      totalIngIVA>0?Math.round(v.fac/totalIngIVA*100)+"%":"—",
+    ]),
+    foot:[["TOTAL",String(factsReales.length),money(totalIngIVA),money(totalCob),money(totalPend),pctCob+"%","100%"]],
+    styles:{fontSize:7,cellPadding:1.8,halign:"right"},
+    headStyles:{fillColor:[12,24,41],textColor:255,fontSize:6.6,halign:"right"},
+    footStyles:{fillColor:[249,115,22],textColor:255,fontStyle:"bold"},
+    columnStyles:{0:{halign:"left",fontStyle:"bold",cellWidth:58}},
+    didParseCell:(data)=>{
+      if(data.section==="body"&&data.column.index===4&&data.cell.raw!=="—"){
+        data.cell.styles.textColor=[217,119,6]; data.cell.styles.fontStyle="bold";
+      }
+    },
   });
 
   /* Footer */
@@ -7604,7 +7706,7 @@ function Reportes(){
     const mesesR=MESES_REP.slice(idxD,idxH+1);
     const mp={};
     facts.filter(f=>mesesR.includes(f.mesOp||f.mes)&&String(f.anio||"")===ANIO)
-         .forEach(f=>{const k=f.empresa||f.cliente||"—";if(!mp[k])mp[k]=0;mp[k]+=f.total||0;});
+         .forEach(f=>{const k=normEmpresa(f.empresa||f.cliente);if(!mp[k])mp[k]=0;mp[k]+=f.total||0;});
     return Object.entries(mp).sort((a,b)=>b[1]-a[1]).slice(0,6);
   },[facts,desde,hasta]);
   const topMax = topClientes[0]?topClientes[0][1]:1;
