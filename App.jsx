@@ -6709,11 +6709,11 @@ function Facturas({rol="admin"}){
         <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
           {["todos",...MESES].map(m=><button key={m} onClick={()=>setMesF(m)} className="btn" style={{padding:"5px 13px",borderRadius:8,border:"1.5px solid "+(mesF===m?A:BD2),background:mesF===m?A+"10":"#fff",color:mesF===m?A:MUTED,fontSize:12,fontWeight:mesF===m?700:500,cursor:"pointer"}}>{m==="todos"?"Todos":m}</button>)}
         </div>
-        {isAdmin&&mesF!=="todos"&&totTotal>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
-          {[[MUTED,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt||f.iva||0),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v])=>(
-            <div key={l} style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"12px 16px"}}>
-              <div style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>{l}</div>
-              <div style={{fontFamily:MONO,fontSize:20,fontWeight:800,color:c,marginTop:4}}>{v}</div>
+        {isAdmin&&mesF!=="todos"&&totTotal>0&&<div style={{display:"flex",gap:0,marginBottom:14,background:"#fff",border:"1px solid "+BORDER,borderRadius:12,overflow:"hidden"}}>
+          {[[TEXT,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt||f.iva||0),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v],i)=>(
+            <div key={l} style={{flex:1,padding:"11px 18px",borderLeft:i>0?"1px solid "+BORDER:"none",display:"flex",alignItems:"baseline",gap:10}}>
+              <span style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>{l}</span>
+              <span style={{fontFamily:MONO,fontSize:17,fontWeight:800,color:c}}>{v}</span>
             </div>
           ))}
         </div>}
@@ -6722,31 +6722,31 @@ function Facturas({rol="admin"}){
           {filt.length===0?<div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin registros. <button onClick={openNew} style={{color:A,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Crear →</button></div>
           :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:960}}>
             <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
-              <th style={{padding:"9px 12px"}}><input type="checkbox" checked={filt.length>0&&filt.every(f=>selected.has(f.id))} onChange={()=>toggleAll(filt)} style={{cursor:"pointer",width:15,height:15}}/></th>
-              {["Folio","Mes/Año","Empresa","Solicitante","Plan","Servicio",...(isAdmin?["Subtotal","IVA","Total"]:[]),"Estado","Acciones"].map(h=><th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+              <th style={{padding:"8px 10px"}}><input type="checkbox" checked={filt.length>0&&filt.every(f=>selected.has(f.id))} onChange={()=>toggleAll(filt)} style={{cursor:"pointer",width:14,height:14}}/></th>
+              {["Folio","Mes/Año","Empresa","Solicitante","Plan","Servicio",...(isAdmin?["Subtotal","IVA","Total"]:[]),"Estado","Acciones"].map(h=><th key={h} style={{padding:"8px 10px",textAlign:["Subtotal","IVA","Total"].includes(h)?"right":"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
             </tr></thead>
             <tbody>{filt.map((f,i)=>(
               <tr key={f.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER,background:selected.has(f.id)?GREEN+"08":"transparent"}}>
-                <td style={{padding:"10px 12px"}}><input type="checkbox" checked={selected.has(f.id)} onChange={()=>toggleSel(f.id)} style={{cursor:"pointer",width:15,height:15}}/></td>
-                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:10,color:MUTED,whiteSpace:"nowrap"}}>{f.folio||"—"}</td>
-                <td style={{padding:"10px 12px"}}><span style={{background:A+"12",color:A,borderRadius:6,padding:"2px 7px",fontSize:11,fontWeight:700}}>{f.mesOp||"—"} {f.anio||""}</span></td>
-                <td style={{padding:"10px 12px",fontWeight:700,fontSize:13}}>{f.empresa||f.cliente||"—"}</td>
-                <td style={{padding:"10px 12px",fontSize:12,color:MUTED}}>{f.solicitante||"—"}</td>
-                <td style={{padding:"10px 12px"}}>{f.plan&&<span style={{background:VIOLET+"12",color:VIOLET,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700}}>{f.plan}</span>}</td>
-                <td style={{padding:"10px 12px",fontSize:12,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.servicio||"—"}</td>
-                {isAdmin&&<td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12}}>{fmt(f.subtotal||f.monto||0)}</td>}
-                {isAdmin&&<td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12,color:MUTED}}>{fmt(f.ivaAmt||f.iva||0)}</td>}
-                {isAdmin?<td style={{padding:"10px 12px",fontFamily:MONO,fontSize:13,fontWeight:800}}>{fmt(f.total||0)}</td>:<td style={{padding:"10px 12px",fontSize:12,color:MUTED}}>🔒</td>}
-                <td style={{padding:"10px 12px"}}>
-                  <select value={f.status||"Pendiente"} onChange={e=>updStatus(f.id,e.target.value)} style={{background:"transparent",border:"1.5px solid "+(sc[f.status]||MUTED)+"28",borderRadius:8,padding:"3px 7px",color:sc[f.status]||MUTED,fontSize:11,fontWeight:700,cursor:"pointer"}}>
-                    {["Solicitada a Katia","Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s}</option>)}
+                <td style={{padding:"8px 10px"}}><input type="checkbox" checked={selected.has(f.id)} onChange={()=>toggleSel(f.id)} style={{cursor:"pointer",width:14,height:14}}/></td>
+                <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:10,color:MUTED,whiteSpace:"nowrap"}}>{f.folio||"—"}</td>
+                <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}><span style={{background:A+"12",color:A,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700}}>{f.mesOp||"—"} {String(f.anio||"").slice(-2)}</span></td>
+                <td style={{padding:"8px 10px",fontWeight:700,fontSize:12,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.empresa||f.cliente||""}>{f.empresa||f.cliente||"—"}</td>
+                <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.solicitante||"—"}</td>
+                <td style={{padding:"8px 10px",maxWidth:150}}>{f.plan&&<span title={f.plan} style={{background:VIOLET+"12",color:VIOLET,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700,display:"inline-block",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",verticalAlign:"middle"}}>{f.plan}</span>}</td>
+                <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.servicio||""}>{f.servicio||"—"}</td>
+                {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11.5,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.subtotal||f.monto||0)}</td>}
+                {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11,color:MUTED,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.ivaAmt||f.iva||0)}</td>}
+                {isAdmin?<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:12.5,fontWeight:800,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.total||0)}</td>:<td style={{padding:"8px 10px",fontSize:12,color:MUTED}}>🔒</td>}
+                <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>
+                  <select value={f.status||"Pendiente"} onChange={e=>updStatus(f.id,e.target.value)} style={{background:(sc[f.status]||MUTED)+"0c",border:"1.5px solid "+(sc[f.status]||MUTED)+"30",borderRadius:8,padding:"3px 6px",color:sc[f.status]||MUTED,fontSize:10.5,fontWeight:700,cursor:"pointer",maxWidth:118}}>
+                    {["Solicitada a Katia","Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s==="Solicitada a Katia"?"Sol. a Katia":s}</option>)}
                   </select>
                 </td>
-                <td style={{padding:"10px 12px"}}>
-                  <div style={{display:"flex",gap:5,alignItems:"center"}}>
-                    {isAdmin&&f.status!=="Pagada"&&(f.total||0)>0&&<button onClick={()=>abrirPago(f)} className="btn" title={"Registrar pago · pagado "+fmt(pagadoDe(f))+" · saldo "+fmt(saldoDe(f))} style={{color:GREEN,padding:"4px 8px",border:"1.5px solid "+GREEN+"40",background:pagadoDe(f)>0?GREEN+"22":GREEN+"10",borderRadius:6,display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}>💰{pagadoDe(f)>0?"Abonos":"Pago"}</button>}
-                    <button onClick={()=>downloadSolicitudFacturaXLSX(f)} className="btn" title="Descargar SOLICITUD DE FACTURA con formato oficial (XLSX) — para enviar a contabilidad" style={{color:GREEN,padding:"4px 8px",border:"1.5px solid "+GREEN+"40",background:GREEN+"10",borderRadius:6,display:"flex",alignItems:"center",gap:4,fontSize:11,fontWeight:700}}>
-                      <FileText size={12}/>Solicitud
+                <td style={{padding:"8px 10px"}}>
+                  <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                    {isAdmin&&f.status!=="Pagada"&&(f.total||0)>0&&<button onClick={()=>abrirPago(f)} className="btn" title={"Registrar pago · pagado "+fmt(pagadoDe(f))+" · saldo "+fmt(saldoDe(f))} style={{color:GREEN,padding:"3px 7px",border:"1.5px solid "+GREEN+"40",background:pagadoDe(f)>0?GREEN+"22":GREEN+"10",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:10.5,fontWeight:700}}>💰{pagadoDe(f)>0?"Abonos":"Pago"}</button>}
+                    <button onClick={()=>downloadSolicitudFacturaXLSX(f)} className="btn" title="Descargar SOLICITUD DE FACTURA con formato oficial (XLSX) — para enviar a contabilidad" style={{color:GREEN,padding:"3px 7px",border:"1.5px solid "+GREEN+"40",background:GREEN+"10",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:10.5,fontWeight:700}}>
+                      <FileText size={11}/>Solicitud
                     </button>
                     <button onClick={()=>downloadFacturaPDF(f)} className="btn" title="Descargar PDF interno" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}>
                       <Download size={12}/>PDF
