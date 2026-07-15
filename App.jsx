@@ -3267,7 +3267,11 @@ function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout}){
       <nav style={{flex:1,overflowY:"auto"}}>
         {getNavSections(rol||"admin").map(({section,items})=>(
           <div key={section} style={{marginBottom:8}}>
-            {showFull&&<div style={{fontSize:9,fontWeight:800,color:"#ffffff30",letterSpacing:"0.12em",padding:"6px 10px 4px",textTransform:"uppercase",whiteSpace:"nowrap"}}>{section}</div>}
+            {showFull&&<div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 10px 6px",whiteSpace:"nowrap"}}>
+              <span style={{width:14,height:2.5,borderRadius:2,background:"linear-gradient(90deg,"+A+",#fb923c)",flexShrink:0}}/>
+              <span style={{fontSize:10.5,fontWeight:900,color:"#fdba74",letterSpacing:"0.14em",textTransform:"uppercase"}}>{section}</span>
+              <span style={{flex:1,height:1,background:"rgba(255,255,255,.08)"}}/>
+            </div>}
             {items.map(({id,label,icon:Icon,badge})=>{
               const a=view===id;
               return(
