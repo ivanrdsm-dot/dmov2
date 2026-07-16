@@ -19,6 +19,7 @@ import {
   Download, Eye, Target, Zap, FolderOpen, ClipboardList,
   Menu, Bell, ChevronLeft, Activity, Shield, Hash,
   Phone, Camera, LogOut, Play, Square, Radio, Flag,
+  CreditCard, Paperclip, History,
 } from "lucide-react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
@@ -1216,6 +1217,43 @@ function normEmpresa(raw){
   if(!raw) return "—";
   const m = lookupPlanForCliente(raw);
   return (m&&m.empresa&&m.empresa!=="POR DEFINIR")?m.empresa:String(raw).trim();
+}
+
+/* ─── PAGOS A PROVEEDORES: catálogo y puente financiero ──────────────────────
+   Cada categoría de pago mapea a un bucket del P&L (CATS_COSTO) para que los
+   egresos capturados aquí afecten Estado de Resultados, Dashboard y Reportes
+   automáticamente, sin capturar dos veces. */
+const CAT_PAGO = [
+  {k:"Combustible",        bucket:"Transporte",    icon:"⛽"},
+  {k:"Casetas",            bucket:"Transporte",    icon:"🛣️"},
+  {k:"Mantenimiento",      bucket:"Operación",     icon:"🔧"},
+  {k:"Refacciones",        bucket:"Operación",     icon:"⚙️"},
+  {k:"Llantas",            bucket:"Operación",     icon:"🛞"},
+  {k:"Operadores",         bucket:"Nómina",        icon:"👷"},
+  {k:"Maniobras",          bucket:"Operación",     icon:"💪"},
+  {k:"Servicios externos", bucket:"Subcontrato",   icon:"🤝"},
+  {k:"Papelería",          bucket:"Administración",icon:"📎"},
+  {k:"Equipo",             bucket:"Operación",     icon:"🖥️"},
+  {k:"Administración",     bucket:"Administración",icon:"🏢"},
+  {k:"Honorarios",         bucket:"Administración",icon:"⚖️"},
+  {k:"Impuestos",          bucket:"Fiscal",        icon:"🏛️"},
+  {k:"Otros",              bucket:"Otro",          icon:"📦"},
+];
+const METODOS_PAGO = ["Transferencia","Efectivo","Tarjeta","Cheque","Otro"];
+const TIPOS_CARGA = ["Plan mensual","Plan semanal","Servicio especial","Proyecto","Gasto general (indirecto)"];
+const MESES_ID = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const mesDeFecha = f => { const d=new Date((f||"")+"T12:00:00"); return isNaN(d)?null:{mes:MESES_ID[d.getMonth()],anio:String(d.getFullYear())}; };
+
+/* Convierte pagos a proveedores en renglones de costo compatibles con el motor
+   P&L existente (buildPLData suma viáticos por prefijo de concepto). */
+function pagosComoCostos(pagos){
+  return (pagos||[]).map(p=>({
+    id:"pago-"+p.id,
+    mes:p.mes, anio:p.anio,
+    monto:Number(p.subtotal)||0,
+    concepto:(CAT_PAGO.find(c=>c.k===p.categoria)?.bucket||"Otro")+" — "+(p.concepto||p.categoria||"Pago a proveedor")+(p.proveedor?" · "+p.proveedor:""),
+    tipo:"pago-proveedor",
+  }));
 }
 
 /* ─── UTILS ──────────────────────────────────────────────────────────────── */
@@ -3249,6 +3287,7 @@ function getNavSections(rol){
     ]},
     {section:"ADMINISTRACIÓN",items:[
       {id:"facturas",    label:isAdmin?"Facturación":"Registrar Servicio", icon:FileText},
+      {id:"pagos",       label:"Pagos a Proveedores", icon:CreditCard, adminOnly:true, badge:"NEW"},
       {id:"reportes",    label:"Reportes & KPIs",   icon:BarChart2, adminOnly:true, badge:"NEW"},
       {id:"viaticos",    label:"Viáticos & Gastos", icon:Zap,       adminOnly:true},
       {id:"gastosAdmin", label:"Gastos Choferes",   icon:DollarSign, badge:"NEW"},
@@ -7650,11 +7689,626 @@ function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
   doc.save(`DMOV_Ejecutivo_${tag}_${anio}.pdf`);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   MÓDULO: PAGOS A PROVEEDORES — cuentas por pagar nivel ERP
+   Egresos con datos fiscales, método de pago, carga a plan/cliente, adjuntos,
+   auditoría completa e impacto automático en el P&L del sistema.
+══════════════════════════════════════════════════════════════════════════ */
+
+function exportPagosCSV(rows,label){
+  const H=["Fecha pago","Fecha factura","Núm. factura","Folio","Proveedor","RFC","Concepto","Categoría","Cliente","Plan","Subtotal","IVA","Retenciones","Total","Método","Banco","Referencia","Estado","Pagado por","Creado por"];
+  const esc=v=>{const s=String(v==null?"":v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  const lines=[H.join(",")];
+  rows.forEach(p=>lines.push([p.fechaPago||"",p.fechaFactura||"",p.numFactura||"",p.folio||"",p.proveedor||"",p.rfc||"",p.concepto||"",p.categoria||"",p.cargoCliente||"",p.cargoPlan||"",p.subtotal||0,p.iva||0,p.retenciones||0,p.total||0,p.metodoPago||"",p.banco||"",p.referencia||"",p.status||"",p.pagadoPor||"",p.creadoPor||""].map(esc).join(",")));
+  const blob=new Blob(["﻿"+lines.join("\n")],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`DMOV_Pagos_${label}.csv`;a.click();URL.revokeObjectURL(a.href);
+}
+
+function exportPagosXLSX(rows,label){
+  const wb=XLSX.utils.book_new();
+  const H=["FECHA PAGO","FECHA FACTURA","NÚM. FACTURA","FOLIO","PROVEEDOR","RFC","CONCEPTO","CATEGORÍA","CLIENTE","PLAN","SUBTOTAL","IVA","RETENCIONES","TOTAL","MÉTODO","BANCO","REFERENCIA","ESTADO","PAGADO POR"];
+  const data=[H,...rows.map(p=>[p.fechaPago||"",p.fechaFactura||"",p.numFactura||"",p.folio||"",p.proveedor||"",p.rfc||"",p.concepto||"",p.categoria||"",p.cargoCliente||"",p.cargoPlan||"",p.subtotal||0,p.iva||0,p.retenciones||0,p.total||0,p.metodoPago||"",p.banco||"",p.referencia||"",p.status||"",p.pagadoPor||""])];
+  data.push([]);
+  data.push(["","","","","","","","","","TOTALES",rows.reduce((a,p)=>a+(p.subtotal||0),0),rows.reduce((a,p)=>a+(p.iva||0),0),rows.reduce((a,p)=>a+(p.retenciones||0),0),rows.reduce((a,p)=>a+(p.total||0),0)]);
+  const ws=XLSX.utils.aoa_to_sheet(data);
+  // Estilos: header oscuro + montos en formato moneda
+  const range=XLSX.utils.decode_range(ws["!ref"]);
+  for(let c=0;c<=range.e.c;c++){
+    const cell=ws[XLSX.utils.encode_cell({r:0,c})];
+    if(cell) cell.s={font:{bold:true,color:{rgb:"FFFFFF"},sz:9},fill:{fgColor:{rgb:"0C1829"}},alignment:{horizontal:"center",wrapText:true}};
+  }
+  for(let r=1;r<=range.e.r;r++){
+    [10,11,12,13].forEach(c=>{
+      const cell=ws[XLSX.utils.encode_cell({r,c})];
+      if(cell&&typeof cell.v==="number") cell.s={numFmt:"$#,##0.00",font:{sz:9,bold:c===13},alignment:{horizontal:"right"}};
+    });
+  }
+  ws["!cols"]=[{wch:11},{wch:11},{wch:13},{wch:12},{wch:26},{wch:14},{wch:32},{wch:14},{wch:26},{wch:18},{wch:12},{wch:10},{wch:11},{wch:12},{wch:12},{wch:12},{wch:14},{wch:11},{wch:14}];
+  ws["!freeze"]={xSplit:0,ySplit:1};
+  XLSX.utils.book_append_sheet(wb,ws,"Pagos a Proveedores");
+  XLSX.writeFile(wb,`DMOV_Pagos_${label}.xlsx`);
+}
+
+function exportPagosPDF(rows,label,filtrosDesc){
+  const doc=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"});
+  const money=v=>"$"+Math.round(v||0).toLocaleString("es-MX");
+  doc.setFillColor(12,24,41);doc.rect(0,0,297,22,"F");
+  doc.setFillColor(249,115,22);doc.rect(0,22,297,1.4,"F");
+  doc.setTextColor(255,255,255);doc.setFont("helvetica","bold");doc.setFontSize(14);
+  doc.text("PAGOS A PROVEEDORES — D EN MOVIMIENTO SA DE CV",14,10);
+  doc.setFontSize(8.5);doc.setFont("helvetica","normal");doc.setTextColor(180,195,215);
+  doc.text(`${filtrosDesc} · ${rows.length} registro(s) · Generado ${new Date().toLocaleDateString("es-MX")}`,14,17);
+  autoTable(doc,{
+    startY:27,margin:{left:10,right:10},
+    head:[["F. pago","Factura","Proveedor","Concepto","Categoría","Cliente / Plan","Subtotal","IVA","Ret.","Total","Método","Estado"]],
+    body:rows.map(p=>[p.fechaPago||p.fechaFactura||"—",p.numFactura||p.folio||"—",p.proveedor||"—",(p.concepto||"").slice(0,40),p.categoria||"—",[p.cargoCliente,p.cargoPlan].filter(Boolean).join(" / ")||"General",money(p.subtotal),money(p.iva),p.retenciones?money(p.retenciones):"—",money(p.total),p.metodoPago||"—",p.status||"—"]),
+    foot:[["","","","","","TOTAL",money(rows.reduce((a,p)=>a+(p.subtotal||0),0)),money(rows.reduce((a,p)=>a+(p.iva||0),0)),money(rows.reduce((a,p)=>a+(p.retenciones||0),0)),money(rows.reduce((a,p)=>a+(p.total||0),0)),"",""]],
+    styles:{fontSize:6.4,cellPadding:1.4},
+    headStyles:{fillColor:[12,24,41],textColor:255,fontSize:6.2},
+    footStyles:{fillColor:[249,115,22],textColor:255,fontStyle:"bold"},
+    columnStyles:{6:{halign:"right"},7:{halign:"right"},8:{halign:"right"},9:{halign:"right",fontStyle:"bold"}},
+    didParseCell:(d)=>{if(d.section==="body"&&d.column.index===11){const v=String(d.cell.raw);d.cell.styles.textColor=v==="Pagado"?[22,163,74]:v==="Programado"?[37,99,235]:[217,119,6];d.cell.styles.fontStyle="bold";}},
+  });
+  const pages=doc.getNumberOfPages();
+  for(let p=1;p<=pages;p++){doc.setPage(p);doc.setFontSize(6.5);doc.setTextColor(150,160,175);doc.text(`DMOV · Pagos a proveedores · ${label} · Página ${p}/${pages} · Confidencial`,148,205,{align:"center"});}
+  doc.save(`DMOV_Pagos_${label}.pdf`);
+}
+
+function PagosProveedores({userProfile}){
+  const usuario=userProfile?.nombre||"admin";
+  const ANIO="2026";
+  const hoyISO=new Date().toISOString().slice(0,10);
+  const mesActual=MESES_ID[new Date().getMonth()];
+  const [pagos,setPagos]=useState([]);
+  const [facts,setFacts]=useState([]);
+  const [load,setLoad]=useState(true);
+  const [tab,setTab]=useState("registros");
+  const [toast,setToast]=useState(null);
+  const showT=(m,t="ok")=>setToast({msg:m,type:t});
+  // Filtros
+  const [q,setQ]=useState("");
+  const [fMes,setFMes]=useState("todos");
+  const [fCat,setFCat]=useState("todas");
+  const [fEst,setFEst]=useState("todos");
+  const [fMet,setFMet]=useState("todos");
+  const [fProv,setFProv]=useState("todos");
+  const [fCli,setFCli]=useState("todos");
+  const [fUsr,setFUsr]=useState("todos");
+  // Modal
+  const [modal,setModal]=useState(false);
+  const [editItem,setEditItem]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const [histItem,setHistItem]=useState(null);
+  const [adjItem,setAdjItem]=useState(null);
+  const [adjuntos,setAdjuntos]=useState([]);
+  const [adjLoading,setAdjLoading]=useState(false);
+  const empty={fechaPago:"",fechaFactura:hoyISO,numFactura:"",folio:"",proveedor:"",rfc:"",concepto:"",categoria:"Combustible",
+    subtotal:"",ivaOn:true,retenciones:"",metodoPago:"Transferencia",banco:"",referencia:"",numOperacion:"",
+    status:"Pendiente",cargoTipo:"Gasto general (indirecto)",cargoCliente:"",cargoPlan:"",cargoRuta:"",notas:""};
+  const [form,setForm]=useState(empty);
+
+  useEffect(()=>{
+    const u1=onSnapshot(query(collection(db,"pagosProveedores"),limit(2000)),s=>{
+      setPagos(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.fechaPago||b.fechaFactura||"").localeCompare(a.fechaPago||a.fechaFactura||"")));
+      setLoad(false);
+    },()=>setLoad(false));
+    const u2=onSnapshot(query(collection(db,"facturas"),limit(2000)),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{u1();u2();};
+  },[]);
+
+  // Cálculo fiscal automático
+  const sub=parseFloat(form.subtotal)||0;
+  const ivaC=form.ivaOn?Math.round(sub*.16*100)/100:0;
+  const retC=parseFloat(form.retenciones)||0;
+  const totC=Math.round((sub+ivaC-retC)*100)/100;
+
+  const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
+  const openEdit=p=>{setForm({fechaPago:p.fechaPago||"",fechaFactura:p.fechaFactura||"",numFactura:p.numFactura||"",folio:p.folio||"",
+    proveedor:p.proveedor||"",rfc:p.rfc||"",concepto:p.concepto||"",categoria:p.categoria||"Otros",
+    subtotal:String(p.subtotal??""),ivaOn:(p.iva||0)>0,retenciones:p.retenciones?String(p.retenciones):"",
+    metodoPago:p.metodoPago||"Transferencia",banco:p.banco||"",referencia:p.referencia||"",numOperacion:p.numOperacion||"",
+    status:p.status||"Pendiente",cargoTipo:p.cargoTipo||TIPOS_CARGA[4],cargoCliente:p.cargoCliente||"",cargoPlan:p.cargoPlan||"",cargoRuta:p.cargoRuta||"",notas:p.notas||""});
+    setEditItem(p);setModal(true);};
+
+  const stamp=()=>new Date().toISOString().slice(0,16).replace("T"," ");
+  const save=async()=>{
+    if(!form.proveedor.trim()){showT("El proveedor es requerido","err");return;}
+    if(!(sub>0)){showT("Captura el subtotal","err");return;}
+    if(!form.fechaFactura&&!form.fechaPago){showT("Captura fecha de factura o de pago","err");return;}
+    setSaving(true);
+    try{
+      const mfa=mesDeFecha(form.fechaFactura)||mesDeFecha(form.fechaPago);
+      const data={
+        fechaPago:form.fechaPago||"",fechaFactura:form.fechaFactura||"",numFactura:form.numFactura.trim(),
+        folio:form.folio.trim()||(editItem?.folio)||("PAG-"+uid()),
+        proveedor:form.proveedor.trim(),rfc:form.rfc.trim().toUpperCase(),
+        concepto:form.concepto.trim(),categoria:form.categoria,
+        subtotal:sub,iva:ivaC,retenciones:retC,total:totC,
+        metodoPago:form.metodoPago,banco:form.banco.trim(),referencia:form.referencia.trim(),numOperacion:form.numOperacion.trim(),
+        status:form.status,
+        pagadoEn:form.status==="Pagado"?(editItem?.pagadoEn||form.fechaPago||hoyISO):"",
+        pagadoPor:form.status==="Pagado"?(editItem?.pagadoPor||usuario):"",
+        cargoTipo:form.cargoTipo,cargoCliente:form.cargoCliente,cargoPlan:form.cargoPlan.trim(),cargoRuta:form.cargoRuta.trim(),
+        notas:form.notas.trim(),
+        mes:mfa?.mes||mesActual,anio:mfa?.anio||ANIO,
+        modificadoPor:usuario,updatedAt:serverTimestamp(),
+      };
+      if(editItem){
+        const cambios=[];
+        ["proveedor","concepto","categoria","status","metodoPago","fechaPago","numFactura"].forEach(k=>{
+          if(String(editItem[k]||"")!==String(data[k]||"")) cambios.push(`${k}: "${editItem[k]||"—"}" → "${data[k]||"—"}"`);
+        });
+        if((editItem.subtotal||0)!==sub) cambios.push(`subtotal: ${fmt(editItem.subtotal||0)} → ${fmt(sub)}`);
+        data.historial=[...(editItem.historial||[]),`${stamp()} · ${usuario} · ${cambios.length?"Editó: "+cambios.join(" · "):"Guardó sin cambios"}`];
+        await updateDoc(doc(db,"pagosProveedores",editItem.id),data);
+        showT("✓ Pago actualizado — "+data.folio);
+      }else{
+        data.creadoPor=usuario;
+        data.createdAt=serverTimestamp();
+        data.historial=[`${stamp()} · ${usuario} · Registro creado (${data.status})`];
+        await addDoc(collection(db,"pagosProveedores"),data);
+        showT("✓ Pago registrado — "+data.folio);
+      }
+      setModal(false);
+    }catch(e){showT(e.message,"err");}
+    setSaving(false);
+  };
+
+  const cambiarEstado=async(p,nuevo)=>{
+    try{
+      const upd={status:nuevo,modificadoPor:usuario,updatedAt:serverTimestamp(),
+        historial:[...(p.historial||[]),`${stamp()} · ${usuario} · Estado: ${p.status||"—"} → ${nuevo}`]};
+      if(nuevo==="Pagado"){upd.pagadoEn=p.fechaPago||hoyISO;upd.pagadoPor=usuario;}
+      await updateDoc(doc(db,"pagosProveedores",p.id),upd);
+      showT(nuevo==="Pagado"?"✓ Marcado como pagado por "+usuario:"Estado: "+nuevo);
+    }catch(e){showT(e.message,"err");}
+  };
+
+  const del=async(p)=>{
+    if(!confirm(`¿Eliminar el pago ${p.folio||""} de ${p.proveedor} por ${fmt(p.total||0)}?`))return;
+    try{await deleteDoc(doc(db,"pagosProveedores",p.id));showT("Pago eliminado");}catch(e){showT(e.message,"err");}
+  };
+
+  /* ── Adjuntos (colección aparte para no chocar con el límite de 1MB/doc) ── */
+  const abrirAdjuntos=async(p)=>{
+    setAdjItem(p);setAdjuntos([]);setAdjLoading(true);
+    try{
+      const snap=await getDocs(query(collection(db,"pagosAdjuntos"),where("pagoId","==",p.id)));
+      setAdjuntos(snap.docs.map(d=>({id:d.id,...d.data()})));
+    }catch(e){showT(e.message,"err");}
+    setAdjLoading(false);
+  };
+  const subirAdjunto=async(e)=>{
+    const files=[...(e.target.files||[])];
+    if(!files.length||!adjItem)return;
+    setAdjLoading(true);
+    for(const file of files){
+      try{
+        let dataB64;
+        if(file.type.startsWith("image/")){
+          dataB64=await compressImage(file,1400,.8);
+        }else{
+          if(file.size>700*1024){showT(`"${file.name}" pesa ${(file.size/1024/1024).toFixed(1)}MB — máx 700KB para PDF/XML`,"err");continue;}
+          dataB64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});
+        }
+        await addDoc(collection(db,"pagosAdjuntos"),{pagoId:adjItem.id,nombre:file.name,mime:file.type||"application/octet-stream",dataB64,size:file.size,subidoPor:usuario,createdAt:serverTimestamp()});
+      }catch(err){showT("Error con "+file.name+": "+err.message,"err");}
+    }
+    await updateDoc(doc(db,"pagosProveedores",adjItem.id),{
+      historial:[...(adjItem.historial||[]),`${stamp()} · ${usuario} · Subió ${files.length} adjunto(s)`],
+      nAdjuntos:(adjItem.nAdjuntos||0)+files.length,
+    }).catch(()=>{});
+    abrirAdjuntos({...adjItem,nAdjuntos:(adjItem.nAdjuntos||0)+files.length,historial:adjItem.historial});
+    showT("✓ Adjuntos guardados");
+  };
+  const borrarAdjunto=async(a)=>{
+    if(!confirm("¿Eliminar el adjunto "+a.nombre+"?"))return;
+    await deleteDoc(doc(db,"pagosAdjuntos",a.id)).catch(()=>{});
+    setAdjuntos(prev=>prev.filter(x=>x.id!==a.id));
+    if(adjItem) updateDoc(doc(db,"pagosProveedores",adjItem.id),{nAdjuntos:Math.max(0,(adjItem.nAdjuntos||1)-1)}).catch(()=>{});
+  };
+  const descargarAdjunto=(a)=>{const l=document.createElement("a");l.href=a.dataB64;l.download=a.nombre;l.click();};
+
+  /* ── Filtrado ── */
+  const provList=[...new Set(pagos.map(p=>p.proveedor).filter(Boolean))].sort();
+  const usrList=[...new Set(pagos.map(p=>p.creadoPor).filter(Boolean))].sort();
+  const cliList=[...new Set(pagos.map(p=>p.cargoCliente).filter(Boolean))].sort();
+  const filt=pagos.filter(p=>{
+    if(fMes!=="todos"&&p.mes!==fMes)return false;
+    if(fCat!=="todas"&&p.categoria!==fCat)return false;
+    if(fEst!=="todos"&&p.status!==fEst)return false;
+    if(fMet!=="todos"&&p.metodoPago!==fMet)return false;
+    if(fProv!=="todos"&&p.proveedor!==fProv)return false;
+    if(fCli!=="todos"&&p.cargoCliente!==fCli)return false;
+    if(fUsr!=="todos"&&p.creadoPor!==fUsr)return false;
+    if(q.trim()){
+      const t=q.toLowerCase();
+      return [p.proveedor,p.concepto,p.numFactura,p.folio,p.rfc,p.cargoCliente,p.cargoPlan,p.banco,p.referencia].some(v=>(v||"").toLowerCase().includes(t));
+    }
+    return true;
+  });
+
+  /* ── KPIs ── */
+  const pagadoMes=pagos.filter(p=>p.status==="Pagado"&&p.mes===mesActual&&p.anio===ANIO).reduce((a,p)=>a+(p.total||0),0);
+  const pagadoAnio=pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).reduce((a,p)=>a+(p.total||0),0);
+  const porPagar=pagos.filter(p=>p.status!=="Pagado").reduce((a,p)=>a+(p.total||0),0);
+  const ivaAcred=pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).reduce((a,p)=>a+(p.iva||0),0);
+
+  /* ── Agregados dashboard ── */
+  const porCat={};CAT_PAGO.forEach(c=>porCat[c.k]=0);
+  pagos.filter(p=>p.anio===ANIO).forEach(p=>{porCat[p.categoria]=(porCat[p.categoria]||0)+(p.total||0);});
+  const porProv={};pagos.filter(p=>p.anio===ANIO).forEach(p=>{porProv[p.proveedor||"—"]=(porProv[p.proveedor||"—"]||0)+(p.total||0);});
+  const topProv=Object.entries(porProv).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const topProvMax=topProv[0]?topProv[0][1]:1;
+  const flujoMensual=MESES_ID.map(m=>({m,v:pagos.filter(p=>p.mes===m&&p.anio===ANIO).reduce((a,p)=>a+(p.total||0),0)}));
+  const flujoMax=Math.max(...flujoMensual.map(d=>d.v),1);
+  const factsEmit=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0&&String(f.anio||"")===ANIO);
+  const ingVsEgr=MESES_ID.map(m=>({m,
+    ing:factsEmit.filter(f=>f.mesOp===m).reduce((a,f)=>a+(f.subtotal||0),0),
+    egr:pagos.filter(p=>p.mes===m&&p.anio===ANIO).reduce((a,p)=>a+(p.subtotal||0),0)}));
+  const ivMax=Math.max(...ingVsEgr.map(d=>Math.max(d.ing,d.egr)),1);
+  // Utilidad por cliente (ingresos facturados − pagos cargados a ese cliente)
+  const utilCli=(()=>{
+    const m={};
+    factsEmit.forEach(f=>{const k=normEmpresa(f.empresa||f.cliente);if(!m[k])m[k]={ing:0,gas:0};m[k].ing+=f.subtotal||0;});
+    pagos.filter(p=>p.anio===ANIO&&p.cargoCliente).forEach(p=>{const k=normEmpresa(p.cargoCliente);if(!m[k])m[k]={ing:0,gas:0};m[k].gas+=p.subtotal||0;});
+    return Object.entries(m).map(([k,v])=>({cliente:k,...v,util:v.ing-v.gas})).sort((a,b)=>b.ing-a.ing);
+  })();
+  const utilPlan=(()=>{
+    const m={};
+    factsEmit.forEach(f=>{const k=f.plan||"Sin plan";if(!m[k])m[k]={ing:0,gas:0};m[k].ing+=f.subtotal||0;});
+    pagos.filter(p=>p.anio===ANIO&&p.cargoPlan).forEach(p=>{const k=p.cargoPlan;if(!m[k])m[k]={ing:0,gas:0};m[k].gas+=p.subtotal||0;});
+    return Object.entries(m).map(([k,v])=>({plan:k,...v,util:v.ing-v.gas})).filter(x=>x.ing>0||x.gas>0).sort((a,b)=>b.ing-a.ing);
+  })();
+
+  const scPago={Pendiente:AMBER,Programado:BLUE,Pagado:GREEN};
+  const filtroDesc=[fMes!=="todos"&&"Mes: "+fMes,fCat!=="todas"&&fCat,fEst!=="todos"&&fEst,fProv!=="todos"&&fProv].filter(Boolean).join(" · ")||"Todos los registros";
+  const labelExp=(fMes!=="todos"?fMes+"-":"")+ANIO+"_"+new Date().toISOString().slice(0,10);
+
+  const inpS={width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"8px 11px",fontSize:13,boxSizing:"border-box"};
+  const lblS={fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4};
+
+  if(load) return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:MUTED}}>Cargando pagos…</div>;
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
+
+      {/* Header */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>💸 Pagos a Proveedores</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Cuentas por pagar · Carga a plan/cliente · IVA acreditable · Impacta el P&L automáticamente</p>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button onClick={()=>exportPagosPDF(filt,labelExp,filtroDesc)} className="btn" style={{display:"flex",alignItems:"center",gap:6,background:"#fff",border:"1.5px solid "+A+"40",color:A,borderRadius:11,padding:"9px 14px",fontWeight:700,fontSize:12}}><FileText size={13}/>PDF</button>
+          <button onClick={()=>exportPagosXLSX(filt,labelExp)} className="btn" style={{display:"flex",alignItems:"center",gap:6,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:11,padding:"9px 14px",fontWeight:700,fontSize:12}}><Download size={13}/>Excel</button>
+          <button onClick={()=>exportPagosCSV(filt,labelExp)} className="btn" style={{display:"flex",alignItems:"center",gap:6,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:11,padding:"9px 14px",fontWeight:700,fontSize:12}}><Download size={13}/>CSV</button>
+          <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:11,padding:"9px 18px",fontWeight:700,fontSize:13,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Registrar pago</button>
+        </div>
+      </div>
+
+      {/* Aviso anti-duplicado */}
+      <div style={{background:BLUE+"08",border:"1px solid "+BLUE+"25",borderRadius:11,padding:"9px 14px",marginBottom:16,fontSize:11.5,color:BLUE,display:"flex",alignItems:"center",gap:8}}>
+        <Shield size={13}/><span><strong>Ene–May 2026 ya está conciliado con la balanza contable</strong> (vive en Viáticos & Gastos). Captura aquí los pagos de <strong>junio en adelante</strong> para no duplicar costos en el P&L.</span>
+      </div>
+
+      {/* KPIs */}
+      <div className="g4" style={{marginBottom:18}}>
+        <KpiCard icon={CreditCard} color={ROSE} label={"Pagado en "+mesActual} value={fmtK(pagadoMes)} sub={pagos.filter(p=>p.status==="Pagado"&&p.mes===mesActual&&p.anio===ANIO).length+" pagos"}/>
+        <KpiCard icon={TrendingUp} color={ROSE} label={"Pagado "+ANIO} value={fmtK(pagadoAnio)} sub={pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).length+" pagos ejecutados"}/>
+        <KpiCard icon={Clock} color={AMBER} accent={porPagar>0} label="Por pagar" value={fmtK(porPagar)} valueColor={porPagar>0?AMBER:GREEN} sub={pagos.filter(p=>p.status!=="Pagado").length+" pendientes/programados"}/>
+        <KpiCard icon={CheckCircle} color={GREEN} label="IVA acreditable" value={fmtK(ivaAcred)} sub={"de pagos ejecutados "+ANIO}/>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
+        {[["registros","📋 Registros"],["dashboard","📊 Dashboard de egresos"],["utilidad","💰 Utilidad por cliente/plan"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setTab(k)} className="btn" style={{padding:"7px 16px",borderRadius:10,border:"1.5px solid "+(tab===k?A:BD2),background:tab===k?A+"10":"#fff",color:tab===k?A:MUTED,fontWeight:tab===k?700:500,fontSize:13}}>{l}</button>
+        ))}
+      </div>
+
+      {/* ═══ TAB REGISTROS ═══ */}
+      {tab==="registros"&&<>
+        {/* Filtros */}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"12px 14px",marginBottom:12,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <div style={{position:"relative",flex:"1 1 220px",minWidth:180}}>
+            <Search size={13} color={MUTED} style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)"}}/>
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar proveedor, factura, concepto, referencia…" style={{...inpS,paddingLeft:30}}/>
+          </div>
+          {[["Mes",fMes,setFMes,["todos",...MESES_ID]],["Categoría",fCat,setFCat,["todas",...CAT_PAGO.map(c=>c.k)]],["Estado",fEst,setFEst,["todos","Pendiente","Programado","Pagado"]],["Método",fMet,setFMet,["todos",...METODOS_PAGO]],["Proveedor",fProv,setFProv,["todos",...provList]],["Cliente",fCli,setFCli,["todos",...cliList]],["Usuario",fUsr,setFUsr,["todos",...usrList]]].map(([lbl,val,set,opts])=>(
+            <select key={lbl} value={val} onChange={e=>set(e.target.value)} title={lbl} style={{padding:"7px 9px",borderRadius:8,border:"1.5px solid "+(val!=="todos"&&val!=="todas"?A:BD2),fontSize:11,fontWeight:600,color:val!=="todos"&&val!=="todas"?A:MUTED,background:"#fff",maxWidth:140,cursor:"pointer"}}>
+              {opts.map(o=><option key={o} value={o}>{o==="todos"||o==="todas"?lbl+": todos":o}</option>)}
+            </select>
+          ))}
+          {(q||fMes!=="todos"||fCat!=="todas"||fEst!=="todos"||fMet!=="todos"||fProv!=="todos"||fCli!=="todos"||fUsr!=="todos")&&
+            <button onClick={()=>{setQ("");setFMes("todos");setFCat("todas");setFEst("todos");setFMet("todos");setFProv("todos");setFCli("todos");setFUsr("todos");}} className="btn" style={{fontSize:11,color:ROSE,fontWeight:700}}>✕ Limpiar</button>}
+        </div>
+        {/* Totales del filtro */}
+        <div style={{display:"flex",gap:0,marginBottom:12,background:"#fff",border:"1px solid "+BORDER,borderRadius:12,overflow:"hidden"}}>
+          {[["Registros",filt.length,TEXT],["Subtotal",fmt(filt.reduce((a,p)=>a+(p.subtotal||0),0)),TEXT],["IVA",fmt(filt.reduce((a,p)=>a+(p.iva||0),0)),MUTED],["Retenciones",fmt(filt.reduce((a,p)=>a+(p.retenciones||0),0)),VIOLET],["Total",fmt(filt.reduce((a,p)=>a+(p.total||0),0)),ROSE]].map(([l,v,c],i)=>(
+            <div key={l} style={{flex:1,padding:"10px 16px",borderLeft:i>0?"1px solid "+BORDER:"none",display:"flex",alignItems:"baseline",gap:8}}>
+              <span style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase"}}>{l}</span>
+              <span style={{fontFamily:MONO,fontSize:15,fontWeight:800,color:c}}>{v}</span>
+            </div>
+          ))}
+        </div>
+        {/* Tabla */}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+          {filt.length===0?<div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin pagos registrados. <button onClick={openNew} style={{color:A,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Registrar el primero →</button></div>
+          :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:1050}}>
+            <thead><tr style={{borderBottom:"1px solid "+BORDER,background:"#fafbfd"}}>
+              {["Fecha","Factura","Proveedor","Concepto","Categoría","Plan / Cliente","Subtotal","IVA","Total","Estado","Acciones"].map(h=>
+                <th key={h} style={{padding:"8px 10px",textAlign:["Subtotal","IVA","Total"].includes(h)?"right":"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+            </tr></thead>
+            <tbody>{filt.map(p=>{
+              const cat=CAT_PAGO.find(c=>c.k===p.categoria);
+              return(
+              <tr key={p.id} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
+                <td style={{padding:"8px 10px",fontSize:11,whiteSpace:"nowrap"}}>
+                  <div style={{fontWeight:700,color:TEXT}}>{p.fechaPago||"—"}</div>
+                  <div style={{fontSize:9,color:MUTED}}>fact: {p.fechaFactura||"—"}</div>
+                </td>
+                <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:10,whiteSpace:"nowrap"}}>
+                  <div style={{color:TEXT,fontWeight:700}}>{p.numFactura||"—"}</div>
+                  <div style={{color:MUTED,fontSize:9}}>{p.folio||""}</div>
+                </td>
+                <td style={{padding:"8px 10px",fontWeight:700,fontSize:12,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={(p.proveedor||"")+(p.rfc?" · "+p.rfc:"")}>{p.proveedor||"—"}</td>
+                <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:170,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={p.concepto||""}>{p.concepto||"—"}</td>
+                <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}><span style={{background:"#f5f3ff",color:VIOLET,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700}}>{cat?.icon} {p.categoria}</span></td>
+                <td style={{padding:"8px 10px",fontSize:10.5,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={[p.cargoCliente,p.cargoPlan,p.cargoRuta].filter(Boolean).join(" · ")}>
+                  {p.cargoCliente?<span style={{color:TEXT,fontWeight:600}}>{p.cargoCliente.split(" ")[0]} {p.cargoPlan&&<span style={{color:MUTED}}>· {p.cargoPlan}</span>}</span>:<span style={{color:MUTED,fontStyle:"italic"}}>General</span>}
+                </td>
+                <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11.5,textAlign:"right",whiteSpace:"nowrap"}}>{fmt(p.subtotal||0)}</td>
+                <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11,color:MUTED,textAlign:"right",whiteSpace:"nowrap"}}>{fmt(p.iva||0)}</td>
+                <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:12.5,fontWeight:800,textAlign:"right",whiteSpace:"nowrap",color:ROSE}}>{fmt(p.total||0)}</td>
+                <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>
+                  <select value={p.status||"Pendiente"} onChange={e=>cambiarEstado(p,e.target.value)} style={{background:(scPago[p.status]||MUTED)+"0c",border:"1.5px solid "+(scPago[p.status]||MUTED)+"30",borderRadius:8,padding:"3px 6px",color:scPago[p.status]||MUTED,fontSize:10.5,fontWeight:700,cursor:"pointer"}}>
+                    {["Pendiente","Programado","Pagado"].map(s2=><option key={s2} value={s2}>{s2}</option>)}
+                  </select>
+                  {p.status==="Pagado"&&p.pagadoPor&&<div style={{fontSize:8.5,color:MUTED,marginTop:2}}>{p.pagadoEn} · {p.pagadoPor}</div>}
+                </td>
+                <td style={{padding:"8px 10px"}}>
+                  <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                    <button onClick={()=>abrirAdjuntos(p)} className="btn" title={"Adjuntos ("+(p.nAdjuntos||0)+")"} style={{color:(p.nAdjuntos||0)>0?BLUE:MUTED,padding:"3px 6px",border:"1px solid "+((p.nAdjuntos||0)>0?BLUE+"35":BD2),background:(p.nAdjuntos||0)>0?BLUE+"0c":"#fff",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:10,fontWeight:700}}><Paperclip size={11}/>{p.nAdjuntos||0}</button>
+                    <button onClick={()=>setHistItem(p)} className="btn" title="Historial de cambios" style={{color:VIOLET,padding:"3px 6px",border:"1px solid "+VIOLET+"25",borderRadius:6,display:"flex",alignItems:"center"}}><History size={11}/></button>
+                    <button onClick={()=>openEdit(p)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
+                    <button onClick={()=>del(p)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
+                  </div>
+                </td>
+              </tr>
+            );})}</tbody>
+          </table></div>}
+        </div>
+      </>}
+
+      {/* ═══ TAB DASHBOARD ═══ */}
+      {tab==="dashboard"&&<>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 380px",gap:14,marginBottom:14}}>
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:12}}>Flujo mensual de egresos {ANIO}</div>
+            <div style={{display:"flex",alignItems:"flex-end",gap:6,height:130,borderBottom:"1px solid "+BORDER+"60",paddingBottom:2}}>
+              {flujoMensual.map(d=>(
+                <div key={d.m} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",height:"100%"}}>
+                  {d.v>0&&<div style={{fontSize:7.5,fontFamily:MONO,fontWeight:700,color:ROSE,marginBottom:2}}>{fmtK(d.v)}</div>}
+                  <div style={{width:"64%",background:d.m===mesActual?ROSE:ROSE+"55",borderRadius:"3px 3px 0 0",height:Math.max(2,Math.round(d.v/flujoMax*100))+"px"}}/>
+                  <div style={{fontSize:8.5,fontWeight:d.m===mesActual?800:500,color:d.m===mesActual?ROSE:MUTED,marginTop:3}}>{d.m}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:12}}>Gastos por categoría</div>
+            <DonutChart data={CAT_PAGO.filter(c=>porCat[c.k]>0).map(c=>({label:c.icon+" "+c.k,value:porCat[c.k],color:CATS_COLOR[c.bucket]||MUTED}))}
+              centerLabel={fmtK(Object.values(porCat).reduce((a,b)=>a+b,0))} centerSub="egresos"/>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:12}}>Top proveedores {ANIO}</div>
+            {topProv.length===0?<div style={{color:MUTED,fontSize:12,textAlign:"center",padding:16}}>Sin pagos aún</div>
+            :topProv.map(([prov,v])=>(
+              <div key={prov} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3}}>
+                  <span style={{fontWeight:700,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"65%"}}>{prov}</span>
+                  <span style={{fontFamily:MONO,fontWeight:700,color:ROSE}}>{fmt(v)}</span>
+                </div>
+                <MiniBar pct={v/topProvMax*100} color={ROSE} h={5}/>
+              </div>
+            ))}
+          </div>
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:4}}>Ingresos vs Egresos por mes</div>
+            <div style={{fontSize:10,color:MUTED,marginBottom:10}}>
+              <span style={{marginRight:12}}><span style={{display:"inline-block",width:9,height:9,borderRadius:2,background:GREEN,marginRight:4,verticalAlign:"middle"}}/>Facturado s/IVA</span>
+              <span><span style={{display:"inline-block",width:9,height:9,borderRadius:2,background:ROSE,marginRight:4,verticalAlign:"middle"}}/>Pagos proveedores s/IVA</span>
+            </div>
+            <div style={{display:"flex",alignItems:"flex-end",gap:5,height:110,borderBottom:"1px solid "+BORDER+"60"}}>
+              {ingVsEgr.map(d=>(
+                <div key={d.m} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",height:"100%"}}>
+                  <div style={{width:"100%",display:"flex",gap:1.5,alignItems:"flex-end",justifyContent:"center",height:92}}>
+                    <div title={"Ingresos "+fmt(d.ing)} style={{width:"38%",background:GREEN+"cc",borderRadius:"2px 2px 0 0",height:Math.max(2,Math.round(d.ing/ivMax*100))+"%"}}/>
+                    <div title={"Egresos "+fmt(d.egr)} style={{width:"38%",background:ROSE+"cc",borderRadius:"2px 2px 0 0",height:Math.max(2,Math.round(d.egr/ivMax*100))+"%"}}/>
+                  </div>
+                  <div style={{fontSize:8.5,fontWeight:600,color:MUTED,marginTop:3}}>{d.m}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </>}
+
+      {/* ═══ TAB UTILIDAD ═══ */}
+      {tab==="utilidad"&&<>
+        <div style={{background:AMBER+"0a",border:"1px solid "+AMBER+"30",borderRadius:11,padding:"9px 14px",marginBottom:14,fontSize:11.5,color:"#92600a"}}>
+          💡 Utilidad = facturación sin IVA del cliente − pagos a proveedores cargados a ese cliente/plan. Para el P&L completo con nómina y costos contables, usa <strong>Reportes & KPIs</strong>.
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          {[["Utilidad por cliente",utilCli.map(x=>({k:x.cliente,...x}))],["Utilidad por plan / servicio",utilPlan.map(x=>({k:x.plan,...x}))]].map(([titulo,rows])=>(
+            <div key={titulo} style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
+              <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:12}}>{titulo}</div>
+              {rows.length===0?<div style={{color:MUTED,fontSize:12,textAlign:"center",padding:16}}>Sin datos — asigna cliente/plan al registrar pagos</div>
+              :<table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+                <thead><tr style={{borderBottom:"1.5px solid "+BORDER}}>
+                  {["","Ingresos","Gastos","Utilidad","Margen"].map((h,i)=><th key={i} style={{padding:"6px 8px",textAlign:i===0?"left":"right",fontSize:9,color:MUTED,fontWeight:800,textTransform:"uppercase"}}>{h}</th>)}
+                </tr></thead>
+                <tbody>{rows.map(r=>{
+                  const mg=r.ing>0?r.util/r.ing:null;
+                  return(
+                  <tr key={r.k} style={{borderBottom:"1px solid "+BORDER+"60"}}>
+                    <td style={{padding:"7px 8px",fontWeight:700,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.k}>{r.k}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",fontFamily:MONO,color:GREEN,fontWeight:600}}>{fmtK(r.ing)}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",fontFamily:MONO,color:ROSE}}>{r.gas>0?fmtK(r.gas):"—"}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",fontFamily:MONO,fontWeight:800,color:r.util>=0?GREEN:ROSE}}>{fmtK(r.util)}</td>
+                    <td style={{padding:"7px 8px",textAlign:"right",fontWeight:700,color:mg===null?MUTED:mg>=0.15?GREEN:mg>=0?AMBER:ROSE}}>{mg===null?"—":Math.round(mg*100)+"%"}</td>
+                  </tr>
+                );})}</tbody>
+              </table>}
+            </div>
+          ))}
+        </div>
+      </>}
+
+      {/* ═══ MODAL REGISTRO ═══ */}
+      {modal&&<Modal title={editItem?"Editar pago "+(editItem.folio||""):"Registrar pago a proveedor"} onClose={()=>setModal(false)} icon={CreditCard} iconColor={A} wide>
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          {/* Información general */}
+          <div style={{fontSize:10,fontWeight:800,color:A,textTransform:"uppercase",letterSpacing:"0.08em"}}>1 · Información general</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+            <div><div style={lblS}>Fecha de la factura *</div><input type="date" value={form.fechaFactura} onChange={e=>setForm({...form,fechaFactura:e.target.value})} style={inpS}/></div>
+            <div><div style={lblS}>Fecha del pago</div><input type="date" value={form.fechaPago} onChange={e=>setForm({...form,fechaPago:e.target.value})} style={inpS}/></div>
+            <div><div style={lblS}>Núm. de factura</div><input value={form.numFactura} onChange={e=>setForm({...form,numFactura:e.target.value})} placeholder="A-1234 / UUID" style={inpS}/></div>
+            <div><div style={lblS}>Proveedor *</div><input value={form.proveedor} onChange={e=>setForm({...form,proveedor:e.target.value})} placeholder="Nombre o razón social" style={inpS} list="prov-list"/><datalist id="prov-list">{provList.map(p2=><option key={p2} value={p2}/>)}</datalist></div>
+            <div><div style={lblS}>RFC (opcional)</div><input value={form.rfc} onChange={e=>setForm({...form,rfc:e.target.value})} placeholder="XXX000000XX0" style={{...inpS,fontFamily:MONO,textTransform:"uppercase"}}/></div>
+            <div><div style={lblS}>Folio interno (opcional)</div><input value={form.folio} onChange={e=>setForm({...form,folio:e.target.value})} placeholder="auto: PAG-XXXXXX" style={{...inpS,fontFamily:MONO}}/></div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:10}}>
+            <div><div style={lblS}>Concepto / descripción *</div><input value={form.concepto} onChange={e=>setForm({...form,concepto:e.target.value})} placeholder="Ej: Diesel unidad NXE007C ruta Monterrey" style={inpS}/></div>
+            <div><div style={lblS}>Categoría</div>
+              <select value={form.categoria} onChange={e=>setForm({...form,categoria:e.target.value})} style={{...inpS,cursor:"pointer"}}>
+                {CAT_PAGO.map(c=><option key={c.k} value={c.k}>{c.icon} {c.k}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Fiscal */}
+          <div style={{fontSize:10,fontWeight:800,color:A,textTransform:"uppercase",letterSpacing:"0.08em",marginTop:4}}>2 · Información fiscal</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,alignItems:"end"}}>
+            <div><div style={lblS}>Subtotal *</div><input type="number" min="0" step="0.01" value={form.subtotal} onChange={e=>setForm({...form,subtotal:e.target.value})} placeholder="0.00" style={{...inpS,fontFamily:MONO,fontWeight:700}}/></div>
+            <div>
+              <div style={lblS}>IVA 16%</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:12}}><input type="checkbox" checked={form.ivaOn} onChange={e=>setForm({...form,ivaOn:e.target.checked})}/>aplica</label>
+                <span style={{fontFamily:MONO,fontWeight:700,fontSize:14,color:MUTED}}>{fmt(ivaC)}</span>
+              </div>
+            </div>
+            <div><div style={lblS}>Retenciones (si aplica)</div><input type="number" min="0" step="0.01" value={form.retenciones} onChange={e=>setForm({...form,retenciones:e.target.value})} placeholder="0.00" style={{...inpS,fontFamily:MONO}}/></div>
+            <div style={{background:A+"0c",border:"1.5px solid "+A+"30",borderRadius:10,padding:"8px 12px"}}>
+              <div style={{fontSize:9,fontWeight:800,color:A,textTransform:"uppercase"}}>Total</div>
+              <div style={{fontFamily:MONO,fontSize:19,fontWeight:900,color:A}}>{fmt(totC)}</div>
+            </div>
+          </div>
+
+          {/* Método de pago */}
+          <div style={{fontSize:10,fontWeight:800,color:A,textTransform:"uppercase",letterSpacing:"0.08em",marginTop:4}}>3 · Método de pago y estado</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:7}}>
+            {METODOS_PAGO.map(m=>(
+              <button key={m} onClick={()=>setForm({...form,metodoPago:m})} className="btn" style={{padding:"8px 4px",borderRadius:10,border:"2px solid "+(form.metodoPago===m?BLUE:BD2),background:form.metodoPago===m?BLUE+"0a":"#fff",color:form.metodoPago===m?BLUE:MUTED,fontWeight:form.metodoPago===m?800:500,fontSize:11}}>{m}</button>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10}}>
+            <div><div style={lblS}>Banco</div><input value={form.banco} onChange={e=>setForm({...form,banco:e.target.value})} placeholder="BBVA, Santander…" style={inpS}/></div>
+            <div><div style={lblS}>Referencia bancaria</div><input value={form.referencia} onChange={e=>setForm({...form,referencia:e.target.value})} style={{...inpS,fontFamily:MONO}}/></div>
+            <div><div style={lblS}>Núm. operación (opc.)</div><input value={form.numOperacion} onChange={e=>setForm({...form,numOperacion:e.target.value})} style={{...inpS,fontFamily:MONO}}/></div>
+            <div><div style={lblS}>Estado</div>
+              <select value={form.status} onChange={e=>setForm({...form,status:e.target.value})} style={{...inpS,cursor:"pointer",fontWeight:700,color:scPago[form.status]||MUTED}}>
+                {["Pendiente","Programado","Pagado"].map(s2=><option key={s2} value={s2}>{s2}</option>)}
+              </select>
+            </div>
+          </div>
+          {form.status==="Pagado"&&<div style={{fontSize:11,color:GREEN,background:GREEN+"0a",border:"1px solid "+GREEN+"25",borderRadius:9,padding:"7px 12px"}}>
+            ✓ Se registrará como pagado el <strong>{form.fechaPago||hoyISO}</strong> por <strong>{editItem?.pagadoPor||usuario}</strong>
+          </div>}
+
+          {/* Relación con la operación */}
+          <div style={{fontSize:10,fontWeight:800,color:A,textTransform:"uppercase",letterSpacing:"0.08em",marginTop:4}}>4 · ¿A qué operación se carga este gasto?</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10}}>
+            <div><div style={lblS}>Tipo de carga</div>
+              <select value={form.cargoTipo} onChange={e=>setForm({...form,cargoTipo:e.target.value})} style={{...inpS,cursor:"pointer"}}>
+                {TIPOS_CARGA.map(t=><option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div><div style={lblS}>Cliente</div>
+              <select value={form.cargoCliente} onChange={e=>{
+                const emp=e.target.value;
+                const cp=CLIENTE_PLANES.find(x=>x.empresa===emp);
+                setForm({...form,cargoCliente:emp,cargoPlan:form.cargoPlan||(cp?.plan||"")});
+              }} style={{...inpS,cursor:"pointer"}}>
+                <option value="">— Gasto general —</option>
+                {[...new Set(CLIENTE_PLANES.map(c=>c.empresa))].filter(e2=>e2!=="POR DEFINIR").map(e2=><option key={e2} value={e2}>{e2}</option>)}
+              </select>
+            </div>
+            <div><div style={lblS}>Plan / servicio</div><input value={form.cargoPlan} onChange={e=>setForm({...form,cargoPlan:e.target.value})} placeholder="Ej: 142804 Servicios de Logística" style={inpS}/></div>
+            <div><div style={lblS}>Ruta (opcional)</div><input value={form.cargoRuta} onChange={e=>setForm({...form,cargoRuta:e.target.value})} placeholder="Ej: CDMX–Monterrey 12/jun" style={inpS}/></div>
+          </div>
+          <Txt label="Notas" value={form.notas} onChange={e=>setForm({...form,notas:e.target.value})} placeholder="Observaciones internas…"/>
+
+          <button onClick={save} disabled={saving} className="btn" style={{background:saving?"#e5e7eb":"linear-gradient(135deg,"+A+",#fb923c)",color:saving?"#999":"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:15,boxShadow:saving?"none":"0 4px 16px "+A+"30"}}>
+            {saving?"Guardando…":editItem?"Guardar cambios":"Registrar pago — "+fmt(totC)}
+          </button>
+          {editItem&&<div style={{fontSize:10,color:MUTED,textAlign:"center"}}>Creado por {editItem.creadoPor||"—"} · Última modificación: {editItem.modificadoPor||"—"} · Los adjuntos se gestionan desde la tabla 📎</div>}
+        </div>
+      </Modal>}
+
+      {/* ═══ MODAL HISTORIAL ═══ */}
+      {histItem&&<Modal title={"Historial — "+(histItem.folio||histItem.proveedor||"")} onClose={()=>setHistItem(null)} icon={History} iconColor={VIOLET}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {(histItem.historial||[]).length===0&&<div style={{color:MUTED,fontSize:12,textAlign:"center",padding:16}}>Sin historial registrado</div>}
+          {[...(histItem.historial||[])].reverse().map((h,i)=>(
+            <div key={i} style={{display:"flex",gap:10,padding:"9px 12px",background:i===0?VIOLET+"08":"#f8fafc",border:"1px solid "+(i===0?VIOLET+"25":BORDER),borderRadius:10,fontSize:11.5}}>
+              <History size={13} color={VIOLET} style={{flexShrink:0,marginTop:1}}/>
+              <span style={{color:TEXT,lineHeight:1.5}}>{h}</span>
+            </div>
+          ))}
+        </div>
+      </Modal>}
+
+      {/* ═══ MODAL ADJUNTOS ═══ */}
+      {adjItem&&<Modal title={"Adjuntos — "+(adjItem.folio||adjItem.proveedor||"")} onClose={()=>{setAdjItem(null);setAdjuntos([]);}} icon={Paperclip} iconColor={BLUE}>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <label style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,padding:"22px 16px",border:"2px dashed "+BLUE+"40",borderRadius:13,background:BLUE+"05",cursor:"pointer",textAlign:"center"}}>
+            <Upload size={22} color={BLUE}/>
+            <div style={{fontSize:13,fontWeight:700,color:BLUE}}>Subir PDF de factura, XML, imagen o comprobante</div>
+            <div style={{fontSize:10,color:MUTED}}>Las imágenes se comprimen automáticamente · PDF/XML hasta 700KB</div>
+            <input type="file" multiple accept=".pdf,.xml,image/*" onChange={subirAdjunto} style={{display:"none"}}/>
+          </label>
+          {adjLoading?<div style={{textAlign:"center",color:MUTED,fontSize:12,padding:10}}>Cargando…</div>
+          :adjuntos.length===0?<div style={{textAlign:"center",color:MUTED,fontSize:12,padding:6}}>Sin documentos adjuntos</div>
+          :adjuntos.map(a2=>(
+            <div key={a2.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 12px",background:"#fff",border:"1px solid "+BORDER,borderRadius:11}}>
+              {a2.mime?.startsWith("image/")
+                ?<img src={a2.dataB64} alt="" style={{width:42,height:42,borderRadius:8,objectFit:"cover",flexShrink:0,cursor:"pointer"}} onClick={()=>descargarAdjunto(a2)}/>
+                :<div style={{width:42,height:42,borderRadius:8,background:a2.mime?.includes("xml")?VIOLET+"14":ROSE+"14",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><FileText size={17} color={a2.mime?.includes("xml")?VIOLET:ROSE}/></div>}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a2.nombre}</div>
+                <div style={{fontSize:10,color:MUTED}}>{(a2.size/1024).toFixed(0)} KB · {a2.subidoPor||""}</div>
+              </div>
+              <button onClick={()=>descargarAdjunto(a2)} className="btn" style={{color:BLUE,padding:"5px 9px",border:"1px solid "+BLUE+"30",borderRadius:7,fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:4}}><Download size={11}/>Bajar</button>
+              <button onClick={()=>borrarAdjunto(a2)} className="btn" style={{color:ROSE,padding:5}}><Trash2 size={12}/></button>
+            </div>
+          ))}
+        </div>
+      </Modal>}
+    </div>
+  );
+}
+
 function Reportes(){
   const ANIO = "2026";
   const mesActual = MESES_REP[new Date().getMonth()];
   const [facts, setFacts]       = useState([]);
   const [viat,  setViat]        = useState([]);
+  const [pagosProv, setPagosProv] = useState([]);
   const [load,  setLoad]        = useState(true);
   const [modo,  setModo]        = useState("mes");       // "mes" | "rango" | "anual"
   const [mesSel,setMesSel]      = useState(mesActual);
@@ -7673,14 +8327,19 @@ function Reportes(){
       setViat(s.docs.map(d=>({id:d.id,...d.data()})));
       setLoad(false);
     });
-    return()=>{n1&&n1();n2&&n2();};
+    const n3=onSnapshot(collection(db,"pagosProveedores"),s=>setPagosProv(s.docs.map(d=>({id:d.id,...d.data()}))));
+    return()=>{n1&&n1();n2&&n2();n3&&n3();};
   },[]);
+
+  /* Costos completos: viáticos/gastos conciliados + pagos a proveedores.
+     Los pagos entran al P&L como costo (subtotal s/IVA) en su bucket de categoría. */
+  const viatAll = useMemo(()=>[...viat,...pagosComoCostos(pagosProv)],[viat,pagosProv]);
 
   // Filtros activos
   const desde = modo==="mes"?mesSel:modo==="anual"?"Ene":mesDesde;
   const hasta  = modo==="mes"?mesSel:modo==="anual"?mesActual:mesHasta;
 
-  const pl = useMemo(()=>buildPLData(facts,viat,desde,hasta,ANIO),[facts,viat,desde,hasta]);
+  const pl = useMemo(()=>buildPLData(facts,viatAll,desde,hasta,ANIO),[facts,viatAll,desde,hasta]);
 
   const totalIng   = pl.reduce((a,d)=>a+d.ingresos,0);   // c/IVA (cobranza)
   const totalSub   = pl.reduce((a,d)=>a+d.subtotal,0);   // sin IVA (P&L)
@@ -7730,13 +8389,13 @@ function Reportes(){
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button
-            onClick={()=>{exportReportePDF(facts,viat,desde,hasta,ANIO);showT("✓ PDF Ejecutivo descargado — "+periodoLabel);}}
+            onClick={()=>{exportReportePDF(facts,viatAll,desde,hasta,ANIO);showT("✓ PDF Ejecutivo descargado — "+periodoLabel);}}
             className="btn"
             style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"40"}}>
             <FileText size={15}/>PDF Ejecutivo
           </button>
           <button
-            onClick={()=>{exportReporteXLSX(facts,viat,desde,hasta,ANIO);showT("✓ Reporte descargado — "+periodoLabel);}}
+            onClick={()=>{exportReporteXLSX(facts,viatAll,desde,hasta,ANIO);showT("✓ Reporte descargado — "+periodoLabel);}}
             className="btn"
             style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#16a34a,#15803d)",color:"#fff",borderRadius:12,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px #16a34a40"}}>
             <Download size={15}/>Excel
@@ -7980,13 +8639,13 @@ function Reportes(){
           El Excel incluye 4 hojas: P&L Mensual · Ingresos detallados · Costos detallados · KPIs ejecutivos
         </div>
         <button
-          onClick={()=>{exportReporteXLSX(facts,viat,"Ene",mesActual,ANIO);showT("✓ Reporte año completo descargado");}}
+          onClick={()=>{exportReporteXLSX(facts,viatAll,"Ene",mesActual,ANIO);showT("✓ Reporte año completo descargado");}}
           className="btn"
           style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:13}}>
           <Download size={13}/>Año completo
         </button>
         <button
-          onClick={()=>{exportReporteXLSX(facts,viat,desde,hasta,ANIO);showT("✓ Reporte "+periodoLabel+" descargado");}}
+          onClick={()=>{exportReporteXLSX(facts,viatAll,desde,hasta,ANIO);showT("✓ Reporte "+periodoLabel+" descargado");}}
           className="btn"
           style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,#16a34a,#15803d)",color:"#fff",borderRadius:12,padding:"11px 20px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px #16a34a40"}}>
           <Download size={15}/>Descargar {periodoLabel}
@@ -12456,6 +13115,7 @@ export default function App(){
   const [entregas,setEntregas]=useState([]);
   const [viat,setViat]=useState([]);
   const [gastosCh,setGastosCh]=useState([]);
+  const [pagosProv,setPagosProv]=useState([]);
   const [clientes,setClientes]=useState([]);
   const [prospectos,setProspectos]=useState([]);
   const [choferes,setChoferes]=useState([]);
@@ -12506,6 +13166,7 @@ export default function App(){
       setViat(list);
       try{window.__DMOV_VIATICOS__=list;}catch(e){}
     },onErr);
+    const u10=onSnapshot(query(collection(db,"pagosProveedores"),limit(2000)),s=>setPagosProv(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     const u9=onSnapshot(query(collection(db,"gastosChofer"),limit(CAP)),s=>{
       const list=s.docs.map(d=>({id:d.id,...d.data()}));
       setGastosCh(list);
@@ -12514,7 +13175,7 @@ export default function App(){
     const u6=onSnapshot(query(collection(db,"cuentas"),limit(CAP)),s=>setClientes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     const u7=onSnapshot(query(collection(db,"prospeccion"),limit(CAP)),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     const u8=onSnapshot(query(collection(db,"choferes"),limit(CAP)),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
-    return()=>{u1();u2();u3();u4();u5();u6();u7();u8();u9&&u9();};
+    return()=>{u1();u2();u3();u4();u5();u6();u7();u8();u9&&u9();u10&&u10();};
   },[authUser?.uid]); // re-ejecutar solo cuando cambia el uid
 
   // 5. Cmd+K shortcut
@@ -12551,28 +13212,33 @@ export default function App(){
   const isAdmin=rol==="admin";
   const isOps=rol==="operaciones";
 
+  /* Costos consolidados: viáticos conciliados con balanza + pagos a proveedores.
+     Un solo dato alimenta Dashboard, Dashboard Ejecutivo y Reportes. */
+  const viatCombo=[...viat,...pagosComoCostos(pagosProv)];
+
   /* ── App principal ── */
   const VIEWS={
-    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    ejecutivo:isAdmin?<DashboardEjecutivo facts={facts} viat={viat} gastosCh={gastosCh} rutas={rutas} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    ejecutivo:isAdmin?<DashboardEjecutivo facts={facts} viat={viatCombo} gastosCh={gastosCh} rutas={rutas} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     choferes:<Choferes/>,
     unidades:<Unidades/>,
     tracking:<LiveTracking/>,
     rutas:<PlanificadorRutas/>,
-    nacional:isAdmin?<PlanificadorNacional/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    nacional:isAdmin?<PlanificadorNacional/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     facturas:<Facturas rol={rol}/>,
-    reportes:isAdmin?<Reportes/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    viaticos:isAdmin?<Viaticos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    reportes:isAdmin?<Reportes/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    pagos:isAdmin?<PagosProveedores userProfile={userProfile}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    viaticos:isAdmin?<Viaticos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     gastosAdmin:<GastosAdmin/>,
     jornadas:<JornadasAdmin/>,
     chat:<ChatCentro/>,
     alertas:<AlertasCentro setView={setView}/>,
-    clientes:isAdmin?<Clientes/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    clientes:isAdmin?<Clientes/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     entregas:<Entregas/>,
-    usuarios:isAdmin?<Usuarios/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viat} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    usuarios:isAdmin?<Usuarios/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
   };
 
   return(
