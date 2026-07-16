@@ -1046,7 +1046,7 @@ const VEHK = [
 const CLIENTE_PLANES = [
   {
     id:"actnow",
-    aliases:["ACTNOW","ACT NOW","CAMPARI","APEROL","APPEROL","PROMOCIONES AMERICA","PROMOCIONES AMÉRICA"],
+    aliases:["ACTNOW","ACT NOW","CAMPARI","APEROL","APPEROL","PROMOCIONES AMERICA","PROMOCIONES AMÉRICA","PROMOLATINA"],
     cliente:"Actnow",
     empresa:"PROMOCIONES AMERICA LATINA SAPI DE CV",
     plan:"210201 PL → Campari Promotores",
