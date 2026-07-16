@@ -1237,6 +1237,8 @@ const CAT_PAGO = [
   {k:"Administración",     bucket:"Administración",icon:"🏢"},
   {k:"Honorarios",         bucket:"Administración",icon:"⚖️"},
   {k:"Impuestos",          bucket:"Fiscal",        icon:"🏛️"},
+  {k:"Viáticos",           bucket:"Viáticos",      icon:"🍽️"},
+  {k:"Comunicación",       bucket:"Comunicación",  icon:"📞"},
   {k:"Otros",              bucket:"Otro",          icon:"📦"},
 ];
 const METODOS_PAGO = ["Transferencia","Efectivo","Tarjeta","Cheque","Otro"];
@@ -1245,9 +1247,11 @@ const MESES_ID = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","N
 const mesDeFecha = f => { const d=new Date((f||"")+"T12:00:00"); return isNaN(d)?null:{mes:MESES_ID[d.getMonth()],anio:String(d.getFullYear())}; };
 
 /* Convierte pagos a proveedores en renglones de costo compatibles con el motor
-   P&L existente (buildPLData suma viáticos por prefijo de concepto). */
+   P&L existente (buildPLData suma viáticos por prefijo de concepto).
+   Los pagos con enBalanza:true se EXCLUYEN: son el detalle transaccional de
+   meses ya conciliados vía balanza en viáticos — sumarlos duplicaría el costo. */
 function pagosComoCostos(pagos){
-  return (pagos||[]).map(p=>({
+  return (pagos||[]).filter(p=>!p.enBalanza).map(p=>({
     id:"pago-"+p.id,
     mes:p.mes, anio:p.anio,
     monto:Number(p.subtotal)||0,
@@ -7990,7 +7994,7 @@ function PagosProveedores({userProfile}){
 
       {/* Aviso anti-duplicado */}
       <div style={{background:BLUE+"08",border:"1px solid "+BLUE+"25",borderRadius:11,padding:"9px 14px",marginBottom:16,fontSize:11.5,color:BLUE,display:"flex",alignItems:"center",gap:8}}>
-        <Shield size={13}/><span><strong>Ene–May 2026 ya está conciliado con la balanza contable</strong> (vive en Viáticos & Gastos). Captura aquí los pagos de <strong>junio en adelante</strong> para no duplicar costos en el P&L.</span>
+        <Shield size={13}/><span>Los pagos con <strong>📘</strong> vienen de la balanza contable (Ene–May, 245 movimientos) y <strong>no duplican el P&L</strong> — esos meses ya están conciliados. Los pagos que captures aquí (junio en adelante) sí afectan Estado de Resultados y Reportes automáticamente.</span>
       </div>
 
       {/* KPIs */}
@@ -8050,7 +8054,7 @@ function PagosProveedores({userProfile}){
                   <div style={{fontSize:9,color:MUTED}}>fact: {p.fechaFactura||"—"}</div>
                 </td>
                 <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:10,whiteSpace:"nowrap"}}>
-                  <div style={{color:TEXT,fontWeight:700}}>{p.numFactura||"—"}</div>
+                  <div style={{color:TEXT,fontWeight:700}}>{p.numFactura||"—"} {p.enBalanza&&<span title="Importado de la balanza contable — no duplica el P&L" style={{fontSize:10}}>📘</span>}</div>
                   <div style={{color:MUTED,fontSize:9}}>{p.folio||""}</div>
                 </td>
                 <td style={{padding:"8px 10px",fontWeight:700,fontSize:12,maxWidth:160,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={(p.proveedor||"")+(p.rfc?" · "+p.rfc:"")}>{p.proveedor||"—"}</td>
