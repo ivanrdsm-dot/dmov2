@@ -7934,7 +7934,9 @@ function PagosProveedores({userProfile}){
 
   /* ── KPIs ── */
   const pagadoMes=pagos.filter(p=>p.status==="Pagado"&&p.mes===mesActual&&p.anio===ANIO).reduce((a,p)=>a+(p.total||0),0);
+  const pagadoMesSub=pagos.filter(p=>p.status==="Pagado"&&p.mes===mesActual&&p.anio===ANIO).reduce((a,p)=>a+(p.subtotal||0),0);
   const pagadoAnio=pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).reduce((a,p)=>a+(p.total||0),0);
+  const pagadoAnioSub=pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).reduce((a,p)=>a+(p.subtotal||0),0);
   const porPagar=pagos.filter(p=>p.status!=="Pagado").reduce((a,p)=>a+(p.total||0),0);
   const ivaAcred=pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).reduce((a,p)=>a+(p.iva||0),0);
 
@@ -7999,8 +8001,8 @@ function PagosProveedores({userProfile}){
 
       {/* KPIs */}
       <div className="g4" style={{marginBottom:18}}>
-        <KpiCard icon={CreditCard} color={ROSE} label={"Pagado en "+mesActual} value={fmtK(pagadoMes)} sub={pagos.filter(p=>p.status==="Pagado"&&p.mes===mesActual&&p.anio===ANIO).length+" pagos"}/>
-        <KpiCard icon={TrendingUp} color={ROSE} label={"Pagado "+ANIO} value={fmtK(pagadoAnio)} sub={pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).length+" pagos ejecutados"}/>
+        <KpiCard icon={CreditCard} color={ROSE} label={"Pagado en "+mesActual+" (c/IVA)"} value={fmtK(pagadoMes)} sub={fmtK(pagadoMesSub)+" sin IVA · "+pagos.filter(p=>p.status==="Pagado"&&p.mes===mesActual&&p.anio===ANIO).length+" pagos"}/>
+        <KpiCard icon={TrendingUp} color={ROSE} label={"Pagado "+ANIO+" (c/IVA)"} value={fmtK(pagadoAnio)} sub={fmtK(pagadoAnioSub)+" sin IVA · "+pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).length+" pagos"}/>
         <KpiCard icon={Clock} color={AMBER} accent={porPagar>0} label="Por pagar" value={fmtK(porPagar)} valueColor={porPagar>0?AMBER:GREEN} sub={pagos.filter(p=>p.status!=="Pagado").length+" pendientes/programados"}/>
         <KpiCard icon={CheckCircle} color={GREEN} label="IVA acreditable" value={fmtK(ivaAcred)} sub={"de pagos ejecutados "+ANIO}/>
       </div>
