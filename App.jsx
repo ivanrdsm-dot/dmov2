@@ -21,6 +21,7 @@ import {
   Phone, Camera, LogOut, Play, Square, Radio, Flag,
   CreditCard, Paperclip, History,
 } from "lucide-react";
+import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin } from "./domain.js";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import XLSX from "xlsx-js-style";
@@ -52,21 +53,10 @@ const auth = getAuth(fbApp);
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({prompt:"select_account"});
 
-/* ─── SEGURIDAD: hash SHA-256 para PINs de acceso ─────────────────────────── */
-/* F0: trackingId criptográfico — Math.random() era predecible para URLs públicas /track/:id */
-function genTrackingId(){
-  const arr=new Uint8Array(6);
-  crypto.getRandomValues(arr);
-  return Array.from(arr).map(b=>b.toString(36).padStart(2,"0")).join("").slice(0,10).toUpperCase();
-}
-
-async function hashPin(pin, salt=""){
-  // F0.5: hash con salt por-usuario (uid) — hashes no comparables entre usuarios
-  // ni atacables con tablas precalculadas. Los perfiles existentes no tenían PIN
-  // guardado, así que el cambio de esquema no rompe a nadie.
-  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(salt)+":"+String(pin).trim()));
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
-}
+/* ─── MOTOR DE CÁLCULO Y SEGURIDAD ─────────────────────────────────────────
+   Extraído a domain.js (F5) para poder testearlo con vitest.
+   genTrackingId, hashPin, diasRuta, calcViaticos, calcFlota y las constantes
+   de negocio (KM_DIA, COMIDA, HOTEL, ADIC, AYUD) viven ahí. */
 
 /* Helper: Comprime imagen en cliente a JPEG pequeño y retorna base64.
    No requiere Firebase Storage ni billing. Se guarda directo en Firestore. */
@@ -1270,29 +1260,7 @@ const fmtK = n => {
 const uid  = () => Math.random().toString(36).slice(2,8).toUpperCase();
 /* Viáticos 2026: hotel $1,100/noche POR UNIDAD (1 o 2 personas comparten
    habitación) · comida $700/día POR PERSONA. Casetas: incluidas vía TAG propio. */
-const KM_DIA=550, COMIDA=700, HOTEL=1100, ADIC=2000, AYUD=2800;
-
-function diasRuta(km){
-  if(!km) return {ida:0,noches:0,total:0};
-  const ida=Math.ceil(km/KM_DIA);
-  return {ida,noches:km>300?ida:0,total:ida*2};
-}
-/* personas = cuántos van en la(s) unidad(es) (comida se multiplica).
-   unidades = habitaciones de hotel (1 por unidad, sin importar 1 o 2 personas).
-   diasOv/nochesOv permiten fijar días manualmente desde el cotizador. */
-function calcViaticos(km,personas,comida=COMIDA,hotel=HOTEL,unidades=1,diasOv=null,nochesOv=null){
-  const auto=diasRuta(km);
-  const dias=diasOv!=null?diasOv:auto.total;
-  const noches=nochesOv!=null?nochesOv:auto.noches;
-  const xC=comida*personas*dias;
-  const xH=hotel*noches*unidades;
-  return {xC,xH,total:xC+xH,dias,noches};
-}
-function calcFlota(pdv,maxDia,plazo){
-  const vans=Math.max(1,Math.ceil(pdv/(maxDia*plazo)));
-  const dias=Math.ceil(pdv/(maxDia*vans));
-  return {vans,dias,capDia:maxDia*vans};
-}
+/* Constantes y fórmulas de negocio: ver domain.js (importadas arriba). */
 function mapsURL(stops){
   if(!stops||stops.length<2) return null;
   const enc=s=>encodeURIComponent(s+", México");
@@ -3420,9 +3388,9 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
     // Costos por mes: viáticos + gastos chofer aprobados
     const gasChNorm=gastosCh.filter(g=>g.estado==="reembolsado"||g.estado==="aprobado").map(g=>{
       const d=g.fechaTs?.seconds?new Date(g.fechaTs.seconds*1000):(g.createdAt?.seconds?new Date(g.createdAt.seconds*1000):null);
-      return d?{mes:MESES[d.getMonth()],anio:d.getFullYear(),monto:Number(g.monto)||0,tipo:g.tipo||"otro"}:null;
+      return d?{mes:MESES[d.getMonth()],anio:d.getFullYear(),monto:Number(g.monto)||0,tipo:g.tipo||"otro",operador:g.choferNombre||"",unidad:""}:null;
     }).filter(Boolean);
-    const gastosTodos=[...viat.map(v=>({mes:v.mes,anio:v.anio,monto:Number(v.monto)||0,tipo:v.tipo||"otro"})),...gasChNorm].filter(g=>Number(g.anio)===ANIO);
+    const gastosTodos=[...viat.map(v=>({mes:v.mes,anio:v.anio,monto:Number(v.monto)||0,tipo:v.tipo||"otro",operador:v.operador||"",unidad:v.unidad||""})),...gasChNorm].filter(g=>Number(g.anio)===ANIO);
     const gasMes=MESES.map(m=>gastosTodos.filter(g=>g.mes===m).reduce((a,g)=>a+g.monto,0));
     const utilMes=MESES.map((_,i)=>ingMes[i]-gasMes[i]);
     // Este mes vs anterior
@@ -3460,7 +3428,37 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
     const ticketProm=conMonto.length?ingAnio/conMonto.length:0;
     const margen=ingAnio>0?((ingAnio-gasAnio)/ingAnio*100):0;
     const rutasActivas=rutas.filter(r=>r.status==="En curso"||r.status==="Programada").length;
-    return{ingMes,gasMes,utilMes,ingActual,ingPrev,crecimiento,cxc,cxcVencida,aging,sinMonto,topCli,catList,ingAnio,gasAnio,ticketProm,margen,nFacturas:fAnio.length,rutasActivas,nVencidas:vencidas.length};
+
+    // Rentabilidad por operador y por unidad (F3+). Ingreso: cada factura reparte
+    // su subtotal entre los servicios de su bitácora; "ELIAS/ISRAEL" divide entre
+    // ambos. Costo: viáticos (operador/unidad ligados en F1) + gastos de chofer.
+    const opMap={}, uniMap={};
+    const addR=(map,key,field,val)=>{
+      const k=String(key||"").trim().toUpperCase();
+      if(!k||k==="—")return;
+      if(!map[k])map[k]={ingresos:0,costos:0,servicios:0};
+      map[k][field]+=val;
+    };
+    fAnio.forEach(f=>{
+      const servs=f.bitacoraServicios||[];
+      if(!servs.length)return;
+      const share=(Number(f.subtotal||f.monto)||0)/servs.length;
+      servs.forEach(s=>{
+        const chs=String(s.chofer||"").split("/").map(x=>x.trim()).filter(x=>x&&x!=="—");
+        chs.forEach(c=>{addR(opMap,c,"ingresos",share/chs.length);addR(opMap,c,"servicios",1/chs.length);});
+        if(s.unidad&&String(s.unidad).trim()!=="—"){addR(uniMap,s.unidad,"ingresos",share);addR(uniMap,s.unidad,"servicios",1);}
+      });
+    });
+    gastosTodos.forEach(g=>{
+      const chs=String(g.operador||"").split("/").map(x=>x.trim()).filter(x=>x&&x!=="—");
+      chs.forEach(c=>addR(opMap,c,"costos",g.monto/chs.length));
+      if(g.unidad)addR(uniMap,g.unidad,"costos",g.monto);
+    });
+    const mkTop=(map)=>Object.entries(map).map(([k,v])=>({nombre:k,...v,margen:v.ingresos-v.costos}))
+      .filter(o=>o.ingresos>0||o.costos>0).sort((a,b)=>b.ingresos-a.ingresos).slice(0,8);
+    const topOperadores=mkTop(opMap), topUnidades=mkTop(uniMap);
+
+    return{ingMes,gasMes,utilMes,ingActual,ingPrev,crecimiento,cxc,cxcVencida,aging,sinMonto,topCli,catList,ingAnio,gasAnio,ticketProm,margen,nFacturas:fAnio.length,rutasActivas,nVencidas:vencidas.length,topOperadores,topUnidades};
   },[facts,viat,gastosCh,rutas]);
 
   const maxIng=Math.max(...kpi.ingMes,...kpi.gasMes,1);
@@ -3568,6 +3566,35 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
           })}
           {kpi.catList.length===0&&<div style={{color:MUTED,fontSize:12}}>Sin gastos registrados este año</div>}
         </div>
+      </div>
+
+      {/* Fila 5: rentabilidad por operador y por unidad */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:14,marginTop:14}}>
+        {[["Rentabilidad por operador · "+ANIO,kpi.topOperadores,"👤"],["Rentabilidad por unidad · "+ANIO,kpi.topUnidades,"🚚"]].map(([titulo,lista,emoji])=>(
+          <div key={titulo} style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+            <div style={{fontWeight:800,fontSize:14,marginBottom:4,fontFamily:DISP}}>{emoji} {titulo}</div>
+            <div style={{fontSize:11,color:MUTED,marginBottom:12}}>Ingreso atribuido por bitácora · costo por gastos ligados</div>
+            {lista.length===0&&<div style={{color:MUTED,fontSize:12}}>Aún sin datos atribuibles — captura montos en facturas y liga gastos a operador/unidad</div>}
+            {lista.map((o)=>{
+              const max=lista[0]?.ingresos||lista[0]?.costos||1;
+              const margenPct=o.ingresos>0?(o.margen/o.ingresos*100):null;
+              return(<div key={o.nombre} style={{marginBottom:11}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:12,marginBottom:3}}>
+                  <span style={{fontWeight:700}}>{o.nombre} <span style={{color:MUTED,fontWeight:400}}>· {Math.round(o.servicios)} serv.</span></span>
+                  <span style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontFamily:MONO,fontWeight:700,color:GREEN}}>{fmt(o.ingresos)}</span>
+                    <span style={{fontFamily:MONO,fontSize:11,color:ROSE}}>-{fmt(o.costos)}</span>
+                    {margenPct!=null&&<span style={{background:(margenPct>=25?GREEN:margenPct>=0?AMBER:ROSE)+"16",color:margenPct>=25?GREEN:margenPct>=0?AMBER:ROSE,borderRadius:6,padding:"1px 7px",fontSize:10.5,fontWeight:800}}>{margenPct.toFixed(0)}%</span>}
+                  </span>
+                </div>
+                <div style={{display:"flex",gap:3}}>
+                  <div style={{flex:1}}><MiniBar pct={(o.ingresos/max)*100} color={GREEN} h={5}/></div>
+                  <div style={{flex:1}}><MiniBar pct={(o.costos/max)*100} color={ROSE} h={5}/></div>
+                </div>
+              </div>);
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );

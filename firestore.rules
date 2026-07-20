@@ -39,12 +39,44 @@ service cloud.firestore {
       allow create: if request.auth != null && request.auth.uid == uid;
     }
 
+    // ── Protección anti-borrado en colecciones financieras (F0.5 parcial) ──
+    // Crear/editar sigue abierto a cualquier sesión autenticada (la oficina aún
+    // opera con auth anónima), pero BORRAR registros financieros exige que el
+    // uid de la sesión tenga perfil admin en dmov_usuarios (sesión Google real).
+    // Esto frena la destrucción masiva de datos desde sesiones anónimas.
+    function esAdmin() {
+      return exists(/databases/$(database)/documents/dmov_usuarios/$(request.auth.uid))
+        && get(/databases/$(database)/documents/dmov_usuarios/$(request.auth.uid)).data.rol == "admin";
+    }
+    match /facturas/{id} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null && esAdmin();
+    }
+    match /pagos/{id} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null && esAdmin();
+    }
+    match /pagosProveedores/{id} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null && esAdmin();
+    }
+    match /presupuestos/{id} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null && esAdmin();
+    }
+    match /cuentas/{id} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null && esAdmin();
+    }
+    match /viaticos/{id} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if request.auth != null && esAdmin();
+    }
+
     // Todo lo demás requiere Firebase Auth
     // (Google para oficina, Anónimo para choferes)
-    // NOTA F0: sigue siendo demasiado permisivo — cualquier sesión anónima puede
-    // leer/escribir datos financieros. El RBAC real requiere migrar la oficina a
-    // Google Sign-In con custom claims (ver EVOLUCION-THE-MOVIMIENTO.md §7).
-    // No se endurece aquí todavía porque rompería producción sin ese cambio de auth.
+    // NOTA F0: crear/editar sigue permisivo — el RBAC completo requiere migrar
+    // la oficina entera a Google Sign-In (ver EVOLUCION-THE-MOVIMIENTO.md §7).
     match /{document=**} {
       allow read, write: if request.auth != null;
     }
