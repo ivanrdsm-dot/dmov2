@@ -13545,8 +13545,10 @@ export default function App(){
   const [authUser,setAuthUser]=useState(undefined);
   useEffect(()=>{
     const unsub=onAuthStateChanged(auth,u=>{
-      if(u){setAuthUser(u);}
-      else{signInAnonymously(auth).then(r=>setAuthUser(r.user)).catch(()=>setAuthUser(null));}
+      // RBAC: el panel de oficina YA NO cae a sesión anónima — exige Google.
+      // (La app de chofer y el tracking público viven en componentes aparte:
+      // el chofer hace su propia auth anónima y el tracking usa reglas públicas.)
+      setAuthUser(u||null);
     });
     return()=>unsub();
   },[]);
@@ -13571,10 +13573,51 @@ export default function App(){
 
   // 2b. Perfiles de usuarios (todos) — para el picker de selección
   const [userProfile,setUserProfile]=useState(null); // perfil seleccionado actualmente
+
+  /* ── RBAC: resolución automática de perfil por uid de Google ──────────────
+     Reemplaza al selector de perfiles: tu cuenta Google ES tu identidad.
+     - Perfil con doc id == uid Google → entra (con PIN si lo tiene).
+     - Sin doc: se intenta CLAIM por email (migra perfiles creados a mano,
+       p.ej. Ilse, al uid real de Google — el perfil viejo queda para limpieza).
+     - Sin match: se auto-crea INACTIVO → pantalla "pendiente de aprobación"
+       hasta que un admin lo active en Usuarios & Roles. */
+  const [pendingProfile,setPendingProfile]=useState(null);
+  const [pinPending,setPinPending]=useState(null);
+  useEffect(()=>{
+    if(!authUser||authUser.isAnonymous||userProfile) return;
+    let cancel=false;
+    (async()=>{
+      try{
+        const ref=doc(db,"dmov_usuarios",authUser.uid);
+        let snap=await getDoc(ref);
+        let perfil=snap.exists()?{id:snap.id,uid:authUser.uid,...snap.data()}:null;
+        if(!perfil&&authUser.email){
+          const q=await getDocs(query(collection(db,"dmov_usuarios"),where("email","==",authUser.email)));
+          const viejo=q.docs.find(d=>d.id!==authUser.uid&&!d.data().migradoA);
+          if(viejo){
+            const vd=viejo.data();
+            await setDoc(ref,{...vd,uid:authUser.uid,email:authUser.email,pin:null,migradoDe:viejo.id,createdAt:vd.createdAt||serverTimestamp()});
+            snap=await getDoc(ref);
+            perfil={id:snap.id,uid:authUser.uid,...snap.data()};
+          }
+        }
+        if(!perfil){
+          await setDoc(ref,{uid:authUser.uid,nombre:authUser.displayName||authUser.email||"Usuario",email:authUser.email||"",rol:"operaciones",activo:false,createdAt:serverTimestamp()});
+          const s2=await getDoc(ref);
+          perfil={id:s2.id,uid:authUser.uid,...s2.data()};
+        }
+        if(cancel) return;
+        if(perfil.activo===false) setPendingProfile(perfil);
+        else if(perfil.pin) setPinPending(perfil);
+        else setUserProfile(perfil);
+      }catch(e){console.warn("resolución de perfil:",e.code||e.message);}
+    })();
+    return()=>{cancel=true;};
+  },[authUser?.uid,userProfile]);
   const [allProfiles,setAllProfiles]=useState([]);
   const [profileLoading,setProfileLoading]=useState(true);
   useEffect(()=>{
-    if(!authUser){setProfileLoading(false);return;}
+    if(!authUser||authUser.isAnonymous){setProfileLoading(false);return;}
     const unsub=onSnapshot(collection(db,"dmov_usuarios"),s=>{
       const list=s.docs
         .map(d=>({id:d.id,...d.data()}))
@@ -13595,7 +13638,7 @@ export default function App(){
 
   // 4. Firestore listeners — SOLO cuando hay usuario autenticado
   useEffect(()=>{
-    if(!authUser) return; // sin auth, no configurar listeners
+    if(!authUser||authUser.isAnonymous) return; // panel = solo sesión Google (RBAC)
     const onErr=()=>{}; // silencia errores de permisos
     // limit(N) = válvula de seguridad: hoy ninguna colección se acerca al tope,
     // pero sin límite el costo de lectura y memoria crecen sin techo con la
@@ -13647,9 +13690,37 @@ export default function App(){
     </div></>
   );
 
-  // Selector de perfil (si no hay perfil activo)
+  // RBAC: sin sesión Google (o sesión anónima heredada) → pantalla de login Google
+  if(!authUser||authUser.isAnonymous){
+    return <><style>{CSS}</style><LoginScreen/></>;
+  }
+  // Cuenta nueva sin aprobar
+  if(pendingProfile&&!userProfile){
+    return <><style>{CSS}</style>
+      <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#0f2040)",display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+        <div style={{background:"#fff",borderRadius:22,padding:"38px 32px",maxWidth:400,textAlign:"center"}}>
+          <div style={{fontSize:44,marginBottom:12}}>⏳</div>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:20,marginBottom:8}}>Cuenta pendiente de aprobación</div>
+          <div style={{fontSize:13,color:MUTED,lineHeight:1.6,marginBottom:6}}>Hola <strong>{pendingProfile.nombre||pendingProfile.email}</strong>. Tu acceso fue registrado pero un administrador debe activarlo en <strong>Usuarios &amp; Roles</strong>.</div>
+          <div style={{fontSize:12,color:MUTED,marginBottom:20}}>Avísale a Iván o Erika para que te activen.</div>
+          <button onClick={async()=>{await fbSignOut(auth).catch(()=>{});setPendingProfile(null);}} className="btn" style={{padding:"11px 22px",borderRadius:11,border:"1.5px solid "+BD2,background:"#fff",fontWeight:700,fontSize:13}}>Salir</button>
+        </div>
+      </div></>;
+  }
+  // Perfil con contraseña personal → segunda capa
+  if(pinPending&&!userProfile){
+    return <><style>{CSS}</style><PinScreen userProfile={pinPending} onVerified={()=>{setUserProfile(pinPending);setPinPending(null);}} onBack={async()=>{await fbSignOut(auth).catch(()=>{});setPinPending(null);}}/></>;
+  }
+  // Resolviendo perfil
   if(!userProfile){
-    return <><style>{CSS}</style><ProfilePickerScreen profiles={allProfiles} onSelect={setUserProfile}/></>;
+    return <><style>{CSS}</style>
+      <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#0f2040)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{width:60,height:60,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Truck size={28} color="#fff"/></div>
+          <div style={{fontFamily:DISP,fontWeight:900,fontSize:20,color:"#fff"}}>DMvimiento</div>
+          <div style={{fontSize:12,color:"#ffffff50",marginTop:6}}>Verificando tu perfil…</div>
+        </div>
+      </div></>;
   }
 
   const rol=userProfile?.rol||"admin";
@@ -13692,7 +13763,7 @@ export default function App(){
         <SOSGlobalBanner onGo={()=>setView("alertas")}/>
         <div style={{display:"flex",minHeight:"100vh",background:"#f1f4fb",color:TEXT,fontFamily:SANS}}>
           {sidebarOpen&&<div className="mobile-backdrop" onClick={()=>setSidebarOpen(false)}/>}
-          <Sidebar view={view} setView={v=>{setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen} userProfile={userProfile} rol={rol} onLogout={()=>{setUserProfile(null);setView("dashboard");}}/>
+          <Sidebar view={view} setView={v=>{setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen} userProfile={userProfile} rol={rol} onLogout={async()=>{await fbSignOut(auth).catch(()=>{});setUserProfile(null);setPinPending(null);setPendingProfile(null);setView("dashboard");}}/>
           <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
             <TopBar view={view} setView={setView} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} setSearchOpen={setSearchOpen}/>
             <main style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>

@@ -2,83 +2,95 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Tracking público — clientes ven su ruta sin login
+    /* ═══ RBAC v3 ══════════════════════════════════════════════════════════
+       - OFICINA = sesión Google (no anónima) con perfil activo en dmov_usuarios.
+       - CHOFER  = sesión anónima de la PWA /chofer: solo colecciones operativas.
+       - PÚBLICO = tracking /track/:id sin login: rutas y GPS en solo lectura.
+       Lo financiero queda cerrado a oficina; borrar, solo admin. */
+
+    function noAnon() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+    function tienePerfil() {
+      return exists(/databases/$(database)/documents/dmov_usuarios/$(request.auth.uid));
+    }
+    function perfil() {
+      return get(/databases/$(database)/documents/dmov_usuarios/$(request.auth.uid)).data;
+    }
+    function esOficina() {
+      return noAnon() && tienePerfil() && perfil().activo == true;
+    }
+    function esAdmin() {
+      return esOficina() && perfil().rol == "admin";
+    }
+
+    /* ── Público (tracking del cliente) ── */
     match /rutas/{rutaId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      allow read: if true;                        // /track/:id sin login
+      allow update: if request.auth != null;      // chofer avanza paradas/evidencia
+      allow create: if esOficina();
+      allow delete: if esAdmin();
     }
-
-    // Ubicación del chofer en vivo — el tracking público /track/:id la lee
     match /driverLocations/{choferId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      allow read: if true;                        // mapa del cliente en vivo
+      allow write: if request.auth != null;       // GPS del chofer (anónimo)
     }
 
-    // Alertas — colección canónica unificada (F0). El panel autenticado la lee;
-    // los choferes (auth anónima) escriben SOS/geofence aquí.
-    match /alertas/{alertId} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+    /* ── Operativas del chofer (auth anónima permitida) ── */
+    match /choferes/{id} {
+      allow read: if request.auth != null;        // login por tel+código
+      allow update: if request.auth != null;      // chofer actualiza su status/rutaActiva
+      allow create: if esOficina();
+      allow delete: if esAdmin();
     }
-
-    // Colección legacy "alerts" (inglés) — migrada a "alertas" en F0.
-    // Escritura bloqueada para que nada nuevo caiga aquí por error.
-    match /alerts/{alertId} {
-      allow read: if request.auth != null;
+    match /gastosChofer/{id} {
+      allow read, create: if request.auth != null;
+      allow update: if esOficina();               // aprobar/rechazar
+      allow delete: if esAdmin();
+    }
+    match /jornadas/{id} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if esAdmin();
+    }
+    match /mensajes/{id} {
+      allow read, create, update: if request.auth != null;
+      allow delete: if esAdmin();
+    }
+    match /alertas/{id} {
+      allow create: if request.auth != null;      // SOS/geofence del chofer
+      allow read, update: if esOficina();
+      allow delete: if esAdmin();
+    }
+    match /alerts/{id} {                          // legacy migrada — congelada
+      allow read: if esOficina();
       allow write: if false;
     }
 
-    // Perfiles de usuario RBAC — solo el propio usuario o un admin puede escribir
+    /* ── Perfiles RBAC ── */
     match /dmov_usuarios/{uid} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (
-        request.auth.uid == uid ||
-        get(/databases/$(database)/documents/dmov_usuarios/$(request.auth.uid)).data.rol == "admin"
-      );
-      // Permitir create propio perfil (primer login — no hay doc aún)
-      allow create: if request.auth != null && request.auth.uid == uid;
+      allow read: if noAnon();                    // resolución + claim por email
+      allow create: if noAnon() && request.auth.uid == uid;
+      allow update, delete: if noAnon() && (request.auth.uid == uid || esAdmin());
     }
 
-    // ── Protección anti-borrado en colecciones financieras (F0.5 parcial) ──
-    // Crear/editar sigue abierto a cualquier sesión autenticada (la oficina aún
-    // opera con auth anónima), pero BORRAR registros financieros exige que el
-    // uid de la sesión tenga perfil admin en dmov_usuarios (sesión Google real).
-    // Esto frena la destrucción masiva de datos desde sesiones anónimas.
-    function esAdmin() {
-      return exists(/databases/$(database)/documents/dmov_usuarios/$(request.auth.uid))
-        && get(/databases/$(database)/documents/dmov_usuarios/$(request.auth.uid)).data.rol == "admin";
-    }
-    match /facturas/{id} {
-      allow read, create, update: if request.auth != null;
-      allow delete: if request.auth != null && esAdmin();
-    }
-    match /pagos/{id} {
-      allow read, create, update: if request.auth != null;
-      allow delete: if request.auth != null && esAdmin();
-    }
-    match /pagosProveedores/{id} {
-      allow read, create, update: if request.auth != null;
-      allow delete: if request.auth != null && esAdmin();
-    }
-    match /presupuestos/{id} {
-      allow read, create, update: if request.auth != null;
-      allow delete: if request.auth != null && esAdmin();
-    }
-    match /cuentas/{id} {
-      allow read, create, update: if request.auth != null;
-      allow delete: if request.auth != null && esAdmin();
-    }
-    match /viaticos/{id} {
-      allow read, create, update: if request.auth != null;
-      allow delete: if request.auth != null && esAdmin();
-    }
+    /* ── Financieras: SOLO oficina; borrar SOLO admin ── */
+    match /facturas/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /pagos/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /pagosProveedores/{id}  { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /presupuestos/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /cotizaciones/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /cuentas/{id}           { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /viaticos/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /prospeccion/{id}       { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /proyectos/{id}         { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /plantillasCotizador/{id}{ allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /unidades/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /entregas/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
 
-    // Todo lo demás requiere Firebase Auth
-    // (Google para oficina, Anónimo para choferes)
-    // NOTA F0: crear/editar sigue permisivo — el RBAC completo requiere migrar
-    // la oficina entera a Google Sign-In (ver EVOLUCION-THE-MOVIMIENTO.md §7).
+    /* ── Default seguro: lo no listado, solo admin ── */
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if esAdmin();
     }
   }
 }

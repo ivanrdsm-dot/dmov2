@@ -57,3 +57,17 @@ financieros (el login por perfil+PIN es cosmético — solo visual). El arreglo 
 Está especificado en `EVOLUCION-THE-MOVIMIENTO.md` §7 Fase 0. Dame luz verde cuando
 quieras y lo implemento — es el único punto de F0 que no se puede hacer sin tocar el
 flujo de login en producción.
+
+---
+
+## 5. NUEVO (RBAC v3) · Service account para el backup diario (2 min) — URGENTE
+
+Las reglas v3 bloquean la lectura anónima de datos financieros (correcto), pero eso
+también bloquea el **backup diario automatizado**. Para restaurarlo:
+
+1. Entra a https://console.firebase.google.com/project/salesflow-crm-13c4a/settings/serviceaccounts/adminsdk
+2. Click **"Generate new private key"** → descarga el JSON
+3. Guárdalo EXACTAMENTE como: `SISTEMA DMOV/serviceAccount.json`
+4. Listo — el job de las 21:30 vuelve a funcionar solo (ya está en .gitignore, no se sube al repo)
+
+⚠️ Hasta que hagas esto, NO HAY BACKUP DIARIO. El último backup completo es del día del deploy de RBAC.
