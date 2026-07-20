@@ -3608,6 +3608,137 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
    vía pagosComoCostos y getCategoria — mismo motor que Reportes). Motor puro
    en domain.js (buildEstadoResultados, generarAnalisisCFO) con 14 tests.
    ═══════════════════════════════════════════════════════════════════════════ */
+/* ─── KIT DE GRÁFICOS INTERACTIVOS (Portal Financiero) ─────────────────────
+   SVG a mano, sin librerías. Paleta validada CVD (validate_palette.js):
+   ingresos #2563eb · costos #d97706 · ΔE deutan 32.3 — el par verde/rojo
+   clásico FALLA para daltónicos (ΔE 5.8) y se evita en series.
+   Interacción tipo Power BI: hover con tooltip + clic = cross-filter. */
+const CH_ING="#2563eb", CH_COS="#d97706";
+
+function ChartTip({tip}){
+  if(!tip) return null;
+  return(
+    <div style={{position:"absolute",left:Math.min(tip.x+12,tip.maxX||9999),top:tip.y-8,transform:"translateY(-100%)",background:TEXT,color:"#fff",borderRadius:9,padding:"8px 11px",fontSize:11.5,pointerEvents:"none",zIndex:20,boxShadow:"0 6px 20px rgba(12,24,41,.35)",whiteSpace:"nowrap"}}>
+      <div style={{fontWeight:800,marginBottom:tip.rows?.length?4:0,fontFamily:MONO,fontSize:10.5,letterSpacing:"0.05em"}}>{tip.titulo}</div>
+      {(tip.rows||[]).map((r,i)=>(
+        <div key={i} style={{display:"flex",alignItems:"center",gap:6,lineHeight:1.7}}>
+          {r.c&&<span style={{width:8,height:8,borderRadius:2,background:r.c,display:"inline-block"}}/>}
+          <span style={{opacity:.85}}>{r.l}</span>
+          <span style={{fontFamily:MONO,fontWeight:700,marginLeft:"auto",paddingLeft:10}}>{r.v}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Barras agrupadas mensuales (2 series) — clic en mes = cross-filter */
+function ChartBarrasMensual({serie,selDesde,selHasta,onMes}){
+  const [tip,setTip]=useState(null);
+  const W=720,H=210,PAD_L=8,PAD_B=22,PAD_T=8;
+  const max=Math.max(...serie.map(d=>Math.max(d.ingresos,d.costos)),1);
+  const bw=(W-PAD_L)/serie.length;
+  const y=(v)=>PAD_T+(H-PAD_B-PAD_T)*(1-v/max);
+  const F=(n)=>"$"+Math.round(n).toLocaleString("es-MX");
+  const iD=serie.findIndex(d=>d.mes===selDesde), iH=serie.findIndex(d=>d.mes===selHasta);
+  return(
+    <div style={{position:"relative"}}>
+      <div style={{display:"flex",gap:14,marginBottom:6,fontSize:11.5,color:TEXT}}>
+        <span><span style={{display:"inline-block",width:10,height:10,background:CH_ING,borderRadius:3,marginRight:5}}/>Ingresos (sin IVA)</span>
+        <span><span style={{display:"inline-block",width:10,height:10,background:CH_COS,borderRadius:3,marginRight:5}}/>Costos totales</span>
+        <span style={{marginLeft:"auto",color:MUTED,fontSize:10.5}}>clic en un mes = filtrar</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",display:"block"}}>
+        {[0.25,0.5,0.75,1].map(t=>(
+          <line key={t} x1={PAD_L} x2={W} y1={y(max*t)} y2={y(max*t)} stroke={BORDER} strokeWidth="1"/>
+        ))}
+        {serie.map((d,i)=>{
+          const x0=PAD_L+i*bw, grupo=bw*0.62, b=(grupo-2)/2, gx=x0+(bw-grupo)/2;
+          const sel=i>=Math.min(iD,iH)&&i<=Math.max(iD,iH);
+          return(
+            <g key={d.mes} style={{cursor:"pointer"}}
+               onClick={()=>onMes(d.mes)}
+               onMouseMove={(e)=>{const r=e.currentTarget.ownerSVGElement.getBoundingClientRect();setTip({x:(e.clientX-r.left),y:(e.clientY-r.top),maxX:r.width-160,titulo:d.mes+" "+d.anio,rows:[{c:CH_ING,l:"Ingresos",v:F(d.ingresos)},{c:CH_COS,l:"Costos",v:F(d.costos)},{l:"Utilidad",v:F(d.ingresos-d.costos)},{l:"Margen",v:d.ingresos>0?((d.ingresos-d.costos)/d.ingresos*100).toFixed(1)+"%":"—"}]});}}
+               onMouseLeave={()=>setTip(null)}>
+              <rect x={x0} y={PAD_T} width={bw} height={H-PAD_B-PAD_T} fill={sel?TEXT+"08":"transparent"}/>
+              <rect x={gx} y={y(d.ingresos)} width={b} height={Math.max(2,H-PAD_B-y(d.ingresos))} rx="4" fill={CH_ING}/>
+              <rect x={gx+b+2} y={y(d.costos)} width={b} height={Math.max(2,H-PAD_B-y(d.costos))} rx="4" fill={CH_COS}/>
+              <text x={x0+bw/2} y={H-6} textAnchor="middle" fontSize="10" fontWeight={sel?800:500} fill={sel?TEXT:MUTED} fontFamily="JetBrains Mono, monospace">{d.mes}</text>
+            </g>
+          );
+        })}
+      </svg>
+      <ChartTip tip={tip}/>
+    </div>
+  );
+}
+
+/* Línea de margen bruto % — crosshair + clic = filtrar mes */
+function ChartLineaMargen({serie,onMes}){
+  const [tip,setTip]=useState(null);
+  const W=720,H=150,PAD_L=8,PAD_B=20,PAD_T=10;
+  const vals=serie.map(d=>d.margen).filter(v=>v!=null);
+  const maxV=Math.max(30,...vals.map(v=>Math.ceil(v/10)*10));
+  const minV=Math.min(0,...vals);
+  const bw=(W-PAD_L)/serie.length;
+  const y=(v)=>PAD_T+(H-PAD_B-PAD_T)*(1-(v-minV)/(maxV-minV||1));
+  const pts=serie.map((d,i)=>d.margen==null?null:[PAD_L+i*bw+bw/2,y(d.margen)]).filter(Boolean);
+  const path=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+","+p[1].toFixed(1)).join(" ");
+  return(
+    <div style={{position:"relative"}}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",display:"block"}}>
+        {[15,30].map(v=>v<=maxV&&(
+          <g key={v}>
+            <line x1={PAD_L} x2={W} y1={y(v)} y2={y(v)} stroke={v===15?AMBER+"55":GREEN+"45"} strokeWidth="1" strokeDasharray="4 4"/>
+            <text x={W-4} y={y(v)-3} textAnchor="end" fontSize="9" fill={MUTED} fontFamily="JetBrains Mono, monospace">{v}%</text>
+          </g>
+        ))}
+        <line x1={PAD_L} x2={W} y1={y(0)} y2={y(0)} stroke={BORDER} strokeWidth="1"/>
+        <path d={path} fill="none" stroke={VIOLET} strokeWidth="2" strokeLinejoin="round"/>
+        {serie.map((d,i)=>d.margen!=null&&(
+          <g key={d.mes} style={{cursor:"pointer"}} onClick={()=>onMes(d.mes)}
+             onMouseMove={(e)=>{const r=e.currentTarget.ownerSVGElement.getBoundingClientRect();setTip({x:e.clientX-r.left,y:e.clientY-r.top,maxX:r.width-140,titulo:d.mes,rows:[{c:VIOLET,l:"Margen bruto",v:d.margen.toFixed(1)+"%"}]});}}
+             onMouseLeave={()=>setTip(null)}>
+            <rect x={PAD_L+i*bw} y={PAD_T} width={bw} height={H-PAD_B-PAD_T} fill="transparent"/>
+            <circle cx={PAD_L+i*bw+bw/2} cy={y(d.margen)} r="4.5" fill="#fff" stroke={VIOLET} strokeWidth="2"/>
+            <text x={PAD_L+i*bw+bw/2} y={H-5} textAnchor="middle" fontSize="10" fill={MUTED} fontFamily="JetBrains Mono, monospace">{d.mes}</text>
+          </g>
+        ))}
+      </svg>
+      <ChartTip tip={tip}/>
+    </div>
+  );
+}
+
+/* Barras horizontales interactivas — magnitud de una serie, clic = acción */
+function ChartBarrasH({items,color,onItem,selId,notaClic}){
+  const [tip,setTip]=useState(null);
+  const max=Math.max(...items.map(i=>i.valor),1);
+  const F=(n)=>"$"+Math.round(n).toLocaleString("es-MX");
+  return(
+    <div style={{position:"relative"}}>
+      {items.map((it)=>{
+        const sel=selId!=null&&it.id===selId;
+        return(
+          <div key={it.id} onClick={()=>onItem&&onItem(it)}
+            onMouseMove={(e)=>{const r=e.currentTarget.parentElement.getBoundingClientRect();setTip({x:e.clientX-r.left,y:e.clientY-r.top,maxX:r.width-150,titulo:it.label,rows:[{c:color,l:it.subL||"Total",v:F(it.valor)},...(it.extra||[])]});}}
+            onMouseLeave={()=>setTip(null)}
+            style={{padding:"5px 6px",borderRadius:8,cursor:onItem?"pointer":"default",background:sel?color+"12":"transparent",outline:sel?"1.5px solid "+color+"70":"none",marginBottom:2}}>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11.5,marginBottom:3}}>
+              <span style={{fontWeight:sel?800:600,color:TEXT}}>{it.label}</span>
+              <span style={{fontFamily:MONO,fontWeight:700,color:TEXT}}>{F(it.valor)}</span>
+            </div>
+            <div style={{height:7,background:BORDER+"70",borderRadius:4,overflow:"hidden"}}>
+              <div style={{width:Math.max(1.5,it.valor/max*100)+"%",height:"100%",background:color,borderRadius:4,transition:"width .25s"}}/>
+            </div>
+          </div>
+        );
+      })}
+      {notaClic&&<div style={{fontSize:10,color:MUTED,marginTop:6}}>{notaClic}</div>}
+      <ChartTip tip={tip}/>
+    </div>
+  );
+}
+
 function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const ANIO=new Date().getFullYear();
@@ -3700,8 +3831,28 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
       periodoLabel:(desde===hasta?desde:desde+"–"+hasta)+" "+ANIO+(clienteF!=="todos"?" · "+(topClientes.find(c=>c.id===clienteF)?.nombre||clienteF):""),
       topClientes,carteraVencida,ventasMesProm,sinCaptura,topProveedores,topOperadores,mesesConDatos:nMeses});
 
-    return {er,erPrev,topClientes,topProveedores,provFrecuente,topOperadores,topUnidades,analisis,peso,nMeses,ingTotales};
+    // Serie mensual completa (12 meses) para los gráficos interactivos.
+    // Respeta el filtro de cliente: ingresos exactos del cliente por mes,
+    // costos prorrateados por su peso global (método revelado en UI).
+    const serie=MESES.map(m=>{
+      const fM=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(ANIO));
+      const fMC=clienteF==="todos"?fM:fM.filter(f=>(f.clienteId||normEmpresa(f.empresa||f.cliente))===clienteF);
+      const ing=fMC.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
+      const cos=viatAll.filter(v=>v.mes===m&&String(v.anio||"")===String(ANIO)).reduce((a,v)=>a+(Number(v.monto)||0),0)*peso;
+      return {mes:m,anio:ANIO,ingresos:ing,costos:cos,margen:ing>0?(ing-cos)/ing*100:null};
+    });
+
+    // Drill-down: renglones de costo por bucket dentro del periodo filtrado
+    const bucketRows={};
+    viatAll.filter(v=>enRango(v.mes,v.anio)).forEach(v=>{
+      const b=getCategoria(v.concepto||"");
+      (bucketRows[b]=bucketRows[b]||[]).push({concepto:v.concepto||v.tipo||"—",mes:v.mes,monto:(Number(v.monto)||0)*peso});
+    });
+    Object.values(bucketRows).forEach(a=>a.sort((x,y)=>y.monto-x.monto));
+
+    return {er,erPrev,topClientes,topProveedores,provFrecuente,topOperadores,topUnidades,analisis,peso,nMeses,ingTotales,serie,bucketRows};
   },[facts,viat,pagosProv,desde,hasta,clienteF]);
+  const [drillBucket,setDrillBucket]=useState(null);
 
   const {er}=data;
   const F=(n)=>(n<0?"−$":"$")+Math.abs(Math.round(n)).toLocaleString("es-MX");
@@ -3731,7 +3882,29 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
 
       {clienteF!=="todos"&&<div style={{background:BLUE+"0d",border:"1px solid "+BLUE+"30",borderRadius:11,padding:"9px 14px",fontSize:12,color:TEXT,marginBottom:14}}>
         📌 Vista por cliente: los costos se <strong>prorratean por peso de ingreso</strong> ({(data.peso*100).toFixed(1)}%) — la atribución directa de costos por cliente llegará cuando los gastos se liguen a ruta/cliente.
+        <button onClick={()=>setClienteF("todos")} style={{marginLeft:10,background:"none",border:"none",color:BLUE,fontWeight:800,cursor:"pointer",fontSize:12}}>✕ quitar filtro</button>
       </div>}
+
+      {/* ══ GRÁFICOS INTERACTIVOS ══ */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(400px,1fr))",gap:16,marginBottom:16}}>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:14,marginBottom:10}}>Ingresos vs Costos · {ANIO}{clienteF!=="todos"?" (cliente filtrado)":""}</div>
+          <ChartBarrasMensual serie={data.serie} selDesde={desde} selHasta={hasta} onMes={(m)=>{setDesde(m);setHasta(m);}}/>
+        </div>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:14,marginBottom:2}}>Margen bruto mensual</div>
+          <div style={{fontSize:10.5,color:MUTED,marginBottom:8}}>Bandas de referencia sector logístico: 15% (mínimo sano) · 30% (excelente)</div>
+          <ChartLineaMargen serie={data.serie} onMes={(m)=>{setDesde(m);setHasta(m);}}/>
+        </div>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:14,marginBottom:10}}>Costos por categoría · {desde===hasta?desde:desde+"–"+hasta}</div>
+          <ChartBarrasH color={CH_COS}
+            items={Object.entries({...er.costosDirectos.detalle,...er.gastosOperativos.detalle,...(er.impuestos.total?{Fiscal:er.impuestos.total}:{}),...(er.financieros.total?{Bancario:er.financieros.total}:{})})
+              .sort((a,b)=>b[1]-a[1]).map(([b,v])=>({id:b,label:b,valor:v,subL:"Gasto",extra:[{l:"Renglones",v:String((data.bucketRows[b]||[]).length)}]}))}
+            onItem={(it)=>setDrillBucket(it.id)}
+            notaClic="clic en una categoría = ver el detalle de sus movimientos"/>
+        </div>
+      </div>
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(380px,1fr))",gap:16}}>
         {/* ══ ESTADO DE RESULTADOS ══ */}
@@ -3774,17 +3947,12 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
       {/* ══ INDICADORES EJECUTIVOS ══ */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14,marginTop:16}}>
         <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
-          <div style={{fontWeight:800,fontSize:14,marginBottom:10,fontFamily:DISP}}>💼 Ventas y margen por cliente</div>
-          {data.topClientes.slice(0,7).map((c,i)=>(
-            <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:i<6?"1px solid "+BORDER:"none",fontSize:12}}>
-              <span style={{fontWeight:700}}>{c.nombre}<span style={{color:MUTED,fontWeight:400}}> · {c.pctIngresos.toFixed(0)}%</span></span>
-              <span style={{display:"flex",gap:10,fontFamily:MONO,fontWeight:700}}>
-                <span>{F(c.total)}</span>
-                <span style={{color:c.margenProrrateado>=0?GREEN:ROSE,fontSize:11}}>{F(c.margenProrrateado)}*</span>
-              </span>
-            </div>
-          ))}
-          <div style={{fontSize:10,color:MUTED,marginTop:8}}>* margen bruto con costos directos prorrateados por peso de ingreso</div>
+          <div style={{fontWeight:800,fontSize:14,marginBottom:10,fontFamily:DISP}}>💼 Ventas por cliente</div>
+          <ChartBarrasH color={CH_ING} selId={clienteF==="todos"?null:clienteF}
+            items={data.topClientes.slice(0,8).map(c=>({id:c.id,label:c.nombre,valor:c.total,subL:"Ventas",
+              extra:[{l:"% del ingreso",v:c.pctIngresos.toFixed(0)+"%"},{l:"Facturas",v:String(c.n)},{l:"Margen prorr.*",v:F(c.margenProrrateado)}]}))}
+            onItem={(it)=>setClienteF(clienteF===it.id?"todos":it.id)}
+            notaClic="clic en un cliente = filtrar TODO el portal (otro clic lo quita) · * margen con costos prorrateados"/>
         </div>
         <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
           <div style={{fontWeight:800,fontSize:14,marginBottom:10,fontFamily:DISP}}>🏭 Proveedores del periodo</div>
@@ -3812,6 +3980,33 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
           {data.topOperadores.length===0&&<div style={{color:MUTED,fontSize:12}}>Captura montos en facturas para atribuir ingreso por operador</div>}
         </div>
       </div>
+
+      {/* ══ DRILL-DOWN: detalle de una categoría de costo ══ */}
+      {drillBucket&&<Modal title={"Detalle de costos · "+drillBucket} onClose={()=>setDrillBucket(null)} icon={Search} iconColor={AMBER} wide>
+        <div style={{maxHeight:420,overflowY:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+            <thead><tr style={{borderBottom:"2px solid "+TEXT}}>
+              <th style={{textAlign:"left",padding:"6px 8px",fontFamily:MONO,fontSize:10.5,color:MUTED}}>MES</th>
+              <th style={{textAlign:"left",padding:"6px 8px",fontFamily:MONO,fontSize:10.5,color:MUTED}}>CONCEPTO</th>
+              <th style={{textAlign:"right",padding:"6px 8px",fontFamily:MONO,fontSize:10.5,color:MUTED}}>MONTO</th>
+            </tr></thead>
+            <tbody>
+              {(data.bucketRows[drillBucket]||[]).map((r,i)=>(
+                <tr key={i} style={{borderBottom:"1px solid "+BORDER}}>
+                  <td style={{padding:"6px 8px",fontFamily:MONO,fontSize:11,color:MUTED,whiteSpace:"nowrap"}}>{r.mes}</td>
+                  <td style={{padding:"6px 8px"}}>{String(r.concepto).replace(drillBucket+" — ","")}</td>
+                  <td style={{padding:"6px 8px",textAlign:"right",fontFamily:MONO,fontWeight:700}}>{F(r.monto)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot><tr style={{borderTop:"2px solid "+TEXT}}>
+              <td colSpan={2} style={{padding:"8px",fontWeight:800}}>Total {drillBucket} · {(data.bucketRows[drillBucket]||[]).length} movimientos</td>
+              <td style={{padding:"8px",textAlign:"right",fontFamily:MONO,fontWeight:800}}>{F((data.bucketRows[drillBucket]||[]).reduce((a,r)=>a+r.monto,0))}</td>
+            </tr></tfoot>
+          </table>
+          {data.peso<1&&<div style={{fontSize:10.5,color:MUTED,marginTop:8}}>Montos prorrateados al {(data.peso*100).toFixed(1)}% por el filtro de cliente activo.</div>}
+        </div>
+      </Modal>}
     </div>
   );
 }
