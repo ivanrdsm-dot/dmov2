@@ -21,9 +21,9 @@ import {
   Phone, Camera, LogOut, Play, Square, Radio, Flag,
   CreditCard, Paperclip, History,
 } from "lucide-react";
-import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO } from "./domain.js";
-import mapboxgl from "mapbox-gl";
-import "mapbox-gl/dist/mapbox-gl.css";
+import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO } from "./domain";
+/* mapbox-gl (1.77MB) es LAZY: ver ensureMapbox()/useMapboxReady() más abajo.
+   Ninguna de las 3 apps lo paga en el primer paint; carga al montar un mapa. */
 /* ─── CODE-SPLITTING (F5): librerías pesadas bajo demanda ──────────────────
    xlsx-js-style (~627KB) + jspdf/autotable/html2canvas (~600KB) salen del
    bundle inicial: el CHOFER y el TRACKING PÚBLICO nunca las descargan; la
@@ -112,8 +112,35 @@ async function uploadEvidencia(file){
 // El token anterior hardcodeado fue revocado; si no configuras uno nuevo, las búsquedas
 // de direcciones mostrarán un aviso en pantalla en lugar de fallar en silencio.
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN || "";
-if(MAPBOX_TOKEN) mapboxgl.accessToken = MAPBOX_TOKEN;
 const MX_CENTER = [-99.1332, 19.4326]; // CDMX default
+
+/* ─── MAPBOX LAZY (F5): 1.77MB fuera del bundle inicial ────────────────────
+   mapboxgl vive como variable de módulo poblada por import() dinámico. Los 5
+   componentes con mapa usan useMapboxReady(): el efecto que crea el mapa se
+   re-dispara cuando la librería llega. El geocoding usa fetch (no la lib). */
+let mapboxgl=null;
+let _mapboxPromise=null;
+function ensureMapbox(){
+  if(!_mapboxPromise){
+    _mapboxPromise=Promise.all([
+      import("mapbox-gl"),
+      import("mapbox-gl/dist/mapbox-gl.css"),
+    ]).then(([m])=>{
+      mapboxgl=m.default||m;
+      if(MAPBOX_TOKEN) mapboxgl.accessToken=MAPBOX_TOKEN;
+    }).catch(e=>{_mapboxPromise=null;throw e;});
+  }
+  return _mapboxPromise;
+}
+function useMapboxReady(){
+  const [ready,setReady]=useState(!!mapboxgl);
+  useEffect(()=>{
+    let dead=false;
+    ensureMapbox().then(()=>{if(!dead)setReady(true);}).catch(()=>{});
+    return()=>{dead=true;};
+  },[]);
+  return ready;
+}
 
 /* Bboxes de zonas metropolitanas mexicanas [minLng,minLat,maxLng,maxLat]
    Incluyen área metropolitana completa, no solo el municipio central.
@@ -3059,8 +3086,9 @@ function LocationPicker({onClose,onSelect,initialQuery="",proximity=null,bbox=nu
   if(!sessionTokRef.current) sessionTokRef.current=(crypto?.randomUUID?.()||Date.now().toString(36));
 
   // Inicializa el mapa
+  const mbReady=useMapboxReady();
   useEffect(()=>{
-    if(!MAPBOX_TOKEN||!mapCont.current||mapRef.current) return;
+    if(!MAPBOX_TOKEN||!mbReady||!mapCont.current||mapRef.current) return;
     const center = proximity||(bbox?[(bbox[0]+bbox[2])/2,(bbox[1]+bbox[3])/2]:MX_CENTER);
     const m = new mapboxgl.Map({
       container: mapCont.current,
@@ -3083,7 +3111,7 @@ function LocationPicker({onClose,onSelect,initialQuery="",proximity=null,bbox=nu
     m.on("load",()=>setMapReady(true));
     mapRef.current=m;
     return()=>{try{m.remove();}catch(e){}mapRef.current=null;};
-  },[]);
+  },[mbReady]);
 
   // Debounced suggest
   useEffect(()=>{
@@ -4102,7 +4130,24 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const rutasProg=rutas.filter(r=>r.status==="Programada").length;
   const rutasComp=rutas.filter(r=>r.status==="Completada").length;
   const pctEnt=entregas.length>0?Math.round(entregados/entregas.length*100):0;
-  const healthScore=Math.round((pctCob*.4)+(pctEnt*.3)+(rutas.length>0?(rutasComp/rutas.length*100*.3):30));
+  /* Health Score v2 — recalibrado:
+     La fórmula anterior medía la colección `entregas` (módulo sin uso, siempre
+     vacío) y clavaba 0/30 puntos eternos: el score salía ~51 con un negocio sano.
+     Ahora: entregas REALES desde rutas.stopsStatus (app del chofer), y los
+     componentes sin datos se RENORMALIZAN (ni castigan ni regalan). */
+  const entregasPlan=rutas.filter(r=>r.status!=="Cancelada")
+    .reduce((a,r)=>a+((r.stops||[]).filter(s=>!s.isOrigin).length),0);
+  const entregasHechas=rutas.reduce((a,r)=>a+((r.stopsStatus||[]).filter(s=>s&&s.status==="entregado").length),0);
+  const pctEntReal=entregasPlan>0?Math.min(100,Math.round(entregasHechas/entregasPlan*100)):(entregas.length>0?pctEnt:null);
+  const pctRutas=rutas.length>0?Math.round(rutasComp/rutas.length*100):null;
+  const scoreComps=[
+    {l:"Cobranza",v:pctCob,w:40},
+    {l:"Entregas",v:pctEntReal,w:30},
+    {l:"Rutas completadas",v:pctRutas,w:30},
+  ].filter(c=>c.v!=null);
+  const scoreW=scoreComps.reduce((a,c)=>a+c.w,0)||1;
+  const healthScore=Math.round(scoreComps.reduce((a,c)=>a+c.v*c.w,0)/scoreW);
+  const healthDetalle=scoreComps.map(c=>`${c.l}: ${c.v}% (peso ${c.w})`).join("  ·  ");
   const healthColor=healthScore>=70?GREEN:healthScore>=40?AMBER:ROSE;
   // Top clients
   const topClients=useMemo(()=>{
@@ -4145,7 +4190,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div className="ch" style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"10px 16px",display:"flex",alignItems:"center",gap:8,cursor:"default"}}>
               <div style={{width:36,height:36,borderRadius:10,background:healthColor+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Shield size={16} color={healthColor}/></div>
-              <div><div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em"}}>Health Score</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:healthColor,lineHeight:1}}>{healthScore}</div></div>
+              <div title={healthDetalle}><div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em"}}>Health Score</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:healthColor,lineHeight:1}}>{healthScore}</div><div style={{fontSize:8.5,color:MUTED,marginTop:2,whiteSpace:"nowrap"}}>{scoreComps.map(c=>c.l.split(" ")[0]+" "+c.v+"%").join(" · ")}</div></div>
             </div>
           </div>
         </div>
@@ -5667,8 +5712,9 @@ function RouteMapPreview({stops,height=280}){
     return arr;
   },[stops]);
 
+  const mbReady=useMapboxReady();
   useEffect(()=>{
-    if(!MAPBOX_TOKEN||!mapCont.current||mapRef.current)return;
+    if(!MAPBOX_TOKEN||!mbReady||!mapCont.current||mapRef.current)return;
     mapRef.current = new mapboxgl.Map({
       container:mapCont.current,
       style:"mapbox://styles/mapbox/streets-v12",
@@ -5677,7 +5723,7 @@ function RouteMapPreview({stops,height=280}){
     });
     mapRef.current.addControl(new mapboxgl.NavigationControl(),"top-right");
     return()=>{mapRef.current?.remove();mapRef.current=null;};
-  },[]);
+  },[mbReady]);
 
   useEffect(()=>{
     if(!mapRef.current) return;
@@ -10131,8 +10177,9 @@ function LiveTracking(){
   },[]);
 
   // Init mapbox
+  const mbReady=useMapboxReady();
   useEffect(()=>{
-    if(!MAPBOX_TOKEN){return;}
+    if(!MAPBOX_TOKEN||!mbReady){return;}
     if(mapRef.current||!mapCont.current)return;
     mapRef.current = new mapboxgl.Map({
       container:mapCont.current,
@@ -10148,7 +10195,7 @@ function LiveTracking(){
       mapRef.current.addLayer({id:"route-line-layer",type:"line",source:"route-line",paint:{"line-color":BLUE,"line-width":5,"line-opacity":.95,"line-dasharray":[0.5,1.5]}});
     });
     return()=>{mapRef.current?.remove();mapRef.current=null;};
-  },[]);
+  },[mbReady]);
 
   // Render driver markers with rotation (heading)
   useEffect(()=>{
@@ -11733,8 +11780,9 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
   };
 
   // Mini mapa con GPS
+  const mbReady=useMapboxReady();
   useEffect(()=>{
-    if(!MAPBOX_TOKEN||!miniMapContRef.current||miniMapRef.current) return;
+    if(!MAPBOX_TOKEN||!mbReady||!miniMapContRef.current||miniMapRef.current) return;
     const center = myLoc?[myLoc.lng,myLoc.lat]:MX_CENTER;
     const m = new mapboxgl.Map({
       container: miniMapContRef.current,
@@ -11764,7 +11812,7 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
       if(!bnds.isEmpty()) m.fitBounds(bnds,{padding:50,maxZoom:14,duration:0});
     });
     return()=>{try{m.remove();}catch(e){}miniMapRef.current=null;};
-  },[]);
+  },[mbReady]);
 
   // Update user marker
   useEffect(()=>{
@@ -12106,8 +12154,9 @@ function ClientTracking({trackingId}){
   },[ruta?.choferId]);
 
   // Init map
+  const mbReady=useMapboxReady();
   useEffect(()=>{
-    if(!MAPBOX_TOKEN||!mapCont.current||mapRef.current||!ruta)return;
+    if(!MAPBOX_TOKEN||!mbReady||!mapCont.current||mapRef.current||!ruta)return;
     mapRef.current = new mapboxgl.Map({
       container:mapCont.current,
       style:"mapbox://styles/mapbox/streets-v12",
@@ -12122,7 +12171,7 @@ function ClientTracking({trackingId}){
       mapRef.current.addLayer({id:"live-route-layer",type:"line",source:"live-route",paint:{"line-color":BLUE,"line-width":5,"line-opacity":1}});
     });
     return()=>{mapRef.current?.remove();mapRef.current=null;};
-  },[ruta]);
+  },[ruta,mbReady]);
 
   // Paint stops
   useEffect(()=>{

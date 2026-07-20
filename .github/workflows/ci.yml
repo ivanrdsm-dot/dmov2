@@ -1,0 +1,40 @@
+# DMOV · CI — cada push a main valida el motor de negocio y el build
+# antes de que nadie deploye a producción con algo roto.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Typecheck (motor de negocio domain.ts)
+        run: npm run typecheck
+
+      - name: Tests (36 — política de negocio protegida)
+        run: npm test
+
+      - name: Build de producción
+        run: npm run build
+
+      - name: Verificar grafo inicial (mapbox/xlsx/pdf deben ser lazy)
+        run: |
+          if grep -E 'modulepreload[^>]*(mapbox|xlsx|jspdf|pdf)' dist/index.html; then
+            echo "::error::Una librería pesada volvió al grafo estático (modulepreload)"
+            exit 1
+          fi
+          echo "✓ Librerías pesadas siguen lazy"

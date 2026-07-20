@@ -5,7 +5,7 @@ import {
   KM_DIA, COMIDA, HOTEL, IVA_RATE,
   diasRuta, calcViaticos, calcFlota, calcTotales, genTrackingId, hashPin,
   PL_CLASIFICACION, etapaDeBucket, buildEstadoResultados, generarAnalisisCFO,
-} from "./domain.js";
+} from "./domain";
 
 describe("diasRuta", () => {
   it("sin km no hay ruta", () => {
