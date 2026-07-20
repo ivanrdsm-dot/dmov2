@@ -11,8 +11,9 @@ export default defineConfig({
           "chunk-react":    ["react", "react-dom"],
           "chunk-firebase": ["firebase/app", "firebase/firestore", "firebase/auth"],
           "chunk-mapbox":   ["mapbox-gl"],
-          "chunk-xlsx":     ["xlsx-js-style"],
-          "chunk-pdf":      ["jspdf", "jspdf-autotable"],
+          // xlsx-js-style y jspdf/autotable NO van aquí: se cargan con import()
+          // dinámico (ensureOfficeLibs) y listarlos en manualChunks los regresa
+          // al grafo estático (modulepreload) — Rollup los auto-divide solo.
           "chunk-lucide":   ["lucide-react"],
         },
       },

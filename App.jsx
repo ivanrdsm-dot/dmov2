@@ -24,9 +24,28 @@ import {
 import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO } from "./domain.js";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import XLSX from "xlsx-js-style";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+/* ─── CODE-SPLITTING (F5): librerías pesadas bajo demanda ──────────────────
+   xlsx-js-style (~627KB) + jspdf/autotable/html2canvas (~600KB) salen del
+   bundle inicial: el CHOFER y el TRACKING PÚBLICO nunca las descargan; la
+   oficina las precarga en segundo plano al entrar al panel (ver useEffect
+   en App raíz). Todo entry point que las use hace `await ensureOfficeLibs()`
+   primero; los builders internos usan las variables de módulo ya pobladas. */
+let XLSX=null, jsPDF=null, autoTable=null;
+let _officeLibsPromise=null;
+function ensureOfficeLibs(){
+  if(!_officeLibsPromise){
+    _officeLibsPromise=Promise.all([
+      import("xlsx-js-style"),
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]).then(([x,p,a])=>{
+      XLSX=x.default||x;
+      jsPDF=p.jsPDF||p.default;
+      autoTable=a.default||a;
+    }).catch(e=>{_officeLibsPromise=null;throw e;});
+  }
+  return _officeLibsPromise;
+}
 
 /* ─── FIREBASE ───────────────────────────────────────────────────────────── */
 const firebaseConfig = {
@@ -1432,7 +1451,8 @@ function pdfLabelValue(pdf,x,y,label,value){
   pdf.text(String(value||"—"),x,y+5);
 }
 
-function downloadCotizacionPDF(q){
+async function downloadCotizacionPDF(q){
+  await ensureOfficeLibs();
   const pdf = new jsPDF({unit:"mm",format:"a4"});
   pdfHeader(pdf,"COTIZACIÓN",q.folio,q.modoLabel||q.modo||"");
   pdfLabelValue(pdf,14,56,"Cliente / Empresa",q.cliente);
@@ -1479,7 +1499,8 @@ function downloadCotizacionPDF(q){
   pdf.save("Cotizacion_"+slug(q.folio||q.cliente)+".pdf");
 }
 
-function downloadFacturaPDF(f){
+async function downloadFacturaPDF(f){
+  await ensureOfficeLibs();
   const pdf = new jsPDF({unit:"mm",format:"a4"});
   const st  = f.status||"Pendiente";
   pdfHeader(pdf,"FACTURA",f.folio,st.toUpperCase());
@@ -1518,7 +1539,8 @@ function downloadFacturaPDF(f){
   pdf.save("Factura_"+slug(f.folio||f.empresa)+".pdf");
 }
 
-function downloadRutaPDF(r){
+async function downloadRutaPDF(r){
+  await ensureOfficeLibs();
   const pdf = new jsPDF({unit:"mm",format:"a4"});
   pdfHeader(pdf,"RUTA",r.folio||r.id,r.status||"Programada");
   pdfLabelValue(pdf,14,56,"Nombre de ruta",r.nombre);
@@ -1560,7 +1582,8 @@ function downloadRutaPDF(r){
   pdf.save("Ruta_"+slug(r.nombre||r.folio)+".pdf");
 }
 
-function downloadPresupuestoPDF(p){
+async function downloadPresupuestoPDF(p){
+  await ensureOfficeLibs();
   const pdf = new jsPDF({unit:"mm",format:"a4"});
   pdfHeader(pdf,"PRESUPUESTO",p.folio,(p.status||"Borrador").toUpperCase());
   pdfLabelValue(pdf,14,56,"Cliente",p.cliente);
@@ -1600,7 +1623,8 @@ function downloadPresupuestoPDF(p){
   pdf.save("Presupuesto_"+slug(p.folio||p.cliente)+".pdf");
 }
 
-function exportXLSX(rows, filename, sheetName="Datos"){
+async function exportXLSX(rows, filename, sheetName="Datos"){
+  await ensureOfficeLibs();
   if(!rows || rows.length===0){ alert("No hay datos para exportar"); return; }
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
@@ -2239,7 +2263,8 @@ function buildSolicitudWs(factura){
 }
 
 // Descarga una sola factura como XLSX individual
-function downloadSolicitudFacturaXLSX(factura){
+async function downloadSolicitudFacturaXLSX(factura){
+  await ensureOfficeLibs();
   const result = buildSolicitudWs(factura);
   if(!result){
     alert("Cliente no identificado. Asegúrate de que la factura tenga una empresa conocida.");
@@ -2252,7 +2277,8 @@ function downloadSolicitudFacturaXLSX(factura){
 }
 
 // Descarga TODAS las facturas del arreglo en un solo XLSX con una pestaña por factura
-function downloadTodasSolicitudesXLSX(facts, mesLabel){
+async function downloadTodasSolicitudesXLSX(facts, mesLabel){
+  await ensureOfficeLibs();
   if(!facts||facts.length===0){alert("No hay facturas para exportar.");return;}
   const wb = XLSX.utils.book_new();
   const usedNames = new Set();
@@ -2289,7 +2315,8 @@ function downloadTodasSolicitudesXLSX(facts, mesLabel){
 }
 
 /* ── Exportar cotización del Cotizador a Excel ── */
-function exportCotizadorXLSX({modo,cliente,notas,ciudades,veh,total,vehLabel,fecha}){
+async function exportCotizadorXLSX({modo,cliente,notas,ciudades,veh,total,vehLabel,fecha}){
+  await ensureOfficeLibs();
   const wb = XLSX.utils.book_new();
   const ws = {};
   const s=(v,opts={})=>({v,...opts});
@@ -2346,7 +2373,8 @@ function exportCotizadorXLSX({modo,cliente,notas,ciudades,veh,total,vehLabel,fec
 // ═══════ REPORTE EJECUTIVO DE FACTURACIÓN — FORMATO OFICINA (Botmate-style) ═══════
 // Reemplaza el export anterior con el formato exacto que pide la oficina:
 // 3 hojas con formato profesional, colores, merges, subtotales por mes, chips de status.
-function exportFacturasXLSX(facts, mesFiltro){
+async function exportFacturasXLSX(facts, mesFiltro){
+  await ensureOfficeLibs();
   if(!facts || facts.length===0){alert("No hay facturas para exportar");return;}
   const BRAND = "DMVIMIENTO";
   const anio = new Date().getFullYear();
@@ -2380,11 +2408,13 @@ function exportFacturasXLSX(facts, mesFiltro){
 // ═══════ FIN exportFacturasXLSX (formato oficina) — código legacy eliminado ═══════
 
 // Alias para mantener compatibilidad
-function exportFinancierosXLSX(facts){
+async function exportFinancierosXLSX(facts){
+  await ensureOfficeLibs();
   exportFacturasXLSX(facts, null);
 }
 
-function exportRutasXLSX(rutas){
+async function exportRutasXLSX(rutas){
+  await ensureOfficeLibs();
   const rows = rutas.map(r=>({
     Nombre: r.nombre||"",
     Cliente: r.cliente||"",
@@ -2404,7 +2434,8 @@ function exportRutasXLSX(rutas){
   exportXLSX(rows,"Rutas_"+new Date().getFullYear()+".xlsx","Rutas");
 }
 
-function exportPresupuestosXLSX(list){
+async function exportPresupuestosXLSX(list){
+  await ensureOfficeLibs();
   const rows = list.map(p=>({
     Folio: p.folio||"",
     Cliente: p.cliente||"",
@@ -5359,7 +5390,8 @@ function ImportRutasModal({onClose,choferes,showT}){
   const [clienteGlobal,setClienteGlobal]=useState("");
   const [vehGlobal,setVehGlobal]=useState("cam");
 
-  const downloadTemplate = ()=>{
+  const downloadTemplate = async()=>{
+    await ensureOfficeLibs();
     const ws = XLSX.utils.aoa_to_sheet([
       ["ciudad","punto_nombre","direccion_completa","pdv","notas","cliente","fecha"],
       ["Acapulco","Walmart Costera","Av. Costera Miguel Alemán 123, Acapulco",1,"Entregar antes de 3pm","Cliente X","2026-05-10"],
@@ -5373,6 +5405,7 @@ function ImportRutasModal({onClose,choferes,showT}){
   };
 
   const parseFile = async(f)=>{
+    await ensureOfficeLibs();
     const reader = new FileReader();
     reader.onload = (e)=>{
       try{
@@ -6741,6 +6774,7 @@ function BitacoraImport({onClose,showT}){
   const [defaultIVA,setDefaultIVA]=useState(true);
 
   const handleFile = async(e)=>{
+    await ensureOfficeLibs();
     const f = e.target.files?.[0];
     if(!f) return;
     setFile(f);
@@ -7558,7 +7592,8 @@ function buildPLData(facts, viat, mesDesde, mesHasta, anio="2026"){
   });
 }
 
-function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
+async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
+  await ensureOfficeLibs();
   const pl   = buildPLData(facts, viat, mesDesde, mesHasta, anio);
   const tag  = mesDesde===mesHasta?mesDesde:`${mesDesde}-${mesHasta}`;
   const fecha= new Date().toISOString().slice(0,10);
@@ -7911,7 +7946,8 @@ function DonutChart({data,size=150,stroke=26,centerLabel,centerSub}){
 }
 
 /* ── PDF EJECUTIVO con gráficas (jsPDF vectorial) ────────────────────────── */
-function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
+async function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
+  await ensureOfficeLibs();
   const pl = buildPLData(facts, viat, mesDesde, mesHasta, anio);
   const tag = mesDesde===mesHasta?mesDesde:`${mesDesde}–${mesHasta}`;
   const fecha = new Date().toLocaleDateString("es-MX",{day:"numeric",month:"long",year:"numeric"});
@@ -8146,7 +8182,8 @@ function exportPagosCSV(rows,label){
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`DMOV_Pagos_${label}.csv`;a.click();URL.revokeObjectURL(a.href);
 }
 
-function exportPagosXLSX(rows,label){
+async function exportPagosXLSX(rows,label){
+  await ensureOfficeLibs();
   const wb=XLSX.utils.book_new();
   const H=["FECHA PAGO","FECHA FACTURA","NÚM. FACTURA","FOLIO","PROVEEDOR","RFC","CONCEPTO","CATEGORÍA","CLIENTE","PLAN","SUBTOTAL","IVA","RETENCIONES","TOTAL","MÉTODO","BANCO","REFERENCIA","ESTADO","PAGADO POR"];
   const data=[H,...rows.map(p=>[p.fechaPago||"",p.fechaFactura||"",p.numFactura||"",p.folio||"",p.proveedor||"",p.rfc||"",p.concepto||"",p.categoria||"",p.cargoCliente||"",p.cargoPlan||"",p.subtotal||0,p.iva||0,p.retenciones||0,p.total||0,p.metodoPago||"",p.banco||"",p.referencia||"",p.status||"",p.pagadoPor||""])];
@@ -8171,7 +8208,8 @@ function exportPagosXLSX(rows,label){
   XLSX.writeFile(wb,`DMOV_Pagos_${label}.xlsx`);
 }
 
-function exportPagosPDF(rows,label,filtrosDesc){
+async function exportPagosPDF(rows,label,filtrosDesc){
+  await ensureOfficeLibs();
   const doc=new jsPDF({unit:"mm",format:"a4",orientation:"landscape"});
   const money=v=>"$"+Math.round(v||0).toLocaleString("es-MX");
   doc.setFillColor(12,24,41);doc.rect(0,0,297,22,"F");
@@ -13614,6 +13652,13 @@ export default function App(){
     })();
     return()=>{cancel=true;};
   },[authUser?.uid,userProfile]);
+
+  // Code-splitting: precarga de librerías de oficina (Excel/PDF) en segundo
+  // plano una vez dentro del panel — para cuando alguien exporte, ya están.
+  // Chofer y tracking nunca pasan por aquí → nunca las descargan.
+  useEffect(()=>{
+    if(userProfile) ensureOfficeLibs().catch(()=>{});
+  },[userProfile?.uid]);
   const [allProfiles,setAllProfiles]=useState([]);
   const [profileLoading,setProfileLoading]=useState(true);
   useEffect(()=>{
