@@ -21,7 +21,7 @@ import {
   Phone, Camera, LogOut, Play, Square, Radio, Flag,
   CreditCard, Paperclip, History,
 } from "lucide-react";
-import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin } from "./domain.js";
+import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO } from "./domain.js";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import XLSX from "xlsx-js-style";
@@ -3245,6 +3245,7 @@ function getNavSections(rol){
     {section:"CORE",items:[
       {id:"dashboard",    label:"Dashboard",         icon:LayoutDashboard},
       {id:"ejecutivo",    label:"Dashboard Ejecutivo", icon:TrendingUp, badge:"★", adminOnly:true},
+      {id:"finanzas",     label:"Portal Financiero",  icon:BarChart2, badge:"CFO", adminOnly:true},
       {id:"cotizador",    label:"Cotizador Pro",     icon:DollarSign, badge:"★",  adminOnly:true},
       {id:"presupuestos", label:"Presupuestos",      icon:ClipboardList,           adminOnly:true},
       {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
@@ -3595,6 +3596,221 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
             })}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PORTAL FINANCIERO (CFO) — Estado de Resultados multi-etapa + indicadores
+   ejecutivos + análisis escrito automático. Consume EXCLUSIVAMENTE datos ya
+   capturados: facturas (ingresos), viáticos + pagos a proveedores (costos,
+   vía pagosComoCostos y getCategoria — mismo motor que Reportes). Motor puro
+   en domain.js (buildEstadoResultados, generarAnalisisCFO) con 14 tests.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
+  const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+  const ANIO=new Date().getFullYear();
+  const mesActualIdx=new Date().getMonth();
+  const [desde,setDesde]=useState("Ene");
+  const [hasta,setHasta]=useState(MESES[mesActualIdx]);
+  const [clienteF,setClienteF]=useState("todos");
+  const [pagosProv,setPagosProv]=useState([]);
+  useEffect(()=>onSnapshot(query(collection(db,"pagosProveedores"),limit(3000)),s=>setPagosProv(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
+
+  const data=useMemo(()=>{
+    const iD=MESES.indexOf(desde), iH=MESES.indexOf(hasta);
+    const rango=MESES.slice(Math.min(iD,iH),Math.max(iD,iH)+1);
+    const nMeses=rango.length;
+    const enRango=(m,a)=>rango.includes(m)&&String(a||"")===String(ANIO);
+
+    // INGRESOS: mismas exclusiones que buildPLData (conciliado con balanza)
+    const factsBase=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&enRango(f.mesOp||f.mes,f.anio));
+    const ingTotales=factsBase.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
+    const factsCli=clienteF==="todos"?factsBase:factsBase.filter(f=>(f.clienteId||normEmpresa(f.empresa||f.cliente))===clienteF);
+    const ingCliente=factsCli.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
+    const peso=clienteF==="todos"?1:(ingTotales>0?ingCliente/ingTotales:0);
+
+    // COSTOS: la prop viat ya llega COMBINADA desde la raíz (viatCombo =
+    // viáticos + pagosComoCostos sin enBalanza) — no volver a fusionar aquí.
+    const viatAll=viat;
+    const costosRows=viatAll.filter(v=>enRango(v.mes,v.anio))
+      .map(v=>({bucket:getCategoria(v.concepto||""),monto:(Number(v.monto)||0)*peso}));
+
+    const er=buildEstadoResultados({ingresos:factsCli.map(f=>({subtotal:Number(f.subtotal)||0})),costos:costosRows});
+
+    // Periodo anterior (misma longitud, inmediatamente antes) para variación
+    let erPrev=null;
+    const prevIni=Math.min(iD,iH)-nMeses;
+    if(prevIni>=0){
+      const rangoPrev=MESES.slice(prevIni,Math.min(iD,iH));
+      const fPrev=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&rangoPrev.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(ANIO));
+      const cPrev=viatAll.filter(v=>rangoPrev.includes(v.mes)&&String(v.anio||"")===String(ANIO))
+        .map(v=>({bucket:getCategoria(v.concepto||""),monto:(Number(v.monto)||0)*peso}));
+      erPrev=buildEstadoResultados({ingresos:fPrev.map(f=>({subtotal:Number(f.subtotal)||0})),costos:cPrev});
+    }
+
+    // Ventas por cliente (siempre sobre el total del periodo, sin filtro)
+    const porCli={};
+    factsBase.forEach(f=>{
+      const k=f.clienteId||normEmpresa(f.empresa||f.cliente);
+      if(!porCli[k])porCli[k]={id:k,nombre:f.solicitante||normEmpresa(f.empresa||f.cliente),total:0,n:0};
+      porCli[k].total+=Number(f.subtotal)||0;porCli[k].n++;
+    });
+    const topClientes=Object.values(porCli).sort((a,b)=>b.total-a.total)
+      .map(c=>({...c,pctIngresos:ingTotales>0?c.total/ingTotales*100:0,
+        margenProrrateado:c.total-(er.costosDirectos.total/(peso||1))*(ingTotales>0?c.total/ingTotales:0)}));
+
+    // Proveedores (gasto y frecuencia) del periodo
+    const porProv={};
+    pagosProv.filter(p=>enRango(p.mes,p.anio)).forEach(p=>{
+      const k=(p.proveedor||"Sin proveedor").trim();
+      if(!porProv[k])porProv[k]={proveedor:k,total:0,n:0};
+      porProv[k].total+=Number(p.subtotal)||0;porProv[k].n++;
+    });
+    const topProveedores=Object.values(porProv).sort((a,b)=>b.total-a.total).slice(0,8);
+    const provFrecuente=[...Object.values(porProv)].sort((a,b)=>b.n-a.n)[0];
+
+    // Operadores/unidades: ingreso atribuido por bitácora, costo por gastos ligados
+    const opMap={},uniMap={};
+    const addR=(map,key,field,val)=>{const k=String(key||"").trim().toUpperCase();if(!k||k==="—")return;if(!map[k])map[k]={ingresos:0,costos:0,servicios:0};map[k][field]+=val;};
+    factsBase.forEach(f=>{
+      const servs=f.bitacoraServicios||[];if(!servs.length)return;
+      const share=(Number(f.subtotal)||0)/servs.length;
+      servs.forEach(s=>{
+        const chs=String(s.chofer||"").split("/").map(x=>x.trim()).filter(x=>x&&x!=="—");
+        chs.forEach(c=>{addR(opMap,c,"ingresos",share/chs.length);addR(opMap,c,"servicios",1/chs.length);});
+        if(s.unidad&&String(s.unidad).trim()!=="—"){addR(uniMap,s.unidad,"ingresos",share);addR(uniMap,s.unidad,"servicios",1);}
+      });
+    });
+    viatAll.filter(v=>enRango(v.mes,v.anio)).forEach(v=>{
+      const chs=String(v.operador||"").split("/").map(x=>x.trim()).filter(x=>x&&x!=="—");
+      chs.forEach(c=>addR(opMap,c,"costos",(Number(v.monto)||0)/chs.length));
+      if(v.unidad)addR(uniMap,v.unidad,"costos",Number(v.monto)||0);
+    });
+    const mkTop=(m)=>Object.entries(m).map(([k,v])=>({nombre:k,...v,margen:v.ingresos-v.costos})).filter(o=>o.ingresos>0||o.costos>0).sort((a,b)=>b.ingresos-a.ingresos).slice(0,6);
+    const topOperadores=mkTop(opMap),topUnidades=mkTop(uniMap);
+
+    // Cartera y captura (global, no filtrada por cliente)
+    const carteraVencida=facts.filter(f=>f.status==="Vencida").reduce((a,f)=>a+(Number(f.total)||0),0);
+    const sinCaptura=factsBase.filter(f=>(Number(f.total)||0)===0).length;
+    const ventasMesProm=ingTotales/Math.max(1,nMeses);
+
+    const analisis=generarAnalisisCFO({er,erPrev,
+      periodoLabel:(desde===hasta?desde:desde+"–"+hasta)+" "+ANIO+(clienteF!=="todos"?" · "+(topClientes.find(c=>c.id===clienteF)?.nombre||clienteF):""),
+      topClientes,carteraVencida,ventasMesProm,sinCaptura,topProveedores,topOperadores,mesesConDatos:nMeses});
+
+    return {er,erPrev,topClientes,topProveedores,provFrecuente,topOperadores,topUnidades,analisis,peso,nMeses,ingTotales};
+  },[facts,viat,pagosProv,desde,hasta,clienteF]);
+
+  const {er}=data;
+  const F=(n)=>(n<0?"−$":"$")+Math.abs(Math.round(n)).toLocaleString("es-MX");
+  const pctTxt=(p)=>p==null?"—":p.toFixed(1)+"%";
+  const lineaER=(label,monto,pct,opts={})=>(
+    <div style={{display:"grid",gridTemplateColumns:"1fr 140px 70px",gap:8,padding:opts.total?"10px 14px":"6px 14px",background:opts.total?(monto>=0?GREEN:ROSE)+"0d":opts.sub?"transparent":"transparent",borderTop:opts.total?"2px solid "+(monto>=0?GREEN:ROSE)+"40":opts.head?"1px solid "+BORDER:"none",borderRadius:opts.total?10:0,alignItems:"center"}}>
+      <span style={{fontSize:opts.total?14:12.5,fontWeight:opts.total?800:opts.head?700:500,color:opts.sub?MUTED:TEXT,paddingLeft:opts.sub?16:0,fontFamily:opts.total?DISP:SANS}}>{label}</span>
+      <span style={{fontFamily:MONO,fontSize:opts.total?15:12.5,fontWeight:opts.total?800:600,textAlign:"right",color:opts.total?(monto>=0?GREEN:ROSE):opts.neg?ROSE:TEXT}}>{opts.neg?"("+F(monto).replace("−","")+")":F(monto)}</span>
+      <span style={{fontFamily:MONO,fontSize:11,textAlign:"right",color:MUTED}}>{pctTxt(pct)}</span>
+    </div>
+  );
+  const tipoChip={resumen:["#0f2040","RESUMEN"],riesgo:[ROSE,"RIESGO"],atencion:[AMBER,"ATENCIÓN"],fortaleza:[GREEN,"FORTALEZA"],ok:[BLUE,"DATO"],recomendaciones:[A,"ACCIONES"]};
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18,flexWrap:"wrap",gap:12}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Portal Financiero</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Estado de Resultados · indicadores ejecutivos · análisis CFO — todo desde datos ya capturados</p>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
+          <Sel label="Desde" options={MESES} value={desde} onChange={e=>setDesde(e.target.value)}/>
+          <Sel label="Hasta" options={MESES} value={hasta} onChange={e=>setHasta(e.target.value)}/>
+          <Sel label="Cliente" options={[{v:"todos",l:"Todos los clientes"},...data.topClientes.map(c=>({v:c.id,l:c.nombre}))]} value={clienteF} onChange={e=>setClienteF(e.target.value)}/>
+        </div>
+      </div>
+
+      {clienteF!=="todos"&&<div style={{background:BLUE+"0d",border:"1px solid "+BLUE+"30",borderRadius:11,padding:"9px 14px",fontSize:12,color:TEXT,marginBottom:14}}>
+        📌 Vista por cliente: los costos se <strong>prorratean por peso de ingreso</strong> ({(data.peso*100).toFixed(1)}%) — la atribución directa de costos por cliente llegará cuando los gastos se liguen a ruta/cliente.
+      </div>}
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(380px,1fr))",gap:16}}>
+        {/* ══ ESTADO DE RESULTADOS ══ */}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"20px 8px 14px"}}>
+          <div style={{padding:"0 14px 12px",borderBottom:"2px solid "+TEXT}}>
+            <div style={{fontFamily:DISP,fontWeight:800,fontSize:16}}>Estado de Resultados</div>
+            <div style={{fontSize:11,color:MUTED,fontFamily:MONO,marginTop:2}}>{desde===hasta?desde:desde+" – "+hasta} {ANIO} · cifras sin IVA · conciliado con balanza</div>
+          </div>
+          {lineaER("Ingresos por servicios",er.ventas,100,{head:true})}
+          {Object.entries(er.costosDirectos.detalle).sort((a,b)=>b[1]-a[1]).map(([k,v])=>lineaER(k,v,er.ventas>0?v/er.ventas*100:null,{sub:true,neg:true}))}
+          {lineaER("(−) Costos directos",er.costosDirectos.total,er.costosDirectos.pct,{neg:true,head:true})}
+          {lineaER("UTILIDAD BRUTA",er.utilidadBruta.total,er.utilidadBruta.pct,{total:true})}
+          {Object.entries(er.gastosOperativos.detalle).sort((a,b)=>b[1]-a[1]).map(([k,v])=>lineaER(k,v,er.ventas>0?v/er.ventas*100:null,{sub:true,neg:true}))}
+          {lineaER("(−) Gastos operativos",er.gastosOperativos.total,er.gastosOperativos.pct,{neg:true,head:true})}
+          {lineaER("EBITDA / UTILIDAD OPERATIVA",er.ebitda.total,er.ebitda.pct,{total:true})}
+          {lineaER("(−) Impuestos y derechos",er.impuestos.total,er.impuestos.pct,{neg:true})}
+          {lineaER("(−) Gastos financieros",er.financieros.total,er.financieros.pct,{neg:true})}
+          {lineaER("UTILIDAD NETA",er.utilidadNeta.total,er.utilidadNeta.pct,{total:true})}
+          <div style={{padding:"10px 14px 0",fontSize:10.5,color:MUTED,lineHeight:1.5}}>{er.notas.map((n,i)=><div key={i}>· {n}</div>)}</div>
+        </div>
+
+        {/* ══ ANÁLISIS DEL CFO ══ */}
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"20px 22px"}}>
+          <div style={{fontFamily:DISP,fontWeight:800,fontSize:16,marginBottom:4}}>Análisis financiero automático</div>
+          <div style={{fontSize:11,color:MUTED,marginBottom:14}}>Generado de los datos del periodo — determinístico y auditable</div>
+          <div style={{display:"flex",flexDirection:"column",gap:11}}>
+            {data.analisis.map((a,i)=>{
+              const [c,tag]=tipoChip[a.tipo]||[MUTED,a.tipo.toUpperCase()];
+              return(<div key={i} style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                <span style={{background:c+"14",color:c,borderRadius:6,padding:"2px 8px",fontSize:9.5,fontWeight:800,letterSpacing:"0.05em",flexShrink:0,marginTop:2}}>{tag}</span>
+                {a.lista
+                  ?<ul style={{margin:0,paddingLeft:16,fontSize:12.5,lineHeight:1.6}}>{a.lista.map((r,j)=><li key={j}>{r}</li>)}</ul>
+                  :<span style={{fontSize:12.5,lineHeight:1.55}}>{a.texto}</span>}
+              </div>);
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ══ INDICADORES EJECUTIVOS ══ */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14,marginTop:16}}>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+          <div style={{fontWeight:800,fontSize:14,marginBottom:10,fontFamily:DISP}}>💼 Ventas y margen por cliente</div>
+          {data.topClientes.slice(0,7).map((c,i)=>(
+            <div key={c.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:i<6?"1px solid "+BORDER:"none",fontSize:12}}>
+              <span style={{fontWeight:700}}>{c.nombre}<span style={{color:MUTED,fontWeight:400}}> · {c.pctIngresos.toFixed(0)}%</span></span>
+              <span style={{display:"flex",gap:10,fontFamily:MONO,fontWeight:700}}>
+                <span>{F(c.total)}</span>
+                <span style={{color:c.margenProrrateado>=0?GREEN:ROSE,fontSize:11}}>{F(c.margenProrrateado)}*</span>
+              </span>
+            </div>
+          ))}
+          <div style={{fontSize:10,color:MUTED,marginTop:8}}>* margen bruto con costos directos prorrateados por peso de ingreso</div>
+        </div>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+          <div style={{fontWeight:800,fontSize:14,marginBottom:10,fontFamily:DISP}}>🏭 Proveedores del periodo</div>
+          {data.topProveedores.slice(0,7).map((p,i)=>(
+            <div key={p.proveedor} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:i<6?"1px solid "+BORDER:"none",fontSize:12}}>
+              <span style={{fontWeight:700}}>{p.proveedor}<span style={{color:MUTED,fontWeight:400}}> · {p.n} pagos</span></span>
+              <span style={{fontFamily:MONO,fontWeight:700}}>{F(p.total)}</span>
+            </div>
+          ))}
+          {data.provFrecuente&&<div style={{fontSize:10.5,color:MUTED,marginTop:8}}>Más frecuente: <strong>{data.provFrecuente.proveedor}</strong> ({data.provFrecuente.n} pagos)</div>}
+          {data.topProveedores.length===0&&<div style={{color:MUTED,fontSize:12}}>Sin pagos a proveedores en el periodo</div>}
+        </div>
+        <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"18px 20px"}}>
+          <div style={{fontWeight:800,fontSize:14,marginBottom:10,fontFamily:DISP}}>👤 Margen por operador · 🚚 por unidad</div>
+          {[...data.topOperadores.slice(0,4).map(o=>({...o,tipo:"op"})),...data.topUnidades.slice(0,3).map(o=>({...o,tipo:"uni"}))].map((o,i,arr)=>(
+            <div key={o.tipo+o.nombre} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:i<arr.length-1?"1px solid "+BORDER:"none",fontSize:12}}>
+              <span style={{fontWeight:700}}>{o.tipo==="op"?"👤":"🚚"} {o.nombre}</span>
+              <span style={{display:"flex",gap:10,fontFamily:MONO,fontSize:11.5}}>
+                <span style={{color:GREEN}}>{F(o.ingresos)}</span>
+                <span style={{color:ROSE}}>−{F(o.costos).replace("$","$")}</span>
+                <span style={{fontWeight:800,color:o.margen>=0?GREEN:ROSE}}>{F(o.margen)}</span>
+              </span>
+            </div>
+          ))}
+          {data.topOperadores.length===0&&<div style={{color:MUTED,fontSize:12}}>Captura montos en facturas para atribuir ingreso por operador</div>}
+        </div>
       </div>
     </div>
   );
@@ -13253,6 +13469,7 @@ export default function App(){
   const VIEWS={
     dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     ejecutivo:isAdmin?<DashboardEjecutivo facts={facts} viat={viatCombo} gastosCh={gastosCh} rutas={rutas} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    finanzas:isAdmin?<PortalFinanciero facts={facts} viat={viatCombo} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
