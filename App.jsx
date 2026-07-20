@@ -2702,13 +2702,16 @@ function SignaturePad({onChange,height=160,background="#fff",color="#0c1829"}){
 
 function Modal({title,onClose,children,wide,icon:Icon,iconColor=A}){
   useEffect(()=>{const h=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[onClose]);
+  // a11y: foco entra al diálogo al abrir (lectores de pantalla + teclado)
+  const dlgRef=useRef(null);
+  useEffect(()=>{dlgRef.current?.focus();},[]);
   return(
     <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(12,24,41,.45)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
-      <div className="pi" style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:wide?760:490,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 32px 80px rgba(0,0,0,.22)"}}>
+      <div ref={dlgRef} role="dialog" aria-modal="true" aria-label={typeof title==="string"?title:"Diálogo"} tabIndex={-1} className="pi" style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:wide?760:490,maxHeight:"92vh",overflowY:"auto",boxShadow:"0 32px 80px rgba(0,0,0,.22)",outline:"none"}}>
         <div style={{display:"flex",alignItems:"center",gap:11,padding:"20px 24px",borderBottom:"1px solid "+BORDER,position:"sticky",top:0,background:"#fff",zIndex:10,borderRadius:"20px 20px 0 0"}}>
           {Icon&&<div style={{width:32,height:32,borderRadius:9,background:iconColor+"14",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Icon size={15} color={iconColor}/></div>}
           <span style={{fontFamily:DISP,fontWeight:700,fontSize:16,flex:1}}>{title}</span>
-          <button onClick={onClose} className="btn" style={{width:28,height:28,borderRadius:"50%",border:"1px solid "+BD2,display:"flex",alignItems:"center",justifyContent:"center",color:MUTED}}><X size={13}/></button>
+          <button onClick={onClose} aria-label="Cerrar diálogo" className="btn" style={{width:28,height:28,borderRadius:"50%",border:"1px solid "+BD2,display:"flex",alignItems:"center",justifyContent:"center",color:MUTED}}><X size={13}/></button>
         </div>
         <div style={{padding:"22px 24px"}}>{children}</div>
       </div>
@@ -3667,6 +3670,54 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
    vía pagosComoCostos y getCategoria — mismo motor que Reportes). Motor puro
    en domain.js (buildEstadoResultados, generarAnalisisCFO) con 14 tests.
    ═══════════════════════════════════════════════════════════════════════════ */
+/* ─── EXPORT: Estado de Resultados a XLSX (Portal Financiero) ──────────────
+   Una hoja con el ER multi-etapa + el análisis CFO escrito. Mismo sistema de
+   estilos que el resto de exports de oficina. */
+async function exportEstadoResultadosXLSX(er, analisis, periodoLabel){
+  await ensureOfficeLibs();
+  const ws={}; const merges=[]; let r=0;
+  const F0="#,##0.00";
+  const put=(a,v,s,f)=>setCell(ws,a,v,s,f);
+  const A1=(c,row)=>XLSX.utils.encode_cell({r:row,c});
+
+  put("A1",`ESTADO DE RESULTADOS — D EN MOVIMIENTO SA DE CV`,styleTitle); merges.push({s:{r:0,c:0},e:{r:0,c:3}}); r=1;
+  put("A2",`Periodo: ${periodoLabel} · cifras sin IVA · conciliado con balanza · generado ${new Date().toISOString().slice(0,10)}`,styleSubtitle); merges.push({s:{r:1,c:0},e:{r:1,c:3}}); r=2;
+  ["CONCEPTO","MONTO","% VS VENTAS",""].forEach((h,i)=>put(A1(i,r),h,styleColHeader)); r++;
+
+  const linea=(label,monto,pct,{bold=false,neg=false,total=false}={})=>{
+    put(A1(0,r),label,{font:{name:"Arial",sz:total?11:9,bold:bold||total},fill:total?{patternType:"solid",fgColor:{rgb:monto>=0?"D1FAE5":"FEE2E2"}}:undefined});
+    put(A1(1,r),neg?-Math.abs(monto):monto,{font:{name:"Arial",sz:total?11:9,bold:bold||total},alignment:{horizontal:"right"}},F0);
+    put(A1(2,r),pct==null?"—":pct/100,{font:{name:"Arial",sz:9},alignment:{horizontal:"right"}},pct==null?undefined:"0.0%");
+    r++;
+  };
+  linea("Ingresos por servicios",er.ventas,100,{bold:true});
+  Object.entries(er.costosDirectos.detalle).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>linea("    "+k,v,er.ventas>0?v/er.ventas*100:null,{neg:true}));
+  linea("(−) Costos directos",er.costosDirectos.total,er.costosDirectos.pct,{bold:true,neg:true});
+  linea("UTILIDAD BRUTA",er.utilidadBruta.total,er.utilidadBruta.pct,{total:true});
+  Object.entries(er.gastosOperativos.detalle).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>linea("    "+k,v,er.ventas>0?v/er.ventas*100:null,{neg:true}));
+  linea("(−) Gastos operativos",er.gastosOperativos.total,er.gastosOperativos.pct,{bold:true,neg:true});
+  linea("EBITDA / UTILIDAD OPERATIVA",er.ebitda.total,er.ebitda.pct,{total:true});
+  linea("(−) Impuestos y derechos",er.impuestos.total,er.impuestos.pct,{neg:true});
+  linea("(−) Gastos financieros",er.financieros.total,er.financieros.pct,{neg:true});
+  linea("UTILIDAD NETA",er.utilidadNeta.total,er.utilidadNeta.pct,{total:true});
+  r++;
+  er.notas.forEach(n=>{put(A1(0,r),"Nota: "+n,styleSubtitle);merges.push({s:{r,c:0},e:{r,c:3}});r++;});
+  r++;
+  put(A1(0,r),"ANÁLISIS DEL CFO (automático, determinístico)",styleColHeader);merges.push({s:{r,c:0},e:{r,c:3}});r++;
+  (analisis||[]).forEach(a=>{
+    const txt=a.lista?("ACCIONES: "+a.lista.join(" · ")):("["+a.tipo.toUpperCase()+"] "+a.texto);
+    put(A1(0,r),txt,{font:{name:"Arial",sz:9},alignment:{wrapText:true,vertical:"top"}});
+    merges.push({s:{r,c:0},e:{r,c:3}});r++;
+  });
+
+  ws["!ref"]="A1:D"+r;
+  ws["!merges"]=merges;
+  ws["!cols"]=[{wch:44},{wch:16},{wch:12},{wch:4}];
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Estado de Resultados");
+  XLSX.writeFile(wb,`DMOV_EstadoResultados_${periodoLabel.replace(/[^\w–-]+/g,"_")}.xlsx`);
+}
+
 /* ─── KIT DE GRÁFICOS INTERACTIVOS (Portal Financiero) ─────────────────────
    SVG a mano, sin librerías. Paleta validada CVD (validate_palette.js):
    ingresos #2563eb · costos #d97706 · ΔE deutan 32.3 — el par verde/rojo
@@ -3936,6 +3987,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
           <Sel label="Desde" options={MESES} value={desde} onChange={e=>setDesde(e.target.value)}/>
           <Sel label="Hasta" options={MESES} value={hasta} onChange={e=>setHasta(e.target.value)}/>
           <Sel label="Cliente" options={[{v:"todos",l:"Todos los clientes"},...data.topClientes.map(c=>({v:c.id,l:c.nombre}))]} value={clienteF} onChange={e=>setClienteF(e.target.value)}/>
+          <button onClick={()=>exportEstadoResultadosXLSX(data.er,data.analisis,(desde===hasta?desde:desde+"–"+hasta)+" "+ANIO)} className="btn" style={{display:"flex",alignItems:"center",gap:7,padding:"10px 16px",borderRadius:11,background:"linear-gradient(135deg,"+GREEN+",#10b981)",color:"#fff",fontWeight:800,fontSize:13,boxShadow:"0 4px 14px "+GREEN+"35"}}><Download size={14}/>Exportar ER (XLSX)</button>
         </div>
       </div>
 
@@ -9216,15 +9268,17 @@ function Viaticos(){
   const mesActual=MESES[new Date().getMonth()];
   const ANIO=new Date().getFullYear();
 
-  const empty={tipo:"comida",concepto:"",monto:"",operador:"",unidad:"",ruta:"",mes:mesActual,anio:ANIO,notas:""};
+  const empty={tipo:"comida",concepto:"",monto:"",operador:"",unidad:"",ruta:"",rutaId:"",clienteRuta:"",mes:mesActual,anio:ANIO,notas:""};
   const [form,setForm]=useState(empty);
   const sf=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
 
-  // F1: catálogos para ligar el gasto a chofer/unidad reales
+  // F1: catálogos para ligar el gasto a chofer/unidad/ruta reales
   const [choferesCat,setChoferesCat]=useState([]);
   const [unidadesCat,setUnidadesCat]=useState([]);
+  const [rutasCat,setRutasCat]=useState([]);
   useEffect(()=>onSnapshot(query(collection(db,"choferes"),limit(200)),s=>setChoferesCat(s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.status!=="Inactivo")),()=>{}),[]);
   useEffect(()=>onSnapshot(query(collection(db,"unidades"),limit(200)),s=>setUnidadesCat(s.docs.map(d=>({id:d.id,...d.data()})).filter(u=>u.status!=="Baja")),()=>{}),[]);
+  useEffect(()=>onSnapshot(query(collection(db,"rutas"),limit(300)),s=>setRutasCat(s.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status!=="Cancelada").sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,60)),()=>{}),[]);
 
   useEffect(()=>onSnapshot(collection(db,"viaticos"),s=>{
     setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
@@ -9414,7 +9468,19 @@ function Viaticos(){
               {unidadesCat.map(u=><option key={u.id} value={u.id}>{u.id}{u.tipo?" · "+u.tipo:""}</option>)}
             </select>
           </div>
-          <Inp label="Ruta / Proyecto" value={form.ruta} onChange={sf("ruta")} placeholder="Ej: CDMX-MTY, Proyecto Walmart…"/>
+          {/* F1: ruta como catálogo real → rutaId + clienteId heredado = atribución
+              directa de costo a ruta y cliente (adiós prorrateo cuando se capture así) */}
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,letterSpacing:"0.07em",textTransform:"uppercase"}}>Ruta / Proyecto</div>
+            <select value={form.rutaId||(form.ruta?"__libre__":"")} onChange={e=>{const v=e.target.value;
+              if(v==="__libre__"){const t=prompt("Ruta / proyecto (texto libre):",form.ruta||"");if(t!=null)setForm(f=>({...f,ruta:t,rutaId:"",rutaClienteId:""}));}
+              else{const r=rutasCat.find(x=>x.id===v);setForm(f=>({...f,rutaId:v,ruta:r?(r.nombre||""):"",clienteRuta:r?.cliente||""}));}
+            }} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14,cursor:"pointer"}}>
+              <option value="">— Sin ruta —</option>
+              {rutasCat.map(r=><option key={r.id} value={r.id}>{(r.nombre||"Ruta").slice(0,44)}{r.cliente?" · "+r.cliente:""}</option>)}
+              <option value="__libre__">Texto libre…{form.ruta&&!form.rutaId?" ("+form.ruta.slice(0,20)+")":""}</option>
+            </select>
+          </div>
           <div style={{gridColumn:"1/-1"}}><Txt label="Notas / Referencia del ticket" value={form.notas} onChange={sf("notas")} placeholder="Número de ticket, observaciones…"/></div>
           <button onClick={save} className="btn" style={{gridColumn:"1/-1",background:"linear-gradient(135deg,"+AMBER+",#f59e0b)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:"pointer"}}>
             Guardar gasto
@@ -13622,9 +13688,11 @@ function Usuarios(){
 export default function App(){
   const path = typeof window!=="undefined"?window.location.pathname:"";
   // Rutas públicas sin auth — deben estar antes de cualquier hook
-  if(path.startsWith("/chofer")) return <><style>{CSS}</style><ChoferApp/></>;
+  // ErrorBoundary también aquí: antes solo cubría el panel — un error de render
+  // dejaba al chofer en ruta (o al cliente rastreando) con pantalla blanca.
+  if(path.startsWith("/chofer")) return <><style>{CSS}</style><ErrorBoundary><ChoferApp/></ErrorBoundary></>;
   const trackMatch = path.match(/^\/track\/([A-Z0-9]+)/i);
-  if(trackMatch) return <><style>{CSS}</style><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></>;
+  if(trackMatch) return <><style>{CSS}</style><ErrorBoundary><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></ErrorBoundary></>;
 
   /* ── TODOS los hooks siempre se llaman en el mismo orden ── */
 
