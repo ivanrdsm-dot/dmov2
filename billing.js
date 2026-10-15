@@ -7,12 +7,13 @@ export function billingSnapshot(record) {
     record.sinPlan === true, text(record.cliente), text(record.servicio),
     (record.conceptos || []).map(c=>({desc:text(c.desc),cant:Number(c.cant)||0,precio:Number(c.precio)||0})), Number(record.subtotal), Number(record.ivaAmt), Number(record.total),
     text(record.approvalSource), text(record.approvalDate), text(record.periodoServicio),
+    text(record.solicitanteVerificado), text(record.cuentaProyecto),
   ]);
 }
 
 export function billingFields(record) {
   return {
-    _clienteId: record._clienteId || "", plan: record.plan || "", periodoServicio: record.periodoServicio || "",
+    _clienteId: record._clienteId || "", solicitanteVerificado: record.solicitanteVerificado || "", cuentaProyecto: record.cuentaProyecto || "", plan: record.plan || "", periodoServicio: record.periodoServicio || "",
     planOverride: record.planOverride ?? "", sinPlan: record.sinPlan === true,
     billingConfirmed: record.billingConfirmed === true,
     approvalSource: record.approvalSource || "", approvalDate: record.approvalDate || "",
@@ -27,6 +28,8 @@ export function resolveBilling(record, catalog) {
     throw new Error("La empresa no coincide con el cliente/proyecto seleccionado.");
   if (record.billingConfirmed !== true)
     throw new Error("Confirma empresa y plan contra el expediente aprobado.");
+  if (!text(record.solicitanteVerificado) || !text(record.cuentaProyecto))
+    throw new Error("Confirma el solicitante y la cuenta/proyecto contra el expediente; la razón social sola no identifica el plan.");
   const plan = text(record.planOverride || record.plan);
   if (record.sinPlan === true && plan)
     throw new Error("Sin plan no puede combinarse con un plan escrito.");

@@ -70,12 +70,31 @@ service cloud.firestore {
     /* ── Perfiles RBAC ── */
     match /dmov_usuarios/{uid} {
       allow read: if noAnon();                    // resolución + claim por email
-      allow create: if noAnon() && request.auth.uid == uid;
-      allow update, delete: if noAnon() && (request.auth.uid == uid || esAdmin());
+      // Self-signup never grants office/admin privileges. No email-based role claim.
+      allow create: if (esAdmin() && uid != request.auth.uid)
+        || (noAnon() && request.auth.uid == uid
+          && request.auth.token.email_verified == true
+          && request.resource.data.keys().hasOnly(['uid','nombre','email','rol','activo','createdAt'])
+          && request.resource.data.uid == uid
+          && request.resource.data.email == request.auth.token.email
+          && request.resource.data.rol == 'operaciones'
+          && request.resource.data.activo == false);
+      allow update: if noAnon() && (
+        (esAdmin() && uid != request.auth.uid)
+        || (request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nombre','pin','pinSaltED','pinCreadoEn'])));
+      // Admins cannot accidentally remove their own access.
+      allow delete: if esAdmin() && uid != request.auth.uid;
     }
 
     /* ── Financieras: SOLO oficina; borrar SOLO admin ── */
-    match /facturas/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /facturas/{id} {
+      allow read, create: if esOficina();
+      allow update: if esOficina() && (
+        !('cfdiArchiveLocked' in resource.data) || resource.data.cfdiArchiveLocked != true
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notas','status','fechaPago','fechaVenc','emailCliente']));
+      allow delete: if esAdmin() && (!('cfdiArchiveLocked' in resource.data) || resource.data.cfdiArchiveLocked != true);
+    }
     match /pagos/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
     match /pagosProveedores/{id}  { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
     match /presupuestos/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
@@ -88,9 +107,48 @@ service cloud.firestore {
     match /unidades/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
     match /entregas/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
 
+    // Private fiscal registry: UUID and both byte hashes are unique and immutable.
+    match /cfdi_archivo/{uuid} {
+      allow read: if esAdmin();
+      allow create: if esAdmin()
+        && uuid.matches('[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}')
+        && request.resource.data.keys().hasOnly(['uuid','facturaId','facturaFolio','facturaFingerprint','facturaTotal','empresa','cfdi','xml','pdf','estado','createdBy','createdAt','actualizadoAt'])
+        && request.resource.data.uuid == uuid
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.estado == 'pendiente'
+        && request.resource.data.cfdi.estadoSat == 'no_consultado'
+        && request.resource.data.xml.sha256.matches('[a-f0-9]{64}')
+        && request.resource.data.pdf.sha256.matches('[a-f0-9]{64}')
+        && request.resource.data.xml.sha256 != request.resource.data.pdf.sha256
+        && exists(/databases/$(database)/documents/facturas/$(request.resource.data.facturaId))
+        && getAfter(/databases/$(database)/documents/facturas/$(request.resource.data.facturaId)).data.cfdiArchiveLocked == true
+        && request.resource.data.facturaTotal == get(/databases/$(database)/documents/facturas/$(request.resource.data.facturaId)).data.total
+        && request.resource.data.empresa == get(/databases/$(database)/documents/facturas/$(request.resource.data.facturaId)).data.empresa
+        && getAfter(/databases/$(database)/documents/cfdi_hashes/$(request.resource.data.xml.sha256)).data.uuid == uuid
+        && getAfter(/databases/$(database)/documents/cfdi_hashes/$(request.resource.data.pdf.sha256)).data.uuid == uuid;
+      allow update: if esAdmin() && resource.data.createdBy == request.auth.uid
+        && resource.data.estado == 'pendiente'
+        && request.resource.data.estado == 'archivado'
+        && request.resource.data.actualizadoAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado','actualizadoAt']);
+      allow delete: if false;
+    }
+    match /cfdi_hashes/{hash} {
+      allow read: if esAdmin();
+      allow create: if esAdmin()
+        && hash.matches('[a-f0-9]{64}')
+        && request.resource.data.keys().hasOnly(['uuid','facturaId'])
+        && getAfter(/databases/$(database)/documents/cfdi_archivo/$(request.resource.data.uuid)).data.facturaId == request.resource.data.facturaId
+        && (getAfter(/databases/$(database)/documents/cfdi_archivo/$(request.resource.data.uuid)).data.xml.sha256 == hash
+          || getAfter(/databases/$(database)/documents/cfdi_archivo/$(request.resource.data.uuid)).data.pdf.sha256 == hash);
+      allow update, delete: if false;
+    }
+
     /* ── Default seguro: lo no listado, solo admin ── */
-    match /{document=**} {
-      allow read, write: if esAdmin();
+    match /{top}/{document=**} {
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas']);
     }
   }
 }
+

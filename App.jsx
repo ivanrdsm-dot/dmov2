@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, Component } from "react";
 import { initializeApp } from "firebase/app";
+import { getStorage } from "firebase/storage";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc, runTransaction,
   doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
@@ -22,6 +23,8 @@ import {
   CreditCard, Paperclip, History,
 } from "lucide-react";
 import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO } from "./domain";
+import CfdiArchive from "./CfdiArchive.jsx";
+import { invoiceArchiveFingerprint } from "./cfdiArchiveStore.js";
 import { billingFields, billingSnapshot, validateRequest, validateBatch, convertBudgetTransaction } from "./billing.js";
 /* mapbox-gl (1.77MB) es LAZY: ver ensureMapbox()/useMapboxReady() más abajo.
    Ninguna de las 3 apps lo paga en el primer paint; carga al montar un mapa. */
@@ -7158,6 +7161,8 @@ function BillingVerification({form,setForm,isBudget=false}){
     <Inp label="Plan verificado para este expediente" value={form.planOverride||form.plan||""} onChange={e=>change({plan:e.target.value,planOverride:"",sinPlan:false})}/>
     <label><input type="checkbox" checked={form.sinPlan===true} onChange={e=>change({sinPlan:e.target.checked,plan:"",planOverride:""})}/> Sin plan, confirmado para este expediente</label>
     <label><input type="checkbox" checked={form.billingConfirmed===true} onChange={e=>setForm(f=>({...f,billingConfirmed:e.target.checked,confirmApproval:false}))}/> Verifiqué empresa y plan contra el expediente aprobado (el catálogo es orientativo)</label>
+    <Inp label="Solicitante verificado (nombre y correo o referencia)" value={form.solicitanteVerificado||""} onChange={e=>change({solicitanteVerificado:e.target.value})}/>
+    <Inp label="Cuenta / proyecto verificado del servicio" value={form.cuentaProyecto||""} onChange={e=>change({cuentaProyecto:e.target.value})}/>
     <Inp label="Período real del servicio (según expediente)" value={form.periodoServicio||""} onChange={e=>change({periodoServicio:e.target.value})} placeholder="Ej: SEPTIEMBRE 2026 o 01/09/2026 al 30/09/2026"/>
     <Inp label="Fuente de aprobación de la cotización (correo, documento o folio)" value={form.approvalSource||""} onChange={e=>setForm(f=>({...f,approvalSource:e.target.value,confirmApproval:false}))}/>
     <Inp label="Fecha de aprobación" type="date" value={form.approvalDate||""} onChange={e=>setForm(f=>({...f,approvalDate:e.target.value,confirmApproval:false}))}/>
@@ -7198,12 +7203,18 @@ function Facturas({rol="admin"}){
     const data={...storedForm,subtotal:sub,ivaAmt:xIva,total};
     if(confirmApproval && confirmApprovalSnapshot===billingSnapshot(data)) data.approvalSnapshot=confirmApprovalSnapshot;
     try{
-      if(editItem){await updateDoc(doc(db,"facturas",editItem.id),data);showT("✓ Registro actualizado");}
+      if(editItem){
+        if(editItem.cfdiArchiveLocked && invoiceArchiveFingerprint({...editItem,...data})!==invoiceArchiveFingerprint(editItem)){
+          showT("El expediente tiene originales fiscales reservados o archivados. No se pueden cambiar sus datos de vinculación; requiere revisión.","err");return;
+        }
+        const update=editItem.cfdiArchiveLocked?{notas:data.notas,status:data.status,fechaVenc:data.fechaVenc,emailCliente:data.emailCliente}:data;
+        await updateDoc(doc(db,"facturas",editItem.id),update);showT("✓ Registro actualizado");
+      }
       else{await addDoc(collection(db,"facturas"),{...data,folio:"FAC-"+uid(),createdAt:serverTimestamp()});showT("✓ Registro creado");}
       setModal(false);setForm(empty);setEditItem(null);
     }catch(e){showT(e.message,"err");}
   };
-  const del=async id=>{if(!confirm("¿Eliminar este registro?"))return;await deleteDoc(doc(db,"facturas",id));showT("Eliminado");};
+  const del=async id=>{if(items.find(f=>f.id===id)?.cfdiArchiveLocked){showT("Un expediente con originales fiscales no se puede eliminar.","err");return;}if(!confirm("¿Eliminar este registro?"))return;await deleteDoc(doc(db,"facturas",id));showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"facturas",id),{status});
 
   /* ── F2: PAGOS ─────────────────────────────────────────────────────────
@@ -7506,6 +7517,7 @@ function Facturas({rol="admin"}){
             </select>
           </div>
           <BillingVerification form={form} setForm={setForm}/>
+          {editItem&&isAdmin&&<CfdiArchive key={editItem.id} db={db} storage={getStorage(fbApp)} user={auth.currentUser} dirty={invoiceArchiveFingerprint({...editItem,...form,subtotal:sub,ivaAmt:ivaP,total:totP})!==invoiceArchiveFingerprint(editItem)} factura={editItem} records={items} receptorRfc={CLIENTE_PLANES.find(cp=>cp.id===editItem._clienteId)?.rfc||""} emisorRfc={SOLICITUD_FACTURA_CONFIG.emisorRFC}/>}
           <Inp label="Quien solicita el servicio" value={form.solicitante} onChange={sf("solicitante")} placeholder="Nombre del contacto"/>
           <div>
             <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado de pago</div>
@@ -13570,7 +13582,7 @@ function Usuarios(){
           <div style={{width:32,height:32,borderRadius:9,background:BLUE+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Users size={14} color={BLUE}/></div>
           <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,color:TEXT}}>Invitar usuario</div>
         </div>
-        <p style={{fontSize:13,color:MUTED,lineHeight:1.6}}>Para invitar a un nuevo usuario, pídele que acceda con su cuenta Google en <strong style={{color:TEXT}}>la URL del sistema</strong>. Al ingresar por primera vez se creará su perfil con rol <strong style={{color:VIOLET}}>"operaciones"</strong> y contraseña temporal <strong style={{color:TEXT,fontFamily:MONO}}>123456</strong>. Cámbiala desde aquí.</p>
+        <p style={{fontSize:13,color:MUTED,lineHeight:1.6}}>Para invitar a un nuevo usuario, pídele que acceda con su cuenta Google en <strong style={{color:TEXT}}>la URL del sistema</strong>. Al ingresar por primera vez se creará su perfil con rol <strong style={{color:VIOLET}}>"operaciones"</strong>, inactivo hasta que un administrador verifique su identidad y lo active. Los perfiles antiguos no transfieren permisos automáticamente por correo.</p>
       </div>
 
       {loading
@@ -13707,16 +13719,8 @@ export default function App(){
         const ref=doc(db,"dmov_usuarios",authUser.uid);
         let snap=await getDoc(ref);
         let perfil=snap.exists()?{id:snap.id,uid:authUser.uid,...snap.data()}:null;
-        if(!perfil&&authUser.email){
-          const q=await getDocs(query(collection(db,"dmov_usuarios"),where("email","==",authUser.email)));
-          const viejo=q.docs.find(d=>d.id!==authUser.uid&&!d.data().migradoA);
-          if(viejo){
-            const vd=viejo.data();
-            await setDoc(ref,{...vd,uid:authUser.uid,email:authUser.email,pin:null,migradoDe:viejo.id,createdAt:vd.createdAt||serverTimestamp()});
-            snap=await getDoc(ref);
-            perfil={id:snap.id,uid:authUser.uid,...snap.data()};
-          }
-        }
+        // A matching email on a legacy profile is not authority to claim its role.
+        // New Google UIDs enroll inactive; an existing admin verifies and activates them.
         if(!perfil){
           await setDoc(ref,{uid:authUser.uid,nombre:authUser.displayName||authUser.email||"Usuario",email:authUser.email||"",rol:"operaciones",activo:false,createdAt:serverTimestamp()});
           const s2=await getDoc(ref);

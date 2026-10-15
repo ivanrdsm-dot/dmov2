@@ -7,7 +7,7 @@ const catalog = [
   { id:'cca',empresa:'CCA SA',plan:'212801',cliente:'CCA' },
 ];
 const approve = r => { const data={...r,approvalSource:'Correo de aprobación, folio COT-1',approvalDate:'2026-10-15'}; return {...data,approvalSnapshot:billingSnapshot(data)}; };
-const budget = (patch={}) => approve({id:'budget1',folio:'PRE-1',periodoServicio:'SEPTIEMBRE 2026',status:'Aprobado',_clienteId:'campari',empresa:'ACTNOW SA',cliente:'Campari',plan:'210212',planOverride:'',sinPlan:false,billingConfirmed:true,conceptos:[{desc:'Traslado',cant:1,precio:100}],subtotal:100,ivaAmt:16,total:116,...patch});
+const budget = (patch={}) => approve({id:'budget1',folio:'PRE-1',solicitanteVerificado:'Responsable verificado en correo COT-1',cuentaProyecto:'Proyecto Campari',periodoServicio:'SEPTIEMBRE 2026',status:'Aprobado',_clienteId:'campari',empresa:'ACTNOW SA',cliente:'Campari',plan:'210212',planOverride:'',sinPlan:false,billingConfirmed:true,conceptos:[{desc:'Traslado',cant:1,precio:100}],subtotal:100,ivaAmt:16,total:116,...patch});
 const request = patch => prepareRequest(budget(patch),catalog,new Date('2026-10-15T12:00:00Z'),'timestamp');
 const snapshot = value => ({exists:()=>value!==undefined,data:()=>value});
 const budgetRef={id:'budget1'}, requestRef={id:'presupuesto_budget1'};
@@ -22,10 +22,10 @@ describe('explicit project, plan and approval',()=>{
   it('resolves second project of same legal entity',()=>expect(resolveBilling(budget({_clienteId:'hersheys',plan:'142805'}),catalog).matched.id).toBe('hersheys'));
   it('honors saved override and preserves it for editing',()=>{const b=budget({planOverride:'P-otro'});expect(resolveBilling(b,catalog).plan).toBe('P-otro');expect(billingFields(b).planOverride).toBe('P-otro');expect(billingFields(b)._clienteId).toBe('campari');});
   it('supports explicitly confirmed no-plan without using catalog',()=>expect(resolveBilling(budget({_clienteId:'cca',empresa:'CCA SA',plan:'',sinPlan:true}),catalog).plan).toBe(''));
-  it('rejects missing, contradictory or unconfirmed plan',()=>{for(const patch of [{plan:''},{sinPlan:true},{billingConfirmed:false}])expect(()=>resolveBilling(budget(patch),catalog)).toThrow();});
+  it('rejects missing, contradictory or unconfirmed plan',()=>{for(const patch of [{plan:''},{sinPlan:true},{billingConfirmed:false},{solicitanteVerificado:''},{cuentaProyecto:''}])expect(()=>resolveBilling(budget(patch),catalog)).toThrow();});
   it('rejects client identity versus legal entity mismatch',()=>expect(()=>resolveBilling(budget({empresa:'CCA SA'}),catalog)).toThrow(/empresa/));
   it('does not treat historical Aprobado as evidence',()=>expect(()=>requireApproval({...budget(),approvalSnapshot:''})).toThrow(/evidencia/));
-  it('invalidates approval after amounts, plan, company or concepts change',()=>{for(const patch of [{total:200},{plan:'wrong'},{empresa:'CCA SA'},{conceptos:[]}])expect(()=>requireApproval({...budget(),...patch})).toThrow();});
+  it('invalidates approval after amounts, plan, company or concepts change',()=>{for(const patch of [{total:200},{plan:'wrong'},{empresa:'CCA SA'},{conceptos:[]},{solicitanteVerificado:'Otro solicitante'},{cuentaProyecto:'Otra cuenta'}])expect(()=>requireApproval({...budget(),...patch})).toThrow();});
   it('requires source and approval date',()=>{for(const patch of [{approvalSource:''},{approvalDate:''},{approvalDate:'2026-99-99'},{approvalDate:'2026-02-30'},{approvalSource:'Otra fuente'}])expect(()=>requireApproval({...budget(),...patch})).toThrow();});
 });
 describe('internal request conversion',()=>{

@@ -4,7 +4,7 @@ This change creates internal requests, not CFDIs, and sends no email. It does no
 
 ## Operator workflow
 
-1. Open the budget or existing billing record. Select its exact client/project even if several entries share a legal entity.
+1. Open the budget or existing billing record. Verify the requester (name and email/reference) and the account/project against the service evidence; neither legal entity nor requester name alone determines a plan. Select its exact client/project even if several entries share a legal entity.
 2. Verify the legal entity and project plan against the approved case. Catalog values are suggestions, not authority. Correct the plan for this case or explicitly select **Sin plan**. No universal Campari/CCA override is introduced.
 3. Enter the real service period explicitly; the export never substitutes the accounting month. Record the actual approval source and date. Confirm that evidence covers the current version, concepts and amounts. Editing those values invalidates the captured approval version.
 4. A budget must already be **Aprobado**. Creating its internal request does not change approval status. Old Aprobado alone is insufficient.
