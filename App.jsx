@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, Component } from "react";
 import { initializeApp } from "firebase/app";
 import {
-  getFirestore, collection, addDoc, updateDoc, deleteDoc,
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, runTransaction,
   doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
   limit, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
 } from "firebase/firestore";
@@ -22,6 +22,7 @@ import {
   CreditCard, Paperclip, History,
 } from "lucide-react";
 import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO } from "./domain";
+import { billingFields, billingSnapshot, validateRequest, validateBatch, convertBudgetTransaction } from "./billing.js";
 /* mapbox-gl (1.77MB) es LAZY: ver ensureMapbox()/useMapboxReady() más abajo.
    Ninguna de las 3 apps lo paga en el primer paint; carga al montar un mapa. */
 /* ─── CODE-SPLITTING (F5): librerías pesadas bajo demanda ──────────────────
@@ -2080,11 +2081,7 @@ function buildCostosOperativosSheet(viat, brand, year){
 // Construye la hoja (ws) de una sola factura. Retorna {ws, sheetName} o null.
 function buildSolicitudWs(factura){
   const ws = {};
-  const matched = factura._clienteId
-    ? CLIENTE_PLANES.find(cp=>cp.id===factura._clienteId)
-    : (CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim())
-       || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||""));
-  if(!matched) return null;
+  const { matched, plan: planFinal } = validateRequest(factura, CLIENTE_PLANES);
   const cfg = SOLICITUD_FACTURA_CONFIG;
 
   // Estilos base
@@ -2141,9 +2138,9 @@ function buildSolicitudWs(factura){
 
   const merges = [];
   const subtotal = Number(factura.subtotal||factura.monto||0);
-  const ivaAmt = Number(factura.ivaAmt||factura.iva||0);
+  const ivaAmt = Number(factura.ivaAmt);
   const total = Number(factura.total||subtotal+ivaAmt);
-  const periodo = `${factura.mesOp||""}-${factura.anio||new Date().getFullYear()}`.toUpperCase();
+  const periodo = factura.periodoServicio.trim();
   const fechaSolicitud = new Date(); // Hoy
 
   // ROW 1 — TÍTULO (B1:F1 merged, amarillo + rojo)
@@ -2243,7 +2240,6 @@ function buildSolicitudWs(factura){
   // ROW 20 — ENTRE EMPRESAS AMBOS No. DE PLAN (← este es el plan del cliente)
   // Si la factura tiene planOverride (ej: "Mucha Chamba" en TACRE) usa ese
   setS("A20","ENTRE EMPRESAS AMBOS No. DE PLAN:",labelStyle);
-  const planFinal = factura.planOverride || matched.planSolicitud || matched.plan;
   setS("B20",planFinal,valBoldStyle);
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:19,c}),"",valBoldStyle);
   merges.push({s:{r:19,c:1},e:{r:19,c:5}});
@@ -2292,11 +2288,9 @@ function buildSolicitudWs(factura){
 // Descarga una sola factura como XLSX individual
 async function downloadSolicitudFacturaXLSX(factura){
   await ensureOfficeLibs();
-  const result = buildSolicitudWs(factura);
-  if(!result){
-    alert("Cliente no identificado. Asegúrate de que la factura tenga una empresa conocida.");
-    return;
-  }
+  let result;
+  try { result = buildSolicitudWs(factura); }
+  catch (error) { alert(error.message); return; }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, result.ws, result.sheetName);
   const fecha = new Date().toISOString().slice(0,10);
@@ -2307,6 +2301,8 @@ async function downloadSolicitudFacturaXLSX(factura){
 async function downloadTodasSolicitudesXLSX(facts, mesLabel){
   await ensureOfficeLibs();
   if(!facts||facts.length===0){alert("No hay facturas para exportar.");return;}
+  try { validateBatch(facts, CLIENTE_PLANES); }
+  catch (error) { alert(error.message); return; }
   const wb = XLSX.utils.book_new();
   const usedNames = new Set();
   let ok = 0;
@@ -2331,8 +2327,8 @@ async function downloadTodasSolicitudesXLSX(facts, mesLabel){
       skipped.push(f.folio||"?");
     }
   }
-  if(ok===0){
-    alert("Ninguna factura pudo identificarse.\nVerifica que los registros tengan empresa o _clienteId reconocido.\nSkipped: "+skipped.join(", "));
+  if(ok!==facts.length || skipped.length){
+    alert("No se exportó ningún registro. No se pudo construir el lote completo: "+skipped.join(", "));
     return;
   }
   const fecha = new Date().toISOString().slice(0,10);
@@ -3866,7 +3862,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     const enRango=(m,a)=>rango.includes(m)&&String(a||"")===String(ANIO);
 
     // INGRESOS: mismas exclusiones que buildPLData (conciliado con balanza)
-    const factsBase=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&enRango(f.mesOp||f.mes,f.anio));
+    const factsBase=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&enRango(f.mesOp||f.mes,f.anio));
     const ingTotales=factsBase.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
     const factsCli=clienteF==="todos"?factsBase:factsBase.filter(f=>(f.clienteId||normEmpresa(f.empresa||f.cliente))===clienteF);
     const ingCliente=factsCli.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
@@ -3885,7 +3881,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     const prevIni=Math.min(iD,iH)-nMeses;
     if(prevIni>=0){
       const rangoPrev=MESES.slice(prevIni,Math.min(iD,iH));
-      const fPrev=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&rangoPrev.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(ANIO));
+      const fPrev=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&rangoPrev.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(ANIO));
       const cPrev=viatAll.filter(v=>rangoPrev.includes(v.mes)&&String(v.anio||"")===String(ANIO))
         .map(v=>({bucket:getCategoria(v.concepto||""),monto:(Number(v.monto)||0)*peso}));
       erPrev=buildEstadoResultados({ingresos:fPrev.map(f=>({subtotal:Number(f.subtotal)||0})),costos:cPrev});
@@ -3945,7 +3941,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     // Respeta el filtro de cliente: ingresos exactos del cliente por mes,
     // costos prorrateados por su peso global (método revelado en UI).
     const serie=MESES.map(m=>{
-      const fM=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(ANIO));
+      const fM=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(ANIO));
       const fMC=clienteF==="todos"?fM:fM.filter(f=>(f.clienteId||normEmpresa(f.empresa||f.cliente))===clienteF);
       const ing=fMC.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
       const cos=viatAll.filter(v=>v.mes===m&&String(v.anio||"")===String(ANIO)).reduce((a,v)=>a+(Number(v.monto)||0),0)*peso;
@@ -4140,16 +4136,16 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const sosSinAtender = alertasItems.filter(a=>a.type==="sos"&&!a.atendida).length;
   const alertasCriticas = alertasItems.filter(a=>(a.type==="sos"||a.type==="geofence")&&!a.atendida).length;
 
-  /* Facturas EMITIDAS con monto — la base de todo lo financiero.
+  /* Registros contables heredados con monto; emisión de CFDI aún no verificada.
      Se excluyen canceladas, solicitudes a Katia y los stubs de bitácora en $0. */
-  const factsEmitidas=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0);
+  const factsEmitidas=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&(f.total||0)>0);
   const totalFac=factsEmitidas.reduce((a,f)=>a+(f.total||0),0);
   const cobrado=factsEmitidas.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const pendiente=factsEmitidas.filter(f=>f.status!=="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const nPendientes=factsEmitidas.filter(f=>f.status!=="Pagada").length;
   /* Servicios sin facturar: stubs de bitácora ($0) + solicitadas a Katia —
      trabajo ya hecho cuyo dinero aún no entra al ciclo de cobranza. */
-  const sinFacturar=facts.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia"));
+  const sinFacturar=facts.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia"||f.status==="Solicitud interna"||f.tipoDocumento==="solicitud_interna"));
   // Cartera vencida — facturas emitidas con fechaVenc < hoy sin pagar
   const hoyTs = Date.now();
   const cartera = factsEmitidas.filter(f=>{
@@ -4266,7 +4262,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
             <div>
               <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Ingresos (sin IVA)</div>
               <div style={{fontFamily:MONO,fontSize:34,fontWeight:900,color:"#4ade80",lineHeight:1,letterSpacing:"-0.02em"}}>{fmtK(ingYtd)}</div>
-              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{plYtd.reduce((a,d)=>a+d.nFacts,0)} facturas emitidas</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{plYtd.reduce((a,d)=>a+d.nFacts,0)} registros internos (CFDI por verificar)</div>
             </div>
             <div>
               <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Costos</div>
@@ -4298,7 +4294,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
       {/* ── SEGUIMIENTO: cobranza y facturación pendiente ── */}
       {isAdmin&&(
         <div className="g4 au2" style={{marginBottom:16}}>
-          <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" facturas emitidas sin pagar"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" registros internos sin pagar"} onClick={()=>setView("facturas")}/>
           <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":"al corriente ✓"} onClick={()=>setView("facturas")}/>
           <KpiCard icon={FileText} color={VIOLET} accent={sinFacturar.length>0} label="Sin facturar" value={sinFacturar.length} valueColor={VIOLET} sub="servicios por solicitar a Katia" onClick={()=>setView("facturas")}/>
           <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"} onClick={()=>setView("facturas")}/>
@@ -4347,10 +4343,10 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
               <div>
                 <div style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Facturación mensual {new Date().getFullYear()}</div>
-                <div style={{fontSize:11,color:MUTED,marginTop:2}}>Facturado vs cobrado</div>
+                <div style={{fontSize:11,color:MUTED,marginTop:2}}>Registrado vs cobrado</div>
               </div>
               <div style={{display:"flex",gap:12}}>
-                {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
+                {[[A,"Registrado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
               </div>
             </div>
             <div style={{display:"flex",alignItems:"flex-end",gap:4,height:130}}>
@@ -7141,6 +7137,35 @@ function BitacoraImport({onClose,showT}){
   );
 }
 
+function BillingVerification({form,setForm,isBudget=false}){
+  const confirmationRecord={...form,
+    subtotal:isBudget ? form.conceptos.reduce((sum,c)=>sum+(Number(c.cant)||0)*(Number(c.precio)||0),0) : Number(form.subtotal)||0};
+  confirmationRecord.ivaAmt=form.iva ? confirmationRecord.subtotal*.16 : 0;
+  confirmationRecord.total=confirmationRecord.subtotal+confirmationRecord.ivaAmt;
+  const currentSnapshot=billingSnapshot(confirmationRecord);
+  const change = patch => setForm(f=>({...f,...patch,billingConfirmed:false,confirmApproval:false}));
+  return <div style={{gridColumn:"1/-1",padding:12,border:"1px solid "+BORDER,borderRadius:10,display:"grid",gap:10}}>
+    <label>Cliente / proyecto del expediente
+      <select value={form._clienteId||""} onChange={e=>{
+        const cp=CLIENTE_PLANES.find(c=>c.id===e.target.value);
+        change({_clienteId:cp?.id||"",empresa:cp?.empresa||"",plan:cp?.planSolicitud||cp?.plan||"",planOverride:"",sinPlan:false});
+      }} style={{display:"block",width:"100%",padding:8}}>
+        <option value="">Selecciona el proyecto; no se infiere por empresa</option>
+        {CLIENTE_PLANES.map(cp=><option key={cp.id} value={cp.id}>{cp.cliente} · {cp.empresa} · {cp.planSolicitud||cp.plan}</option>)}
+      </select>
+    </label>
+    <Inp label="Empresa a facturar (selecciona proyecto antes de exportar)" value={form.empresa||""} onChange={e=>change({empresa:e.target.value,_clienteId:""})}/>
+    <Inp label="Plan verificado para este expediente" value={form.planOverride||form.plan||""} onChange={e=>change({plan:e.target.value,planOverride:"",sinPlan:false})}/>
+    <label><input type="checkbox" checked={form.sinPlan===true} onChange={e=>change({sinPlan:e.target.checked,plan:"",planOverride:""})}/> Sin plan, confirmado para este expediente</label>
+    <label><input type="checkbox" checked={form.billingConfirmed===true} onChange={e=>setForm(f=>({...f,billingConfirmed:e.target.checked,confirmApproval:false}))}/> Verifiqué empresa y plan contra el expediente aprobado (el catálogo es orientativo)</label>
+    <Inp label="Período real del servicio (según expediente)" value={form.periodoServicio||""} onChange={e=>change({periodoServicio:e.target.value})} placeholder="Ej: SEPTIEMBRE 2026 o 01/09/2026 al 30/09/2026"/>
+    <Inp label="Fuente de aprobación de la cotización (correo, documento o folio)" value={form.approvalSource||""} onChange={e=>setForm(f=>({...f,approvalSource:e.target.value,confirmApproval:false}))}/>
+    <Inp label="Fecha de aprobación" type="date" value={form.approvalDate||""} onChange={e=>setForm(f=>({...f,approvalDate:e.target.value,confirmApproval:false}))}/>
+    <label><input type="checkbox" checked={form.confirmApproval===true&&form.confirmApprovalSnapshot===currentSnapshot} onChange={e=>setForm(f=>({...f,confirmApproval:e.target.checked,confirmApprovalSnapshot:e.target.checked?currentSnapshot:""}))}/> Confirmo que la evidencia corresponde a esta versión, conceptos e importes</label>
+    <small>Guardar no envía nada ni acredita un CFDI. Cambiar datos exige verificar nuevamente la aprobación antes de exportar.</small>
+  </div>;
+}
+
 function Facturas({rol="admin"}){
   const isAdmin=rol==="admin";
   const [items,setItems]=useState([]);const [load,setLoad]=useState(true);
@@ -7154,7 +7179,7 @@ function Facturas({rol="admin"}){
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const ANIO=new Date().getFullYear();
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
-  const empty={mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:new Date().toISOString().slice(0,10),fechaVenc:"",emailCliente:"",planOverride:""};
+  const empty={...billingFields({}),confirmApproval:false,mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:new Date().toISOString().slice(0,10),fechaVenc:"",emailCliente:"",planOverride:""};
   const [form,setForm]=useState(empty);
   const sf=k=>e=>setForm(f=>({...f,[k]:e.target.type==="checkbox"?e.target.checked:e.target.value}));
 
@@ -7164,12 +7189,14 @@ function Facturas({rol="admin"}){
   }),[]);
 
   const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
-  const openEdit=f=>{setForm({mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||"",fechaEmision:f.fechaEmision||"",fechaVenc:f.fechaVenc||"",emailCliente:f.emailCliente||""});setEditItem(f);setModal(true);};
+  const openEdit=f=>{setForm({...billingFields(f),cliente:f.cliente||"",conceptos:f.conceptos||[],confirmApproval:false,mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||"",fechaEmision:f.fechaEmision||"",fechaVenc:f.fechaVenc||"",emailCliente:f.emailCliente||""});setEditItem(f);setModal(true);};
 
   const save=async()=>{
     if(!form.empresa||!form.subtotal){showT("Empresa y subtotal son requeridos","err");return;}
     const sub=parseFloat(form.subtotal)||0;const xIva=form.iva?sub*.16:0;const total=sub+xIva;
-    const data={...form,subtotal:sub,ivaAmt:xIva,total};
+    const {confirmApproval,confirmApprovalSnapshot,...storedForm}=form;
+    const data={...storedForm,subtotal:sub,ivaAmt:xIva,total};
+    if(confirmApproval && confirmApprovalSnapshot===billingSnapshot(data)) data.approvalSnapshot=confirmApprovalSnapshot;
     try{
       if(editItem){await updateDoc(doc(db,"facturas",editItem.id),data);showT("✓ Registro actualizado");}
       else{await addDoc(collection(db,"facturas"),{...data,folio:"FAC-"+uid(),createdAt:serverTimestamp()});showT("✓ Registro creado");}
@@ -7222,7 +7249,7 @@ function Facturas({rol="admin"}){
   const proyAnual=porMes.reduce((a,m)=>a+m.fac,0);
   const avgMes=porMes.filter(m=>m.fac>0).reduce((a,m,_,arr)=>a+m.fac/arr.length,0)||0;
   const mesActual=MESES[new Date().getMonth()];
-  const sc={Pendiente:AMBER,Pagada:GREEN,Vencida:ROSE,"Solicitada a Katia":VIOLET};
+  const sc={Pendiente:AMBER,Pagada:GREEN,Vencida:ROSE,"Solicitada a Katia":VIOLET,"Solicitud interna":VIOLET};
   const sub=parseFloat(form.subtotal)||0;const ivaP=form.iva?sub*.16:0;const totP=sub+ivaP;
 
   return(
@@ -7231,7 +7258,7 @@ function Facturas({rol="admin"}){
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
         <div>
           <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>{isAdmin?"Facturación & Finanzas":"Registrar Servicio"}</h1>
-          <p style={{color:MUTED,fontSize:13,marginTop:3}}>{isAdmin?"Control mensual · PDF descargable · Proyecciones anuales":"Registro de servicios prestados"}</p>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>{isAdmin?"Registros internos y solicitudes · Los folios FAC/SOL y el PDF interno no acreditan CFDI emitidos":"Registro de servicios prestados"}</p>
           {!isAdmin&&<p style={{color:BLUE,fontSize:12,fontWeight:600,marginTop:4,display:"flex",alignItems:"center",gap:5}}><Shield size={12}/>Los totales son visibles solo para administradores</p>}
         </div>
         <div style={{display:"flex",gap:8}}>
@@ -7361,7 +7388,7 @@ function Facturas({rol="admin"}){
                 {isAdmin?<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:12.5,fontWeight:800,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.total||0)}</td>:<td style={{padding:"8px 10px",fontSize:12,color:MUTED}}>🔒</td>}
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>
                   <select value={f.status||"Pendiente"} onChange={e=>updStatus(f.id,e.target.value)} style={{background:(sc[f.status]||MUTED)+"0c",border:"1.5px solid "+(sc[f.status]||MUTED)+"30",borderRadius:8,padding:"3px 6px",color:sc[f.status]||MUTED,fontSize:10.5,fontWeight:700,cursor:"pointer",maxWidth:118}}>
-                    {["Solicitada a Katia","Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s==="Solicitada a Katia"?"Sol. a Katia":s}</option>)}
+                    {["Solicitud interna","Solicitada a Katia","Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s==="Solicitada a Katia"?"Sol. a Katia":s}</option>)}
                   </select>
                 </td>
                 <td style={{padding:"8px 10px"}}>
@@ -7400,9 +7427,9 @@ function Facturas({rol="admin"}){
       {tab==="proyecciones"&&<>
         <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:24,marginBottom:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-            <div><div style={{fontFamily:DISP,fontWeight:700,fontSize:16}}>Facturación mensual {ANIO}</div><div style={{fontSize:12,color:MUTED,marginTop:2}}>Facturado vs cobrado</div></div>
+            <div><div style={{fontFamily:DISP,fontWeight:700,fontSize:16}}>Facturación mensual {ANIO}</div><div style={{fontSize:12,color:MUTED,marginTop:2}}>Registrado vs cobrado</div></div>
             <div style={{display:"flex",gap:14}}>
-              {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontSize:11,color:MUTED}}>{l}</span></div>)}
+              {[[A,"Registrado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontSize:11,color:MUTED}}>{l}</span></div>)}
               <div style={{fontFamily:MONO,fontSize:13,fontWeight:700,color:VIOLET}}>Anual: {fmtK(proyAnual)}</div>
             </div>
           </div>
@@ -7478,59 +7505,12 @@ function Facturas({rol="admin"}){
               {[ANIO-1,ANIO,ANIO+1].map(y=><option key={y} value={y}>{y}</option>)}
             </select>
           </div>
-          {/* Quick-pick de cliente conocido — auto-llena empresa+plan */}
-          <div style={{gridColumn:"1/-1",background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:11,padding:"10px 12px"}}>
-            <div style={{fontSize:10,fontWeight:800,color:MUTED,marginBottom:7,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6}}><Zap size={11} color={A}/>Cliente conocido (auto-llena empresa + plan)</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {CLIENTE_PLANES.map(cp=>{
-                const active = (form.empresa||"").toLowerCase().trim()===cp.empresa.toLowerCase().trim();
-                return(
-                  <button key={cp.id} type="button" onClick={()=>setForm(f=>({...f,empresa:cp.empresa,plan:cp.plan,_clienteId:cp.id,solicitante:f.solicitante||cp.cliente}))} className="btn" style={{padding:"7px 12px",borderRadius:9,border:"1.5px solid "+(active?cp.color:BD2),background:active?cp.color+"14":"#fff",color:active?cp.color:TEXT,fontWeight:active?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}>
-                    <div style={{width:7,height:7,borderRadius:"50%",background:cp.color}}/>
-                    {cp.cliente}
-                  </button>
-                );
-              })}
-            </div>
-            {form.empresa&&(()=>{
-              const matched = CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim());
-              if(!matched) return null;
-              return(
-                <>
-                  <div style={{marginTop:8,fontSize:11,color:matched.color,fontWeight:700,display:"flex",alignItems:"center",gap:5,padding:"6px 10px",background:matched.color+"08",borderRadius:7,border:"1px solid "+matched.color+"30"}}>
-                    <CheckCircle size={11}/>Detectado: <strong>{matched.cliente}</strong> · {form.planOverride||matched.plan}
-                  </div>
-                  {/* Selector de plan alternativo (TACRE: Servicios Logística vs Mucha Chamba) */}
-                  {matched.planAlternativos&&matched.planAlternativos.length>1&&<div style={{marginTop:7,padding:"7px 10px",background:"#fff",border:"1.5px dashed "+matched.color+"40",borderRadius:8}}>
-                    <div style={{fontSize:10,fontWeight:800,color:matched.color,marginBottom:5,letterSpacing:"0.06em",textTransform:"uppercase"}}>Plan a facturar (selecciona):</div>
-                    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                      {matched.planAlternativos.map(p=>{
-                        const cur = form.planOverride||matched.planSolicitud;
-                        const active = cur===p.value;
-                        return(
-                          <button key={p.value} type="button" onClick={()=>setForm(f=>({...f,planOverride:p.value,plan:`${p.value.replace("P-","")}`}))} className="btn" style={{padding:"6px 12px",borderRadius:8,border:"1.5px solid "+(active?matched.color:BD2),background:active?matched.color+"14":"#fff",color:active?matched.color:TEXT,fontWeight:active?800:600,fontSize:11}}>
-                            {p.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>}
-                </>
-              );
-            })()}
-          </div>
-          <Inp label="Empresa a facturar *" value={form.empresa} onChange={e=>{
-            const v = e.target.value;
-            const matched = lookupPlanForCliente(v);
-            if(matched) setForm(f=>({...f,empresa:matched.empresa,plan:matched.plan,_clienteId:matched.id}));
-            else sf("empresa")(e);
-          }} placeholder="Escribe SCJ, Canon, Actnow, Sofia… o nombre directo"/>
+          <BillingVerification form={form} setForm={setForm}/>
           <Inp label="Quien solicita el servicio" value={form.solicitante} onChange={sf("solicitante")} placeholder="Nombre del contacto"/>
-          <Inp label="Plan / Cuenta" value={form.plan} onChange={sf("plan")} placeholder="Ej: 210201 PL Campari Promotores"/>
           <div>
             <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado de pago</div>
             <select value={form.status} onChange={sf("status")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
-              {["Solicitada a Katia","Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s}</option>)}
+              {["Solicitud interna","Solicitada a Katia","Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div>
@@ -7670,7 +7650,7 @@ function buildPLData(facts, viat, mesDesde, mesHasta, anio="2026"){
     const mAll   = facts.filter(f=>(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(anio));
     /* Solo facturas EMITIDAS cuentan como ingreso: se excluyen canceladas y
        las apenas solicitadas a Katia (aún no existen en contabilidad). */
-    const mFacts = mAll.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia");
+    const mFacts = mAll.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna");
     const mViat  = viat.filter(v=>v.mes===m&&String(v.anio||"")===String(anio));
     const ingresos = mFacts.reduce((a,f)=>a+(f.total||0),0);
     const subtotal = mFacts.reduce((a,f)=>a+(f.subtotal||0),0);
@@ -7844,7 +7824,7 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
     ["Total costos operativos",                      gC,          "",""],
     ["Utilidad bruta",                               gU,          "",""],
     ["Margen de utilidad %",                         gI>0?gU/gI:0,"≥ 15% óptimo",""],
-    ["Facturas emitidas",                            factsF.length,"",""],
+    ["Registros internos (CFDI por verificar)",                            factsF.length,"",""],
     ["Facturas cobradas (Pagadas)",                  factsF.filter(f=>f.status==="Pagada").length,"",""],
     ["% Cobro sobre facturado",                      gI>0?gCob/gI:0,"≥ 80% objetivo",""],
     ["Cartera por cobrar",                           gPend,       "",""],
@@ -8097,8 +8077,8 @@ async function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
   const idxD0=MESES_REP.indexOf(mesDesde), idxH0=MESES_REP.indexOf(mesHasta);
   const mesesR0=MESES_REP.slice(idxD0,idxH0+1);
   const factsPeriodo=facts.filter(f=>mesesR0.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(anio));
-  const factsReales=factsPeriodo.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0);
-  const sinFacturarN=factsPeriodo.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia")).length;
+  const factsReales=factsPeriodo.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&(f.total||0)>0);
+  const sinFacturarN=factsPeriodo.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia"||f.status==="Solicitud interna"||f.tipoDocumento==="solicitud_interna")).length;
   const cliMap={};
   factsReales.forEach(f=>{const k=normEmpresa(f.empresa||f.cliente);if(!cliMap[k])cliMap[k]={fac:0,cob:0,pen:0,n:0};cliMap[k].fac+=f.total||0;cliMap[k].n++;if(f.status==="Pagada")cliMap[k].cob+=f.total||0;else cliMap[k].pen+=f.total||0;});
   const cliArr=Object.entries(cliMap).sort((a,b)=>b[1].fac-a[1].fac);
@@ -8107,7 +8087,7 @@ async function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
   const insights=[
     mejorMes&&mejorMes.subtotal>0?`Mejor mes del período: ${mejorMes.mesFull} con ${money(mejorMes.subtotal)} facturados (sin IVA) y utilidad de ${money(mejorMes.utilidad)}.`:null,
     cliArr[0]?`Cliente principal: ${cliArr[0][0]} concentra el ${topCliShare}% de la facturación${topCliShare>=50?" — alta dependencia, conviene diversificar":""}.`:null,
-    totalPend>0?`Por cobrar: ${money(totalPend)} en facturas emitidas sin pagar (${pctCob}% ya cobrado).`:`Cobranza al corriente: 100% del facturado está cobrado.`,
+    totalPend>0?`Por cobrar: ${money(totalPend)} en registros internos sin pagar (${pctCob}% ya cobrado).`:`Cobranza al corriente: 100% del facturado está cobrado.`,
     sinFacturarN>0?`${sinFacturarN} servicio(s) del período aún sin facturar o en solicitud — ingreso pendiente de entrar al ciclo de cobranza.`:null,
     margen<0?`El período cierra con pérdida contable de ${money(Math.abs(totalUtil))} — los costos superan lo facturado en estos meses.`:margen<0.15?`Margen de ${Math.round(margen*100)}% — por debajo del objetivo de 15%.`:`Margen sano de ${Math.round(margen*100)}% (objetivo ≥15% cumplido).`,
   ].filter(Boolean);
@@ -8522,7 +8502,7 @@ function PagosProveedores({userProfile}){
   const topProvMax=topProv[0]?topProv[0][1]:1;
   const flujoMensual=MESES_ID.map(m=>({m,v:pagos.filter(p=>p.mes===m&&p.anio===ANIO).reduce((a,p)=>a+(p.total||0),0)}));
   const flujoMax=Math.max(...flujoMensual.map(d=>d.v),1);
-  const factsEmit=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0&&String(f.anio||"")===ANIO);
+  const factsEmit=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&(f.total||0)>0&&String(f.anio||"")===ANIO);
   const ingVsEgr=MESES_ID.map(m=>({m,
     ing:factsEmit.filter(f=>f.mesOp===m).reduce((a,f)=>a+(f.subtotal||0),0),
     egr:pagos.filter(p=>p.mes===m&&p.anio===ANIO).reduce((a,p)=>a+(p.subtotal||0),0)}));
@@ -9558,7 +9538,7 @@ function Presupuestos(){
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   const today=new Date().toISOString().slice(0,10);
   const in15=new Date(Date.now()+15*86400000).toISOString().slice(0,10);
-  const empty={cliente:"",contacto:"",fecha:today,vigencia:in15,conceptos:[{desc:"",cant:1,precio:0}],iva:true,status:"Borrador",notas:""};
+  const empty={...billingFields({}),empresa:"",confirmApproval:false,cliente:"",contacto:"",fecha:today,vigencia:in15,conceptos:[{desc:"",cant:1,precio:0}],iva:true,status:"Borrador",notas:""};
   const [form,setForm]=useState(empty);
 
   useEffect(()=>onSnapshot(collection(db,"presupuestos"),s=>{
@@ -9569,6 +9549,7 @@ function Presupuestos(){
   const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
   const openEdit=p=>{
     setForm({
+      ...billingFields(p),empresa:p.empresa||"",confirmApproval:false,
       cliente:p.cliente||"", contacto:p.contacto||"",
       fecha:p.fecha||today, vigencia:p.vigencia||in15,
       conceptos:(p.conceptos&&p.conceptos.length?p.conceptos:[{desc:"",cant:1,precio:0}]).map(c=>({desc:c.desc||"",cant:Number(c.cant)||0,precio:Number(c.precio)||0})),
@@ -9590,11 +9571,13 @@ function Presupuestos(){
   const save=async()=>{
     if(!form.cliente.trim()){showT("El cliente es obligatorio","err");return;}
     if(form.conceptos.filter(c=>c.desc&&c.cant>0).length===0){showT("Agrega al menos un concepto con descripción y cantidad","err");return;}
+    const {confirmApproval,confirmApprovalSnapshot,...storedForm}=form;
     const data={
-      ...form,
+      ...storedForm,
       conceptos:form.conceptos.map(c=>({desc:c.desc,cant:Number(c.cant)||0,precio:Number(c.precio)||0})),
       subtotal,ivaAmt,total,
     };
+    if(confirmApproval && confirmApprovalSnapshot===billingSnapshot(data)) data.approvalSnapshot=confirmApprovalSnapshot;
     try{
       if(editItem){
         await updateDoc(doc(db,"presupuestos",editItem.id),data);
@@ -9612,41 +9595,18 @@ function Presupuestos(){
   // Conversión 1-click a factura: crea un registro en facturas con los datos del presupuesto
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const toFactura = async(p)=>{
-    if(p.convertidoAFacturaId){
-      if(!confirm("Este presupuesto ya fue convertido a factura. ¿Crear otra factura de todas formas?")) return;
-    }
-    const today = new Date();
-    const venc = new Date(Date.now()+30*86400000).toISOString().slice(0,10); // vencimiento +30 días
-    const serviciosDesc = (p.conceptos||[]).map(c=>`${c.cant}× ${c.desc}`).filter(Boolean).join(" · ")||p.folio;
     try{
-      const ref = await addDoc(collection(db,"facturas"),{
-        mesOp: MESES[today.getMonth()],
-        anio: today.getFullYear(),
-        empresa: p.cliente||"",
-        solicitante: p.contacto||"",
-        plan: "",
-        servicio: serviciosDesc,
-        subtotal: p.subtotal||0,
-        ivaAmt: p.ivaAmt||0,
-        total: p.total||0,
-        iva: (p.ivaAmt||0)>0,
-        status: "Pendiente",
-        notas: `Generada desde presupuesto ${p.folio||""}`,
-        fechaEmision: today.toISOString().slice(0,10),
-        fechaVenc: venc,
-        emailCliente: p.emailCliente||"",
-        presupuestoOrigenId: p.id,
-        presupuestoOrigenFolio: p.folio||"",
-        folio: "FAC-"+uid(),
-        createdAt: serverTimestamp(),
-      });
-      // Marca el presupuesto como convertido + Aprobado
-      await updateDoc(doc(db,"presupuestos",p.id),{
-        convertidoAFacturaId: ref.id,
-        convertidoEn: serverTimestamp(),
-        status: "Aprobado",
-      });
-      showT("✓ Factura creada desde presupuesto");
+      // Block historical duplicates too. Do not repair/re-link records implicitly.
+      const legacy=await getDocs(query(collection(db,"facturas"),where("presupuestoOrigenId","==",p.id)));
+      if(!legacy.empty){
+        showT("Ya existe una solicitud para este presupuesto. Revisa el vínculo en Facturas; no se creó otra.","err");
+        return;
+      }
+      const result=await runTransaction(db,tx=>convertBudgetTransaction(
+        tx,doc(db,"presupuestos",p.id),doc(db,"facturas","presupuesto_"+p.id),
+        CLIENTE_PLANES,new Date(),serverTimestamp()
+      ));
+      showT(result.existing?"Ya existe una solicitud vinculada; no se creó otra.":"✓ Solicitud interna creada. No es un CFDI ni se ha enviado.");
     }catch(e){showT(e.message,"err");}
   };
 
@@ -9719,8 +9679,8 @@ function Presupuestos(){
                 <td style={{padding:"10px 12px"}}>
                   <div style={{display:"flex",gap:5,alignItems:"center"}}>
                     <button onClick={()=>downloadPresupuestoPDF(p)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}><Download size={12}/>PDF</button>
-                    <button onClick={()=>toFactura(p)} className="btn" title="Convertir a factura" style={{color:GREEN,padding:"4px 8px",border:"1px solid "+GREEN+"30",background:GREEN+"08",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>
-                      {p.convertidoAFacturaId?<><Check size={12}/>Facturado</>:<><FileText size={12}/>→ Factura</>}
+                    <button onClick={()=>toFactura(p)} className="btn" title="Crear solicitud interna (requiere aprobación documentada)" style={{color:GREEN,padding:"4px 8px",border:"1px solid "+GREEN+"30",background:GREEN+"08",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>
+                      {p.convertidoAFacturaId?<><Check size={12}/>Solicitud creada</>:<><FileText size={12}/>→ Solicitud</>}
                     </button>
                     <button onClick={()=>openEdit(p)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
                     <button onClick={()=>del(p.id)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
@@ -9738,6 +9698,7 @@ function Presupuestos(){
           <Inp label="Fecha" type="date" value={form.fecha} onChange={e=>setForm({...form,fecha:e.target.value})}/>
           <Inp label="Vigencia hasta" type="date" value={form.vigencia} onChange={e=>setForm({...form,vigencia:e.target.value})}/>
         </div>
+        <BillingVerification form={form} setForm={setForm} isBudget/>
         <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8}}>Conceptos</div>
         <div style={{background:"#f8fafd",border:"1px solid "+BORDER,borderRadius:11,padding:11,marginBottom:12}}>
           <div style={{display:"grid",gridTemplateColumns:"3fr 0.7fr 1fr 1fr 30px",gap:7,fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",marginBottom:6,padding:"0 4px"}}>
@@ -13944,3 +13905,4 @@ export default function App(){
     </>
   );
 }
+
