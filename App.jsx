@@ -1369,7 +1369,7 @@ function printFactura(f){
   const bg={Pagada:"#d1fae5",Pendiente:"#fef3c7",Vencida:"#fee2e2","Solicitada a Katia":"#ede9fe"};
   const st=f.status||"Pendiente";
   const sub=Number(f.subtotal||f.monto||0);
-  const iva=Number(f.ivaAmt||f.iva||0);
+  const iva=Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0));
   const tot=Number(f.total||sub+iva||0);
   const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>Factura ${f.folio||""}</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"/>
@@ -1540,7 +1540,7 @@ async function downloadFacturaPDF(f){
   pdfLabelValue(pdf,14,70,"Mes / Año",(f.mesOp||"")+" "+(f.anio||""));
   pdfLabelValue(pdf,110,70,"Plan / Cuenta",f.plan);
   const sub = Number(f.subtotal||f.monto||0);
-  const iva = Number(f.ivaAmt||f.iva||0);
+  const iva = Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0));
   const tot = Number(f.total||sub+iva||0);
   autoTable(pdf,{
     startY:84,
@@ -1725,8 +1725,13 @@ const styleStatusChip = (status)=>{
 // Aplica un estilo a una celda concreta, creando la celda si no existe
 function setCell(ws, addr, value, style, numFmt){
   if(value===undefined||value===null||value==="") value="";
-  const isNum = typeof value==="number";
-  ws[addr] = {t: isNum?"n":"s", v: value};
+  if(typeof value==="object"){
+    if(value.t!=="n"||typeof value.f!=="string"||!Number.isFinite(value.v)) throw new Error("Celda de fórmula inválida: "+addr);
+    ws[addr]={t:"n",f:value.f,v:value.v};
+  }else{
+    const isNum = typeof value==="number";
+    ws[addr] = {t: isNum?"n":"s", v: value};
+  }
   if(numFmt) ws[addr].z = numFmt;
   if(style) ws[addr].s = {...style, ...(numFmt?{numFmt}:{})};
 }
@@ -1795,7 +1800,7 @@ function buildRelacionFacturasSheet(facts, brand, year){
     grp.items.forEach(f=>{
       rowNumber++;
       const sub = Number(f.subtotal||f.monto||0);
-      const iva = Number(f.ivaAmt||f.iva||0);
+      const iva = Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0));
       const tot = Number(f.total||0);
       mSub+=sub; mIva+=iva; mTot+=tot;
       const zebra = r%2===0?XC.ROW_WHITE:XC.ROW_ALT;
@@ -1811,7 +1816,7 @@ function buildRelacionFacturasSheet(facts, brand, year){
       setCell(ws,XLSX.utils.encode_cell({r,c:2}),f.plan?(f.plan+(f.servicio?" "+f.servicio:"")):(f.servicio||""),styleCell(r,cellBase));
       setCell(ws,XLSX.utils.encode_cell({r,c:3}),f.folio||"",styleCell(r,{...cellBase,align:"center"}));
       setCell(ws,XLSX.utils.encode_cell({r,c:4}),fechaStr,styleCell(r,{...cellBase,align:"center"}));
-      setCell(ws,XLSX.utils.encode_cell({r,c:5}),f.periodo||f.solicitante||"",styleCell(r,cellBase));
+      setCell(ws,XLSX.utils.encode_cell({r,c:5}),f.periodoServicio||f.periodo||"",styleCell(r,cellBase));
       setCell(ws,XLSX.utils.encode_cell({r,c:6}),sub,styleCell(r,{...cellBase,align:"right"}),MONEY_FMT);
       setCell(ws,XLSX.utils.encode_cell({r,c:7}),iva,styleCell(r,{...cellBase,align:"right"}),MONEY_FMT);
       setCell(ws,XLSX.utils.encode_cell({r,c:8}),tot,styleCell(r,{...cellBase,align:"right",bold:true}),MONEY_FMT);
@@ -1843,8 +1848,8 @@ function buildRelacionFacturasSheet(facts, brand, year){
   const factsCurrentYear = facts.filter(f=>(f.anio||year)==year);
   const pipelineYear = year+1;
   const factsPipeline = facts.filter(f=>(f.anio||year)==pipelineYear);
-  const sumY = factsCurrentYear.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt||f.iva||0),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
-  const sumP = factsPipeline.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt||f.iva||0),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
+  const sumY = factsCurrentYear.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0)),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
+  const sumP = factsPipeline.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0)),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
   const addTotal = (label,s,i,t,style)=>{
     setCell(ws,XLSX.utils.encode_cell({r,c:0}),label,style.label);
     for(let c=1;c<6;c++) setCell(ws,XLSX.utils.encode_cell({r,c}),"",style.row);
@@ -4257,7 +4262,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:"linear-gradient(90deg,"+A+",#fb923c,"+GREEN+")"}}/>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,flexWrap:"wrap",gap:8}}>
             <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.1em",textTransform:"uppercase",color:"#fdba74"}}>
-              📊 Estado de resultados 2026 · Ene – {mesActual} · conciliado con contabilidad
+              📊 Resultado provisional 2026 · Ene – {mesActual} · conciliación pendiente
             </div>
             <button onClick={()=>setView("reportes")} className="btn" style={{fontSize:11,fontWeight:700,color:"#fff",background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.18)",borderRadius:9,padding:"5px 12px"}}>Ver reportes →</button>
           </div>
@@ -7370,7 +7375,7 @@ function Facturas({rol="admin"}){
           {["todos",...MESES].map(m=><button key={m} onClick={()=>setMesF(m)} className="btn" style={{padding:"5px 13px",borderRadius:8,border:"1.5px solid "+(mesF===m?A:BD2),background:mesF===m?A+"10":"#fff",color:mesF===m?A:MUTED,fontSize:12,fontWeight:mesF===m?700:500,cursor:"pointer"}}>{m==="todos"?"Todos":m}</button>)}
         </div>
         {isAdmin&&mesF!=="todos"&&totTotal>0&&<div style={{display:"flex",gap:0,marginBottom:14,background:"#fff",border:"1px solid "+BORDER,borderRadius:12,overflow:"hidden"}}>
-          {[[TEXT,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt||f.iva||0),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v],i)=>(
+          {[[TEXT,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt??(typeof f.iva==="number"?f.iva:0)),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v],i)=>(
             <div key={l} style={{flex:1,padding:"11px 18px",borderLeft:i>0?"1px solid "+BORDER:"none",display:"flex",alignItems:"baseline",gap:10}}>
               <span style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>{l}</span>
               <span style={{fontFamily:MONO,fontSize:17,fontWeight:800,color:c}}>{v}</span>
@@ -7395,7 +7400,7 @@ function Facturas({rol="admin"}){
                 <td style={{padding:"8px 10px",maxWidth:150}}>{f.plan&&<span title={f.plan} style={{background:VIOLET+"12",color:VIOLET,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700,display:"inline-block",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",verticalAlign:"middle"}}>{f.plan}</span>}</td>
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.servicio||""}>{f.servicio||"—"}</td>
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11.5,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.subtotal||f.monto||0)}</td>}
-                {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11,color:MUTED,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.ivaAmt||f.iva||0)}</td>}
+                {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11,color:MUTED,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.ivaAmt??(typeof f.iva==="number"?f.iva:0))}</td>}
                 {isAdmin?<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:12.5,fontWeight:800,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.total||0)}</td>:<td style={{padding:"8px 10px",fontSize:12,color:MUTED}}>🔒</td>}
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>
                   <select value={f.status||"Pendiente"} onChange={e=>updStatus(f.id,e.target.value)} style={{background:(sc[f.status]||MUTED)+"0c",border:"1.5px solid "+(sc[f.status]||MUTED)+"30",borderRadius:8,padding:"3px 6px",color:sc[f.status]||MUTED,fontSize:10.5,fontWeight:700,cursor:"pointer",maxWidth:118}}>
@@ -7755,7 +7760,7 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
   r++;
 
   // Nota al pie
-  setCell(ws1,"A"+(r+1),"* Ingresos = total CFDI c/IVA  |  Costos = registros viaticos/nomina  |  Margen = Utilidad/Ingresos",styleSubtitle);
+  setCell(ws1,"A"+(r+1),"* PROVISIONAL: ingresos registrados sin IVA; costos capturados sin conciliación completa. No acredita CFDI ni cierre mensual.",styleSubtitle);
   merges1.push({s:{r,c:0},e:{r,c:16}});
 
   ws1["!ref"]    = `A1:Q${r+1}`;
@@ -9010,6 +9015,9 @@ function Reportes(){
         </div>
       </div>
 
+      <div role="status" style={{padding:14,marginBottom:16,border:"1px solid "+AMBER,borderRadius:10,background:"#fffbeb",color:TEXT,fontSize:13}}>
+        <strong>Resultado provisional: cobertura de ingresos y gastos pendiente.</strong> Los meses sin gastos capturados no acreditan un margen real de 100%. Estos registros históricos pueden usar mes de captura, incluir importes sin desglose de IVA y carecer de CFDI o evidencia de cobro. Revisa período de servicio, duplicados, nómina, proveedores y gastos recurrentes antes de cerrar el mes.
+      </div>
       {/* KPI Cards */}
       <div className="g4" style={{marginBottom:20}}>
         <KpiCard icon={TrendingUp} color={GREEN} label="Ingresos (sin IVA)" value={fmtK(totalSub)} sub={pl.reduce((a,d)=>a+d.nFacts,0)+" facturas · "+fmtK(totalIng)+" c/IVA"}/>
