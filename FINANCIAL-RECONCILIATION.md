@@ -1,6 +1,6 @@
 # Monthly financial reconciliation: proposed, not activated
 
-The exported costs register contains 99 rows totaling MXN 2,470,587.93, while the exported P&L totals MXN 2,240,202.89. The difference is the October grouping, MXN 230,385.04. Group labels also conflict with service months in descriptions. No reassignment is safe based on labels alone. The export does not establish net/gross, tax, supplier identity or payment evidence. September/October zero costs cannot establish a 100% actual margin.
+The exported costs register and P&L disagree. Group labels also conflict with service months in descriptions. Detailed amounts and source evidence are retained in the private audit package, not in application assets. No reassignment is safe based on labels alone. The export does not establish net/gross, tax, supplier identity or payment evidence. Months without captured costs cannot establish an actual margin.
 
 ## Minimal safe implementation
 - Existing historical report values preserved; explicit provisional warning added to UI/export and removed blanket reconciled claim.
