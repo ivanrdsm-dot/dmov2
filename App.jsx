@@ -9571,7 +9571,7 @@ function Presupuestos(){
     setForm({
       ...billingFields(p),empresa:p.empresa||"",confirmApproval:false,
       cliente:p.cliente||"", contacto:p.contacto||"",
-      fecha:p.fecha||today, vigencia:p.vigencia||in15,
+      fecha:p.fecha||today, vigencia:p.vigencia??"",
       conceptos:(p.conceptos&&p.conceptos.length?p.conceptos:[{desc:"",cant:1,precio:0}]).map(c=>({desc:c.desc||"",cant:Number(c.cant)||0,precio:Number(c.precio)||0})),
       iva:p.ivaAmt>0||p.iva!==false,
       status:p.status||"Borrador",
