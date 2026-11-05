@@ -25,10 +25,19 @@
     <script>
       // Registra Service Worker para PWA (installable + offline support)
       // Si falla el registro no bloquea la app
+      // En local (npm run dev / preview) NO se registra: el SW guarda los assets
+      // cache-first y en desarrollo los módulos no llevan hash, así que servía
+      // código viejo. Si quedó uno registrado de antes, se quita con su caché.
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
-        });
+        var esLocal = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) || /\.(localhost|test)$/.test(location.hostname);
+        if (esLocal) {
+          navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); }).catch(function () {});
+          if (window.caches) caches.keys().then(function (ks) { ks.filter(function (k) { return k.indexOf('dmov-') === 0; }).forEach(function (k) { caches.delete(k); }); }).catch(function () {});
+        } else {
+          window.addEventListener('load', () => {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+          });
+        }
       }
     </script>
   </head>

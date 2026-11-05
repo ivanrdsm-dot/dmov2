@@ -21,7 +21,7 @@ import {
   Phone, Camera, LogOut, Play, Square, Radio, Flag,
   CreditCard, Paperclip, History,
 } from "lucide-react";
-import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO } from "./domain";
+import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO, PL_ORDEN_DIRECTOS, PLANES, planPorNumero, etiquetaPlan, normalizarPlan, planDeFactura, planearNormalizacionPlanes, etapaFactura, ETAPAS_FACTURA, facturasLigadas, buscarCotizaciones, rangoPeriodo, etiquetaPeriodo, filasPorPeriodo, ingresosPorColumna, pctGuardado, kpisCierre, resumenEstimados, conciliarIngresos, conciliarCxC, coincideAlias, fechaLocalISO, mismaEmpresa, clienteIdCorrecto } from "./domain";
 /* mapbox-gl (1.77MB) es LAZY: ver ensureMapbox()/useMapboxReady() más abajo.
    Ninguna de las 3 apps lo paga en el primer paint; carga al montar un mapa. */
 /* ─── CODE-SPLITTING (F5): librerías pesadas bajo demanda ──────────────────
@@ -1109,7 +1109,7 @@ const CLIENTE_PLANES = [
   },
   {
     id:"canon",
-    aliases:["CANON","CANNON"],
+    aliases:["CANON","CANNON","G-MAP","GMAP","G MAP"],
     cliente:"Canon",
     empresa:"G-MAP OPERADORA SA DE CV",
     plan:"202003 GMAP → Canon Promotores",
@@ -1230,18 +1230,25 @@ const SOLICITUD_FACTURA_CONFIG = {
 
 /* Quita acentos y normaliza para matching tolerante */
 const _norm = (s)=>(s||"").toString().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").trim();
-/* Busca el plan correspondiente al cliente (matching fuzzy por alias) */
-function lookupPlanForCliente(rawCliente){
+/* Busca el cliente del catálogo que corresponde a un texto, por alias de
+   PALABRA COMPLETA (domain.coincideAlias). Antes era por subcadena y daba
+   falsos positivos: "G-MAP OPERADORA" caía en MAP (ventas de G-MAP sumadas a
+   Marketing & Promotion), "Abbott" en Robots (alias BOT), "SC" en SCJ.
+   opts.prefijo=true solo en captura interactiva: acepta lo que se va
+   escribiendo (3+ letras con las que empieza un alias). */
+function lookupPlanForCliente(rawCliente,opts){
   if(!rawCliente) return null;
-  const q = _norm(rawCliente);
-  // Match exacto o por alias contenido
+  // La razón social exacta manda sobre cualquier alias
+  const q=_norm(rawCliente);
+  const porEmpresa=CLIENTE_PLANES.filter(cp=>cp.empresa!=="POR DEFINIR"&&_norm(cp.empresa)===q);
+  if(porEmpresa.length===1) return porEmpresa[0];
   for(const cp of CLIENTE_PLANES){
-    if(cp.aliases.some(a=>{
-      const an = _norm(a);
-      // Match si el query contiene el alias o viceversa (mínimo 3 chars para evitar falsos positivos)
-      if(an.length<3) return q===an;
-      return q===an||q.includes(an)||an.includes(q);
-    })) return cp;
+    if(cp.aliases.some(a=>coincideAlias(rawCliente,a))) return cp;
+  }
+  if(opts?.prefijo){
+    for(const cp of CLIENTE_PLANES){
+      if(cp.aliases.some(a=>coincideAlias(rawCliente,a,{prefijo:true}))) return cp;
+    }
   }
   return null;
 }
@@ -1265,7 +1272,7 @@ const CAT_PAGO = [
   {k:"Mantenimiento",      bucket:"Operación",     icon:"🔧"},
   {k:"Refacciones",        bucket:"Operación",     icon:"⚙️"},
   {k:"Llantas",            bucket:"Operación",     icon:"🛞"},
-  {k:"Operadores",         bucket:"Nómina",        icon:"👷"},
+  {k:"Operadores",         bucket:"Sueldos",        icon:"👷"},
   {k:"Maniobras",          bucket:"Operación",     icon:"💪"},
   {k:"Servicios externos", bucket:"Subcontrato",   icon:"🤝"},
   {k:"Papelería",          bucket:"Administración",icon:"📎"},
@@ -1742,6 +1749,25 @@ function buildAOA(header, rows){ return [header, ...rows]; }
 /* ═══════ HELPER: construye una hoja "Relación de Facturas" con formato Botmate
    Genera secciones por mes, subtotales, chips de estatus, grand totals.
    Retorna la hoja (ws) lista para appendear al workbook. */
+/* Hoja "Seguimiento": una fila por factura con su etapa, datos de intranet,
+   seguimiento con el cliente y cotización ligada. Tabla plana (filtrable). */
+function buildSeguimientoFacturasSheet(facts){
+  const cols=[["Folio interno",14],["Folio CFDI",11],["Mes",7],["Año",7],["Empresa",38],["Plan #",9],["Plan",34],["Subtotal",13],["Total",13],["Estado",17],["Etapa",13],["Subestado",11],["Folio intranet",13],["Fecha intranet",13],["Estatus intranet",34],["Director que autoriza",30],["Seguimiento",60],["Última respuesta",15],["Fecha de pago",13],["Cotización",16]];
+  const ws={};
+  cols.forEach(([h],c)=>setCell(ws,XLSX.utils.encode_cell({r:0,c}),h,styleColHeader));
+  facts.forEach((f,i)=>{
+    const e=etapaFactura(f),p=planPorNumero(planDeFactura(f)),r=i+1;
+    [f.folio||"",f.cfdiFolio||"",f.mesOp||"",f.anio||"",f.empresa||f.cliente||"",p?p.numero:"",f.planOverride||f.plan||"",Number(f.subtotal||f.monto||0),Number(f.total||0),f.status||"",e.etapa,e.subestado,
+     f.intranetFolio||"",f.intranetFecha||"",f.intranetEstatus||"",f.intranetDirector||"",f.seguimiento||"",f.seguimientoFecha||"",f.fechaPago||"",f.cotizacionFolio||f.presupuestoOrigenFolio||""]
+      .forEach((v,c)=>setCell(ws,XLSX.utils.encode_cell({r,c}),v,styleCell(r,{bg:r%2===0?XC.ROW_WHITE:XC.ROW_ALT,align:(c===7||c===8)?"right":"left"}),(c===7||c===8)?MONEY_FMT:undefined));
+  });
+  ws["!ref"]=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(facts.length,1),c:cols.length-1}});
+  ws["!cols"]=cols.map(([,w])=>({wch:w}));
+  ws["!rows"]=[{hpt:26}];
+  ws["!autofilter"]={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(facts.length,1),c:cols.length-1}})};
+  return ws;
+}
+
 function buildRelacionFacturasSheet(facts, brand, year){
   const MESES_FULL=["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO","JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"];
   const MESES_ABBR=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -1805,7 +1831,7 @@ function buildRelacionFacturasSheet(facts, brand, year){
       setCell(ws,XLSX.utils.encode_cell({r,c:0}),rowNumber,styleCell(r,{...cellBase,align:"center"}));
       setCell(ws,XLSX.utils.encode_cell({r,c:1}),f.empresa||f.cliente||"",styleCell(r,cellBase));
       setCell(ws,XLSX.utils.encode_cell({r,c:2}),f.plan?(f.plan+(f.servicio?" "+f.servicio:"")):(f.servicio||""),styleCell(r,cellBase));
-      setCell(ws,XLSX.utils.encode_cell({r,c:3}),f.folio||"",styleCell(r,{...cellBase,align:"center"}));
+      setCell(ws,XLSX.utils.encode_cell({r,c:3}),f.cfdiFolio||f.folio||"",styleCell(r,{...cellBase,align:"center"}));
       setCell(ws,XLSX.utils.encode_cell({r,c:4}),fechaStr,styleCell(r,{...cellBase,align:"center"}));
       setCell(ws,XLSX.utils.encode_cell({r,c:5}),f.periodo||f.solicitante||"",styleCell(r,cellBase));
       setCell(ws,XLSX.utils.encode_cell({r,c:6}),sub,styleCell(r,{...cellBase,align:"right"}),MONEY_FMT);
@@ -2080,10 +2106,11 @@ function buildCostosOperativosSheet(viat, brand, year){
 // Construye la hoja (ws) de una sola factura. Retorna {ws, sheetName} o null.
 function buildSolicitudWs(factura){
   const ws = {};
-  const matched = factura._clienteId
-    ? CLIENTE_PLANES.find(cp=>cp.id===factura._clienteId)
-    : (CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim())
-       || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||""));
+  // _clienteId manda; si no existe en CLIENTE_PLANES (planes nuevos del catálogo
+  // PLANES: 3M, Electrolit, Loreal…) los datos fiscales salen de la empresa.
+  const matched = (factura._clienteId && CLIENTE_PLANES.find(cp=>cp.id===factura._clienteId))
+    || CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim())
+    || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||"");
   if(!matched) return null;
   const cfg = SOLICITUD_FACTURA_CONFIG;
 
@@ -2243,7 +2270,17 @@ function buildSolicitudWs(factura){
   // ROW 20 — ENTRE EMPRESAS AMBOS No. DE PLAN (← este es el plan del cliente)
   // Si la factura tiene planOverride (ej: "Mucha Chamba" en TACRE) usa ese
   setS("A20","ENTRE EMPRESAS AMBOS No. DE PLAN:",labelStyle);
-  const planFinal = factura.planOverride || matched.planSolicitud || matched.plan;
+  // Plan del catálogo cerrado (PLANES): si la factura trae un plan de la MISMA
+  // empresa fiscal, ese es el que va en la solicitud (ej. 210212 Campari Summit
+  // en vez del plan por defecto de Actnow). Se respeta el texto oficial de
+  // CLIENTE_PLANES cuando existe para ese número.
+  const planCat = planPorNumero(planDeFactura(factura));
+  let planCatTxt = "";
+  if(planCat && planCat.empresa===matched.empresa){
+    const oficial = CLIENTE_PLANES.find(cp=>(cp.planSolicitud||"").startsWith("P-"+planCat.numero+" "));
+    planCatTxt = oficial ? oficial.planSolicitud : "P-"+planCat.numero+" "+planCat.nombre;
+  }
+  const planFinal = factura.planOverride || planCatTxt || matched.planSolicitud || matched.plan;
   setS("B20",planFinal,valBoldStyle);
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:19,c}),"",valBoldStyle);
   merges.push({s:{r:19,c:1},e:{r:19,c:5}});
@@ -2299,7 +2336,7 @@ async function downloadSolicitudFacturaXLSX(factura){
   }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, result.ws, result.sheetName);
-  const fecha = new Date().toISOString().slice(0,10);
+  const fecha = fechaLocalISO();
   XLSX.writeFile(wb, `Solicitud_${(factura.folio||"sin-folio")}_${fecha}.xlsx`);
 }
 
@@ -2335,7 +2372,7 @@ async function downloadTodasSolicitudesXLSX(facts, mesLabel){
     alert("Ninguna factura pudo identificarse.\nVerifica que los registros tengan empresa o _clienteId reconocido.\nSkipped: "+skipped.join(", "));
     return;
   }
-  const fecha = new Date().toISOString().slice(0,10);
+  const fecha = fechaLocalISO();
   const label = (mesLabel||"facturas").replace(/[\s/\\?*[\]:]/g,"-").slice(0,30);
   XLSX.writeFile(wb, `Solicitudes_${label}_${fecha}.xlsx`);
   if(skipped.length>0) console.warn("Facturas sin cliente identificado (omitidas):",skipped);
@@ -2405,7 +2442,7 @@ async function exportFacturasXLSX(facts, mesFiltro){
   if(!facts || facts.length===0){alert("No hay facturas para exportar");return;}
   const BRAND = "DMVIMIENTO";
   const anio = new Date().getFullYear();
-  const fechaTag = new Date().toISOString().slice(0,10);
+  const fechaTag = fechaLocalISO();
   const wb = XLSX.utils.book_new();
 
   // Obtén los viáticos también para las hojas P&L + Costos
@@ -2426,6 +2463,9 @@ async function exportFacturasXLSX(facts, mesFiltro){
     const ws3 = buildCostosOperativosSheet(viat, BRAND, anio);
     XLSX.utils.book_append_sheet(wb, ws3, `Costos ${anio}`);
   }
+
+  // Hoja final: seguimiento (etapa, intranet, respuesta del cliente, cotización)
+  XLSX.utils.book_append_sheet(wb, buildSeguimientoFacturasSheet(facts), "Seguimiento");
 
   // Descargar
   const mesTag = mesFiltro?"_"+mesFiltro:"";
@@ -3308,6 +3348,7 @@ function getNavSections(rol){
       {id:"dashboard",    label:"Dashboard",         icon:LayoutDashboard},
       {id:"ejecutivo",    label:"Dashboard Ejecutivo", icon:TrendingUp, badge:"★", adminOnly:true},
       {id:"finanzas",     label:"Portal Financiero",  icon:BarChart2, badge:"CFO", adminOnly:true},
+      {id:"cierre",       label:"Cierre contable",    icon:FolderOpen, badge:"NEW", adminOnly:true},
       {id:"cotizador",    label:"Cotizador Pro",     icon:DollarSign, badge:"★",  adminOnly:true},
       {id:"presupuestos", label:"Presupuestos",      icon:ClipboardList,           adminOnly:true},
       {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
@@ -3420,6 +3461,8 @@ function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout}){
 function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],setView}){
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const HOY=new Date(); const ANIO=HOY.getFullYear(); const MES_IDX=HOY.getMonth();
+  // Costos con estimado:true del año (cierre sep-2026: jul+ago repartido 50/50)
+  const estEjec=resumenEstimados(viat.filter(v=>Number(v.anio)===ANIO));
 
   // Vencimientos de flota y licencias (suscripción propia — datos chicos)
   const [unidadesEx,setUnidadesEx]=useState([]);
@@ -3427,8 +3470,8 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
   useEffect(()=>onSnapshot(query(collection(db,"unidades"),limit(300)),s=>setUnidadesEx(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
   useEffect(()=>onSnapshot(query(collection(db,"choferes"),limit(300)),s=>setChoferesEx(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
   const vencimientos=useMemo(()=>{
-    const hoyStr=HOY.toISOString().slice(0,10);
-    const en30=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+    const hoyStr=fechaLocalISO(HOY);
+    const en30=fechaLocalISO(new Date(Date.now()+30*86400000));
     const out=[];
     const chk=(fecha,tipo,quien,ir)=>{
       if(!fecha) return;
@@ -3540,7 +3583,7 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:14}}>
         <KpiCard icon={TrendingUp} color={GREEN} label={"VENTAS "+MESES[MES_IDX].toUpperCase()} value={fmt(kpi.ingActual)} sub={(kpi.crecimiento>=0?"▲ +":"▼ ")+kpi.crecimiento.toFixed(1)+"% vs "+(MES_IDX>0?MESES[MES_IDX-1]:"—")}/>
         <KpiCard icon={DollarSign} color={A} label={"VENTAS "+ANIO} value={fmt(kpi.ingAnio)} sub={kpi.nFacturas+" facturas · ticket prom "+fmt(kpi.ticketProm)}/>
-        <KpiCard icon={BarChart2} color={kpi.margen>=25?GREEN:kpi.margen>=10?AMBER:ROSE} label="MARGEN BRUTO" value={kpi.margen.toFixed(1)+"%"} sub={"Utilidad "+fmt(kpi.ingAnio-kpi.gasAnio)+" · costos "+fmt(kpi.gasAnio)}/>
+        <KpiCard icon={BarChart2} color={kpi.margen>=25?GREEN:kpi.margen>=10?AMBER:ROSE} label="MARGEN BRUTO" value={kpi.margen.toFixed(1)+"%"} sub={"Utilidad "+fmt(kpi.ingAnio-kpi.gasAnio)+" · costos "+fmt(kpi.gasAnio)+(estEjec.n>0?" (incluye estimados "+estEjec.meses.join(", ")+")":"")}/>
         <KpiCard icon={FileText} color={BLUE} label="POR COBRAR" value={fmt(kpi.cxc)} sub={kpi.nVencidas+" vencidas por "+fmt(kpi.cxcVencida)} onClick={()=>setView&&setView("facturas")}/>
       </div>
 
@@ -3681,7 +3724,7 @@ async function exportEstadoResultadosXLSX(er, analisis, periodoLabel){
   const A1=(c,row)=>XLSX.utils.encode_cell({r:row,c});
 
   put("A1",`ESTADO DE RESULTADOS — D EN MOVIMIENTO SA DE CV`,styleTitle); merges.push({s:{r:0,c:0},e:{r:0,c:3}}); r=1;
-  put("A2",`Periodo: ${periodoLabel} · cifras sin IVA · conciliado con balanza · generado ${new Date().toISOString().slice(0,10)}`,styleSubtitle); merges.push({s:{r:1,c:0},e:{r:1,c:3}}); r=2;
+  put("A2",`Periodo: ${periodoLabel} · cifras sin IVA · conciliado con balanza · generado ${fechaLocalISO()}`,styleSubtitle); merges.push({s:{r:1,c:0},e:{r:1,c:3}}); r=2;
   ["CONCEPTO","MONTO","% VS VENTAS",""].forEach((h,i)=>put(A1(i,r),h,styleColHeader)); r++;
 
   const linea=(label,monto,pct,{bold=false,neg=false,total=false}={})=>{
@@ -3960,20 +4003,45 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     });
     Object.values(bucketRows).forEach(a=>a.sort((x,y)=>y.monto-x.monto));
 
-    return {er,erPrev,topClientes,topProveedores,provFrecuente,topOperadores,topUnidades,analisis,peso,nMeses,ingTotales,serie,bucketRows};
+    const estimados=resumenEstimados(viatAll.filter(v=>enRango(v.mes,v.anio)));
+    return {er,erPrev,topClientes,topProveedores,provFrecuente,topOperadores,topUnidades,analisis,peso,nMeses,ingTotales,serie,bucketRows,estimados};
   },[facts,viat,pagosProv,desde,hasta,clienteF]);
   const [drillBucket,setDrillBucket]=useState(null);
 
   const {er}=data;
   const F=(n)=>(n<0?"−$":"$")+Math.abs(Math.round(n)).toLocaleString("es-MX");
   const pctTxt=(p)=>p==null?"—":p.toFixed(1)+"%";
-  const lineaER=(label,monto,pct,opts={})=>(
-    <div style={{display:"grid",gridTemplateColumns:"1fr 140px 70px",gap:8,padding:opts.total?"10px 14px":"6px 14px",background:opts.total?(monto>=0?GREEN:ROSE)+"0d":opts.sub?"transparent":"transparent",borderTop:opts.total?"2px solid "+(monto>=0?GREEN:ROSE)+"40":opts.head?"1px solid "+BORDER:"none",borderRadius:opts.total?10:0,alignItems:"center"}}>
-      <span style={{fontSize:opts.total?14:12.5,fontWeight:opts.total?800:opts.head?700:500,color:opts.sub?MUTED:TEXT,paddingLeft:opts.sub?16:0,fontFamily:opts.total?DISP:SANS}}>{label}</span>
-      <span style={{fontFamily:MONO,fontSize:opts.total?15:12.5,fontWeight:opts.total?800:600,textAlign:"right",color:opts.total?(monto>=0?GREEN:ROSE):opts.neg?ROSE:TEXT}}>{opts.neg?"("+F(monto).replace("−","")+")":F(monto)}</span>
+  // Niveles: total (resultado destacado) · head (subtotal de etapa) · group
+  // (subtotal de subgrupo) · item (bucket individual, indentado) · sub (línea normal)
+  const lineaER=(label,monto,pct,opts={})=>{
+    const padL = opts.item?32 : opts.group?18 : opts.sub?16 : 0;
+    return(
+    <div key={label} style={{display:"grid",gridTemplateColumns:"1fr 140px 62px",gap:8,padding:opts.total?"10px 14px":opts.item?"3px 14px":"6px 14px",
+      background:opts.total?(monto>=0?GREEN:ROSE)+"0d":opts.group?"#f5f7fa":"transparent",
+      borderTop:opts.total?"2px solid "+(monto>=0?GREEN:ROSE)+"40":opts.head?"1px solid "+BORDER:"none",
+      borderRadius:opts.total?10:opts.group?6:0,alignItems:"center"}}>
+      <span style={{fontSize:opts.total?14:opts.item?11.5:12.5,fontWeight:opts.total?800:(opts.head||opts.group)?700:opts.item?400:500,
+        color:opts.item?MUTED:opts.sub?MUTED:TEXT,paddingLeft:padL,
+        fontFamily:opts.total?DISP:SANS,textTransform:opts.group?"uppercase":"none",letterSpacing:opts.group?"0.03em":"normal"}}>{label}</span>
+      <span style={{fontFamily:MONO,fontSize:opts.total?15:opts.item?11:12.5,fontWeight:opts.total?800:opts.item?400:600,textAlign:"right",
+        color:opts.total?(monto>=0?GREEN:ROSE):opts.neg?ROSE:opts.item?MUTED:TEXT}}>{opts.neg?"("+F(monto).replace("−","")+")":F(monto)}</span>
       <span style={{fontFamily:MONO,fontSize:11,textAlign:"right",color:MUTED}}>{pctTxt(pct)}</span>
-    </div>
-  );
+    </div>);
+  };
+  // Renderiza una etapa (costos directos / gastos operativos) con subgrupos y sus buckets
+  const seccionCostos=(seccion,orden)=>{
+    const sub=seccion.subgrupos||{};
+    const grupos=orden?orden.filter(g=>sub[g]):Object.keys(sub);
+    const extra=Object.keys(sub).filter(g=>!grupos.includes(g)); // grupos no listados en orden
+    return [...grupos,...extra].map(g=>{
+      const gd=sub[g]; if(!gd) return null;
+      const buckets=Object.entries(gd.detalle).sort((a,b)=>b[1]-a[1]);
+      return(<div key={g}>
+        {lineaER(g,gd.total,er.ventas>0?gd.total/er.ventas*100:null,{group:true,neg:true})}
+        {buckets.map(([bk,v])=>lineaER(bk,v,er.ventas>0?v/er.ventas*100:null,{item:true,neg:true}))}
+      </div>);
+    });
+  };
   const tipoChip={resumen:["#0f2040","RESUMEN"],riesgo:[ROSE,"RIESGO"],atencion:[AMBER,"ATENCIÓN"],fortaleza:[GREEN,"FORTALEZA"],ok:[BLUE,"DATO"],recomendaciones:[A,"ACCIONES"]};
 
   return(
@@ -4024,17 +4092,22 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
             <div style={{fontFamily:DISP,fontWeight:800,fontSize:16}}>Estado de Resultados</div>
             <div style={{fontSize:11,color:MUTED,fontFamily:MONO,marginTop:2}}>{desde===hasta?desde:desde+" – "+hasta} {ANIO} · cifras sin IVA · conciliado con balanza</div>
           </div>
-          {lineaER("Ingresos por servicios",er.ventas,100,{head:true})}
-          {Object.entries(er.costosDirectos.detalle).sort((a,b)=>b[1]-a[1]).map(([k,v])=>lineaER(k,v,er.ventas>0?v/er.ventas*100:null,{sub:true,neg:true}))}
-          {lineaER("(−) Costos directos",er.costosDirectos.total,er.costosDirectos.pct,{neg:true,head:true})}
-          {lineaER("UTILIDAD BRUTA",er.utilidadBruta.total,er.utilidadBruta.pct,{total:true})}
-          {Object.entries(er.gastosOperativos.detalle).sort((a,b)=>b[1]-a[1]).map(([k,v])=>lineaER(k,v,er.ventas>0?v/er.ventas*100:null,{sub:true,neg:true}))}
-          {lineaER("(−) Gastos operativos",er.gastosOperativos.total,er.gastosOperativos.pct,{neg:true,head:true})}
-          {lineaER("EBITDA / UTILIDAD OPERATIVA",er.ebitda.total,er.ebitda.pct,{total:true})}
-          {lineaER("(−) Impuestos y derechos",er.impuestos.total,er.impuestos.pct,{neg:true})}
-          {lineaER("(−) Gastos financieros",er.financieros.total,er.financieros.pct,{neg:true})}
-          {lineaER("UTILIDAD NETA",er.utilidadNeta.total,er.utilidadNeta.pct,{total:true})}
-          <div style={{padding:"10px 14px 0",fontSize:10.5,color:MUTED,lineHeight:1.5}}>{er.notas.map((n,i)=><div key={i}>· {n}</div>)}</div>
+          {lineaER("INGRESOS POR SERVICIOS",er.ventas,100,{head:true})}
+          {lineaER("(−) COSTO DIRECTO DEL SERVICIO",er.costosDirectos.total,er.costosDirectos.pct,{neg:true,head:true})}
+          {seccionCostos(er.costosDirectos,PL_ORDEN_DIRECTOS)}
+          {lineaER("= UTILIDAD BRUTA",er.utilidadBruta.total,er.utilidadBruta.pct,{total:true})}
+          {er.gastosOperativos.total>0&&<>
+            {lineaER("(−) GASTOS DE ADMINISTRACIÓN Y ESTRUCTURA",er.gastosOperativos.total,er.gastosOperativos.pct,{neg:true,head:true})}
+            {seccionCostos(er.gastosOperativos)}
+          </>}
+          {lineaER("= EBITDA / UTILIDAD OPERATIVA",er.ebitda.total,er.ebitda.pct,{total:true})}
+          {(er.impuestos.total>0||er.financieros.total>0)&&lineaER("(−) OTROS EGRESOS",er.impuestos.total+er.financieros.total,er.ventas>0?(er.impuestos.total+er.financieros.total)/er.ventas*100:null,{neg:true,head:true})}
+          {er.impuestos.total>0&&lineaER("Impuestos y derechos",er.impuestos.total,er.impuestos.pct,{item:true,neg:true})}
+          {er.financieros.total>0&&lineaER("Gastos financieros (comisiones)",er.financieros.total,er.financieros.pct,{item:true,neg:true})}
+          {lineaER("= UTILIDAD NETA",er.utilidadNeta.total,er.utilidadNeta.pct,{total:true})}
+          <div style={{padding:"10px 14px 0",fontSize:10.5,color:MUTED,lineHeight:1.5}}>{er.notas.map((n,i)=><div key={i}>· {n}</div>)}
+            {data.estimados.n>0&&<div style={{marginTop:4,color:AMBER,fontWeight:600}}>· <EstimadoTag/> Los costos incluyen {data.estimados.n} registros estimados en {data.estimados.meses.join(" y ")} ({fmt(data.estimados.monto*(data.peso??1))}). {NOTA_ESTIMADO_SEP26}.</div>}
+          </div>
         </div>
 
         {/* ══ ANÁLISIS DEL CFO ══ */}
@@ -4271,7 +4344,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
             <div>
               <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Costos</div>
               <div style={{fontFamily:MONO,fontSize:34,fontWeight:900,color:"#fb7185",lineHeight:1,letterSpacing:"-0.02em"}}>{fmtK(cosYtd)}</div>
-              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{ingYtd>0?Math.round(cosYtd/ingYtd*100)+"% de los ingresos":"—"}</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{ingYtd>0?Math.round(cosYtd/ingYtd*100)+"% de los ingresos":"—"}{plYtd.some(d=>d.nEstimados>0)&&<EstimadoTag title={"Incluye costos estimados en "+plYtd.filter(d=>d.nEstimados>0).map(d=>d.mes).join(", ")+" · "+NOTA_ESTIMADO_SEP26}/>}</div>
             </div>
             <div>
               <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Utilidad</div>
@@ -4748,7 +4821,7 @@ function Cotizador({onSaved}){
     if(!canSave){showT("Agrega al menos un destino","err");return;}
     try{
       const q=buildQ();
-      const vencimiento = new Date(Date.now()+15*86400000).toISOString().slice(0,10);
+      const vencimiento = fechaLocalISO(new Date(Date.now()+15*86400000));
       const cotRef = await addDoc(collection(db,"cotizaciones"),{
         ...q,
         recurrente: !!recurrente,
@@ -4766,7 +4839,7 @@ function Cotizador({onSaved}){
         await addDoc(collection(db,"presupuestos"),{
           folio:"PRE-"+uid(),
           cliente:q.cliente, contacto:q.contacto||"",
-          fecha:new Date().toISOString().slice(0,10),
+          fecha:fechaLocalISO(),
           vigencia:vencimiento,
           conceptos:[{desc:(q.modoLabel||"Servicio logístico")+" — "+(q.destino||"")+(q.vehiculoLabel?" · "+q.vehiculoLabel:""),cant:1,precio:sub}],
           subtotal:sub, ivaAmt, total:q.total, iva:true,
@@ -4971,7 +5044,7 @@ function Cotizador({onSaved}){
               <Inp label="Contacto" value={contacto} onChange={e=>setContacto(e.target.value)} placeholder="Nombre del contacto"/>
               <Spin label="Plazo de entrega (días)" value={plazo} onChange={setPlazo} min={1} max={90}/>
             </div>
-            {(()=>{const m=lookupPlanForCliente(cliente);return m?<div style={{marginTop:8,fontSize:11,color:m.color,fontWeight:700,padding:"6px 10px",background:m.color+"08",borderRadius:7,border:"1px solid "+m.color+"30",display:"flex",alignItems:"center",gap:5}}><CheckCircle size={11}/>Cliente identificado: <strong>{m.cliente}</strong> · {m.plan}</div>:null;})()}
+            {(()=>{const m=lookupPlanForCliente(cliente,{prefijo:true});return m?<div style={{marginTop:8,fontSize:11,color:m.color,fontWeight:700,padding:"6px 10px",background:m.color+"08",borderRadius:7,border:"1px solid "+m.color+"30",display:"flex",alignItems:"center",gap:5}}><CheckCircle size={11}/>Cliente identificado: <strong>{m.cliente}</strong> · {m.plan}</div>:null;})()}
           </S>
 
           {/* ══ LOCAL ══ */}
@@ -5029,7 +5102,7 @@ function Cotizador({onSaved}){
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {fCiudades.length>0&&<Tag color={A}>{fCiudades.length} ciudad(es) · {fmt(fBaseTotal)}</Tag>}
                   {fCiudades.length>0&&<button onClick={()=>setShowComparador(v=>!v)} className="btn" style={{fontSize:10,fontWeight:700,color:showComparador?VIOLET:"#fff",background:showComparador?VIOLET+"15":"linear-gradient(135deg,"+VIOLET+","+VIOLET+"cc)",border:"1.5px solid "+VIOLET+(showComparador?"":"00"),borderRadius:8,padding:"4px 9px",cursor:"pointer"}}>⚖️ Comparar</button>}
-                  {fCiudades.length>0&&<button onClick={()=>{const f=new Date().toISOString().slice(0,10);exportCotizadorXLSX({modo,cliente,notas,ciudades:fCiudades,veh:fVeh,total:fTotal,vehLabel:fVD?.label||"",fecha:f});saveToHistorial({modo,cliente,notas,ciudades:fCiudades.map(c=>c.c),veh:fVeh,total:fTotal,fecha:f});showT("✓ Excel descargado");}} className="btn" style={{fontSize:10,fontWeight:700,color:"#fff",background:"linear-gradient(135deg,"+GREEN+","+GREEN+"cc)",border:"none",borderRadius:8,padding:"4px 9px",cursor:"pointer"}}>📥 Excel</button>}
+                  {fCiudades.length>0&&<button onClick={()=>{const f=fechaLocalISO();exportCotizadorXLSX({modo,cliente,notas,ciudades:fCiudades,veh:fVeh,total:fTotal,vehLabel:fVD?.label||"",fecha:f});saveToHistorial({modo,cliente,notas,ciudades:fCiudades.map(c=>c.c),veh:fVeh,total:fTotal,fecha:f});showT("✓ Excel descargado");}} className="btn" style={{fontSize:10,fontWeight:700,color:"#fff",background:"linear-gradient(135deg,"+GREEN+","+GREEN+"cc)",border:"none",borderRadius:8,padding:"4px 9px",cursor:"pointer"}}>📥 Excel</button>}
                 </div>
               </div>
               {/* Comparador de vehículos */}
@@ -5645,8 +5718,8 @@ function ImportRutasModal({onClose,choferes,showT}){
 
 /* ─── MODAL DE CAPACIDAD OPERATIVA ───────────────────────────────────────── */
 function CapacidadModal({onClose,rutas,choferes}){
-  const hoy = new Date().toISOString().slice(0,10);
-  const manana = new Date(Date.now()+86400000).toISOString().slice(0,10);
+  const hoy = fechaLocalISO();
+  const manana = fechaLocalISO(new Date(Date.now()+86400000));
   const disponibles = choferes.filter(c=>c.status==="Disponible").length;
   const enRuta = choferes.filter(c=>c.status==="En ruta").length;
   // Rutas por tipo vehículo
@@ -6322,8 +6395,8 @@ function PlanificadorRutas(){
               if(!cliente.trim()){showT("Agrega un cliente primero","err");return;}
               if(stops.filter(s=>!s.isOrigin).length===0){showT("Agrega al menos un destino","err");return;}
               // Construye conceptos detallados para el presupuesto
-              const today=new Date().toISOString().slice(0,10);
-              const in15=new Date(Date.now()+15*86400000).toISOString().slice(0,10);
+              const today=fechaLocalISO();
+              const in15=fechaLocalISO(new Date(Date.now()+15*86400000));
               const conceptos=[];
               const destinos=stops.filter(s=>!s.isOrigin).map(s=>s.city).join(" → ");
               conceptos.push({desc:`Transporte ${vehD?.label||""} · ${destinos}`,cant:vans,precio:tarifaT/vans});
@@ -6918,7 +6991,7 @@ function BitacoraImport({onClose,showT}){
           let fechaStr = "";
           if(fecha instanceof Date) fechaStr = fecha.toISOString().slice(0,10);
           else if(typeof fecha==="string"&&fecha) fechaStr = fecha;
-          const matched = lookupPlanForCliente(cliente);
+          const matched = lookupPlanForCliente(cliente,{prefijo:true});
           allRows.push({
             sheet: sheetName,
             fecha: fechaStr,
@@ -6987,7 +7060,7 @@ function BitacoraImport({onClose,showT}){
         const ivaAmt = defaultIVA?subtotal*.16:0;
         const total = subtotal+ivaAmt;
         const fechas = itemsConMonto.map(it=>it.fecha).filter(Boolean).sort();
-        const fechaIni = fechas[0]||new Date().toISOString().slice(0,10);
+        const fechaIni = fechas[0]||fechaLocalISO();
         const fechaFin = fechas[fechas.length-1]||fechaIni;
         const dIni = new Date(fechaIni); const dFin = new Date(fechaFin);
         const mesOp = MESES[dFin.getMonth()];
@@ -7004,7 +7077,7 @@ function BitacoraImport({onClose,showT}){
           iva: defaultIVA,
           status: "Pendiente",
           notas: `Generada desde bitácora · ${itemsConMonto.length} servicio(s) · ${fechaIni} a ${fechaFin}`,
-          fechaEmision: new Date().toISOString().slice(0,10),
+          fechaEmision: fechaLocalISO(),
           fechaVenc: venc,
           emailCliente: "",
           folio: "FAC-"+uid(),
@@ -7141,6 +7214,41 @@ function BitacoraImport({onClose,showT}){
   );
 }
 
+/* ── Facturación: semáforo de etapa, texto de plan y facturas ligadas ───────
+   La lógica vive en domain.ts (etapaFactura / PLANES / facturasLigadas). */
+const ETAPA_COLOR = {Solicitada:VIOLET,Emitida:BLUE,"En intranet":AMBER,Pagada:GREEN,Vencida:ROSE,Cancelada:MUTED};
+function EtapaChip({f}){
+  const e=etapaFactura(f);const c=ETAPA_COLOR[e.etapa]||MUTED;
+  return(
+    <span title={e.detalle?e.etapa+" · "+e.detalle:e.etapa} style={{display:"inline-flex",alignItems:"center",gap:5,background:c+"12",color:c,border:"1px solid "+c+"30",borderRadius:7,padding:"2px 8px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>
+      <span style={{width:6,height:6,borderRadius:"50%",background:c,flexShrink:0}}/>{e.etapa}{e.subestado&&<span style={{fontWeight:600,opacity:.85}}>· {e.subestado}</span>}
+    </span>
+  );
+}
+/* Texto que se guarda en `plan` al elegir del catálogo: reutiliza el texto ya
+   usado en CLIENTE_PLANES (no crea variantes nuevas); si no hay, "num → nombre". */
+function textoPlanCatalogo(p){
+  const cp=CLIENTE_PLANES.find(c=>normalizarPlan(c.plan)===p.numero);
+  return cp?cp.plan:etiquetaPlan(p);
+}
+/* Lista compacta de facturas ligadas a una cotización / presupuesto */
+function FacturasLigadasList({facturas=[],vacio="Sin facturas ligadas"}){
+  if(!facturas.length) return <span style={{fontSize:11,color:MUTED}}>{vacio}</span>;
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:5}}>
+      {facturas.map(f=>(
+        <div key={f.id} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11}}>
+          <span style={{fontFamily:MONO,fontWeight:700,color:TEXT}}>{f.cfdiFolio||f.folio||"—"}</span>
+          {f.cfdiFolio&&f.folio&&<span style={{fontFamily:MONO,fontSize:10,color:MUTED}}>{f.folio}</span>}
+          <EtapaChip f={f}/>
+          {f.intranetFolio&&<span style={{fontFamily:MONO,fontSize:10,color:MUTED}}>Intranet {f.intranetFolio}</span>}
+          <span style={{fontFamily:MONO,fontWeight:700,marginLeft:"auto"}}>{fmt(f.total||0)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Facturas({rol="admin"}){
   const isAdmin=rol==="admin";
   const [items,setItems]=useState([]);const [load,setLoad]=useState(true);
@@ -7154,8 +7262,18 @@ function Facturas({rol="admin"}){
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const ANIO=new Date().getFullYear();
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
-  const empty={mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:new Date().toISOString().slice(0,10),fechaVenc:"",emailCliente:"",planOverride:""};
+  // planOtro es solo de UI (plan fuera de catálogo → texto libre en planOverride); no se guarda.
+  const empty={mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:fechaLocalISO(),fechaVenc:"",emailCliente:"",planOverride:"",
+    planNumero:"",planOtro:false,rfc:"",cfdiFolio:"",intranetFolio:"",intranetFecha:"",intranetEstatus:"",intranetDirector:"",seguimiento:"",seguimientoFecha:"",cotizacionFolio:"",cotizacionId:"",fechaPago:""};
   const [form,setForm]=useState(empty);
+  const [etapaF,setEtapaF]=useState("todas");
+  const [cotQ,setCotQ]=useState("");
+  const [normPlan,setNormPlan]=useState(null); // ventana "Normalizar planes y clientes" abierta: {aplicando}
+  const [sinFechaPago,setSinFechaPago]=useState(false); // filtro: pagadas sin fecha de pago
+  // Cotizaciones y presupuestos: para ligar la factura con su origen comercial
+  const [cots,setCots]=useState([]);const [presups,setPresups]=useState([]);
+  useEffect(()=>onSnapshot(query(collection(db,"cotizaciones"),limit(2000)),s=>setCots(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
+  useEffect(()=>onSnapshot(query(collection(db,"presupuestos"),limit(2000)),s=>setPresups(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
   const sf=k=>e=>setForm(f=>({...f,[k]:e.target.type==="checkbox"?e.target.checked:e.target.value}));
 
   useEffect(()=>onSnapshot(collection(db,"facturas"),s=>{
@@ -7163,13 +7281,55 @@ function Facturas({rol="admin"}){
     setLoad(false);
   }),[]);
 
-  const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
-  const openEdit=f=>{setForm({mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||"",fechaEmision:f.fechaEmision||"",fechaVenc:f.fechaVenc||"",emailCliente:f.emailCliente||""});setEditItem(f);setModal(true);};
+  const openNew=()=>{setForm(empty);setEditItem(null);setCotQ("");setModal(true);};
+  const openEdit=f=>{
+    const num=planDeFactura(f); // texto del plan → número de catálogo (o planNumero ya guardado)
+    const pCat=planPorNumero(num);
+    // RFC: el guardado, o el del catálogo si el plan es de la misma empresa fiscal
+    const rfc=f.rfc||(pCat&&normEmpresa(f.empresa||f.cliente)===pCat.empresa?pCat.rfc:"");
+    setForm({mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||"",fechaEmision:f.fechaEmision||"",fechaVenc:f.fechaVenc||"",emailCliente:f.emailCliente||"",
+      planOverride:f.planOverride||"",planNumero:num||"",planOtro:!num&&!!(f.planOverride||f.plan),_clienteId:f._clienteId||"",rfc,
+      cfdiFolio:String(f.cfdiFolio||""),intranetFolio:String(f.intranetFolio||""),intranetFecha:f.intranetFecha||"",intranetEstatus:f.intranetEstatus||"",intranetDirector:f.intranetDirector||"",
+      seguimiento:f.seguimiento||"",seguimientoFecha:f.seguimientoFecha||"",cotizacionFolio:f.cotizacionFolio||f.presupuestoOrigenFolio||"",cotizacionId:f.cotizacionId||f.presupuestoOrigenId||"",fechaPago:f.fechaPago||""});
+    setEditItem(f);setCotQ("");setModal(true);
+  };
+
+  /* ── Plan del catálogo cerrado (PLANES) ──────────────────────────────────
+     Elegir plan autollena empresa, RFC y el director de intranet sugerido.
+     El director solo se sugiere si el campo está vacío o traía la sugerencia
+     del plan anterior (no pisa uno capturado a mano). */
+  const dirSugerido=(f,p)=>{
+    const prev=planPorNumero(f.planNumero)?.directorIntranet?.nombre||"";
+    return (!f.intranetDirector||f.intranetDirector===prev)?(p?.directorIntranet?.nombre||""):f.intranetDirector;
+  };
+  const pickPlan=v=>{
+    if(v==="__otro"){setForm(f=>({...f,planOtro:true,plan:f.planNumero?"":f.plan,planNumero:""}));return;}
+    if(!v){setForm(f=>({...f,planOtro:false,planNumero:"",plan:"",planOverride:""}));return;}
+    const p=planPorNumero(v);if(!p)return;
+    setForm(f=>({...f,planOtro:false,planNumero:p.numero,plan:textoPlanCatalogo(p),planOverride:"",empresa:p.empresa,rfc:p.rfc,
+      clienteId:p.clienteId,_clienteId:CLIENTE_PLANES.some(c=>c.id===p.clienteId)?p.clienteId:"",intranetDirector:dirSugerido(f,p)}));
+  };
+  // Cliente conocido (CLIENTE_PLANES) → empresa + su plan por defecto, vía catálogo
+  const aplicarCliente=(cp,extra)=>setForm(f=>{
+    const p=planPorNumero(normalizarPlan(cp.plan));
+    return {...f,empresa:cp.empresa,plan:cp.plan,planNumero:p?p.numero:"",planOtro:!p&&!!cp.plan,planOverride:"",rfc:cp.rfc||"",_clienteId:cp.id,
+      ...(p?{clienteId:p.clienteId}:{}),intranetDirector:dirSugerido(f,p),...(extra?extra(f):{})};
+  });
 
   const save=async()=>{
     if(!form.empresa||!form.subtotal){showT("Empresa y subtotal son requeridos","err");return;}
     const sub=parseFloat(form.subtotal)||0;const xIva=form.iva?sub*.16:0;const total=sub+xIva;
-    const data={...form,subtotal:sub,ivaAmt:xIva,total};
+    const {planOtro,...campos}=form;
+    const data={...campos,subtotal:sub,ivaAmt:xIva,total};
+    ["rfc","cfdiFolio","intranetFolio","intranetEstatus","intranetDirector","cotizacionFolio","planOverride"].forEach(k=>{data[k]=String(data[k]||"").trim();});
+    if(planOtro) data.planNumero="";
+    if(!data.cotizacionFolio) data.cotizacionId="";
+    // Fecha de pago: al marcar Pagada en esta edición sin capturarla, se asume hoy.
+    // Una factura que YA estaba pagada sin fecha no se sella con la fecha de hoy.
+    if(data.status==="Pagada"&&!data.fechaPago&&(!editItem||editItem.status!=="Pagada")) data.fechaPago=fechaLocalISO();
+    if(data.status!=="Pagada"&&!editItem?.fechaPago) delete data.fechaPago;
+    // Si cambia el texto del plan, el original se conserva una sola vez en planOriginal
+    if(editItem&&editItem.plan&&editItem.plan!==data.plan&&!editItem.planOriginal) data.planOriginal=editItem.plan;
     try{
       if(editItem){await updateDoc(doc(db,"facturas",editItem.id),data);showT("✓ Registro actualizado");}
       else{await addDoc(collection(db,"facturas"),{...data,folio:"FAC-"+uid(),createdAt:serverTimestamp()});showT("✓ Registro creado");}
@@ -7178,6 +7338,60 @@ function Facturas({rol="admin"}){
   };
   const del=async id=>{if(!confirm("¿Eliminar este registro?"))return;await deleteDoc(doc(db,"facturas",id));showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"facturas",id),{status});
+  /* Cambio de estado desde la tabla. "Pagada" necesita fecha de cobro (flujo de
+     efectivo, cartera y conciliación contra el cierre contable dependen de
+     ella): con saldo pendiente abre el registro de pago; si ya está cubierta
+     por abonos toma la fecha del último; si no hay importe, la de hoy. */
+  const cambiarStatus=(f,status)=>{
+    if(status!=="Pagada"||f.status==="Pagada") return updStatus(f.id,status);
+    if(isAdmin&&(Number(f.total)||0)>0&&saldoDe(f)>0.5){abrirPago(f);return;}
+    const ultimo=pagosDe(f).map(p=>p.fecha||"").sort().pop();
+    return updateDoc(doc(db,"facturas",f.id),{status,fechaPago:f.fechaPago||ultimo||fechaLocalISO()});
+  };
+
+  /* ── Normalizar planes (admin) ────────────────────────────────────────────
+     Recorre TODAS las facturas, lee el texto libre de `plan` y guarda el número
+     de catálogo en `planNumero`. No modifica `plan`. Primero muestra vista
+     previa; solo escribe al confirmar. */
+  const aplicarNormalizacion=async()=>{
+    const cambios=normData?.cambios||[];
+    if(!cambios.length) return;
+    setNormPlan(n=>({...n,aplicando:true}));
+    let ok=0;const errs=[];
+    for(let i=0;i<cambios.length;i+=20){
+      await Promise.all(cambios.slice(i,i+20).map(c=>
+        updateDoc(doc(db,"facturas",c.id),{
+          ...(c.cambiaPlan?{planNumero:c.a,...(c.de?{planNumeroAnterior:c.de}:{})}:{}),
+          ...(c.cambiaCliente?{clienteId:c.clienteA,...(c.clienteDe?{clienteIdAnterior:c.clienteDe}:{})}:{}),
+        })
+          .then(()=>{ok++;}).catch(()=>{errs.push(c.folio||c.id);})));
+    }
+    setNormPlan(null);
+    if(errs.length) showT(ok+" actualizadas · "+errs.length+" con error ("+errs.slice(0,3).join(", ")+")","err");
+    else showT("✓ "+ok+" factura"+(ok===1?"":"s")+" con plan y cliente normalizados");
+  };
+
+  // La vista previa se recalcula con los datos en vivo: al asignar un plan a
+  // mano, la factura sale sola de "sin resolver".
+  const normData=useMemo(()=>normPlan?planearNormalizacionPlanes(items):null,[normPlan,items]);
+  /* Asignar a mano el plan de una factura cuyo texto no se pudo leer. Guarda el
+     número y el texto del catálogo, conserva el texto anterior en planOriginal
+     y corrige el clienteId. No cambia la empresa de la factura. */
+  const asignarPlan=async(id,numero)=>{
+    const f=items.find(x=>x.id===id),p=planPorNumero(numero);
+    if(!f||!p) return;
+    const emp=f.empresa||f.cliente||"";
+    if(emp&&!mismaEmpresa(emp,p.empresa)&&!confirm("El plan "+p.numero+" · "+p.nombre+" se factura a "+p.empresa+", pero esta factura está a nombre de "+emp+".\n\n¿Asignar el plan de todos modos? (no cambia la empresa de la factura)")) return;
+    const texto=textoPlanCatalogo(p),anterior=f.plan||f.planOverride||"";
+    const cli=clienteIdCorrecto(f,p.numero),cliDe=String(f.clienteId||"");
+    try{
+      await updateDoc(doc(db,"facturas",id),{planNumero:p.numero,plan:texto,planOverride:"",
+        ...(f.planNumero&&String(f.planNumero)!==p.numero?{planNumeroAnterior:String(f.planNumero)}:{}),
+        ...(anterior&&anterior!==texto&&!f.planOriginal?{planOriginal:anterior}:{}),
+        ...(cli!==cliDe?{clienteId:cli,...(cliDe?{clienteIdAnterior:cliDe}:{})}:{})});
+      showT("✓ Plan "+p.numero+" asignado a "+(f.folio||"la factura"));
+    }catch(e){showT(e.message,"err");}
+  };
 
   /* ── F2: PAGOS ─────────────────────────────────────────────────────────
      Cada cobro (total o parcial) se registra en la colección `pagos` con fecha
@@ -7185,12 +7399,12 @@ function Facturas({rol="admin"}){
      pagos cubre el total, la factura pasa a Pagada automáticamente. */
   const [pagos,setPagos]=useState([]);
   const [pagoModal,setPagoModal]=useState(null); // factura seleccionada
-  const [pagoForm,setPagoForm]=useState({monto:"",fecha:new Date().toISOString().slice(0,10),metodo:"Transferencia",notas:""});
+  const [pagoForm,setPagoForm]=useState({monto:"",fecha:fechaLocalISO(),metodo:"Transferencia",notas:""});
   useEffect(()=>onSnapshot(query(collection(db,"pagos"),limit(3000)),s=>setPagos(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
   const pagosDe=f=>pagos.filter(p=>p.facturaId===f.id);
   const pagadoDe=f=>pagosDe(f).reduce((a,p)=>a+(Number(p.monto)||0),0);
   const saldoDe=f=>Math.max(0,(Number(f.total)||0)-pagadoDe(f));
-  const abrirPago=f=>{setPagoForm({monto:String(saldoDe(f)||""),fecha:new Date().toISOString().slice(0,10),metodo:"Transferencia",notas:""});setPagoModal(f);};
+  const abrirPago=f=>{setPagoForm({monto:String(saldoDe(f)||""),fecha:fechaLocalISO(),metodo:"Transferencia",notas:""});setPagoModal(f);};
   const registrarPago=async()=>{
     const f=pagoModal; if(!f) return;
     const monto=parseFloat(pagoForm.monto)||0;
@@ -7212,7 +7426,16 @@ function Facturas({rol="admin"}){
     }catch(e){showT(e.message,"err");}
   };
 
-  const filt=mesF==="todos"?items:items.filter(f=>f.mesOp===mesF);
+  const filtMes=mesF==="todos"?items:items.filter(f=>f.mesOp===mesF);
+  // "Pagada" sin fecha de pago ni abonos: no se sabe cuándo se cobró (flujo y conciliación)
+  const esPagadaSinFecha=f=>f.status==="Pagada"&&!f.fechaPago&&pagosDe(f).length===0;
+  const nSinFechaPago=filtMes.filter(esPagadaSinFecha).length;
+  const filt=(etapaF==="todas"?filtMes:filtMes.filter(f=>etapaFactura(f).etapa===etapaF)).filter(f=>!sinFechaPago||esPagadaSinFecha(f));
+  const nEtapa=filtMes.reduce((a,f)=>{const e=etapaFactura(f).etapa;a[e]=(a[e]||0)+1;return a;},{});
+  const estatusIntranetVistos=[...new Set(items.map(f=>String(f.intranetEstatus||"").trim()).filter(Boolean))].sort();
+  const planSel=planPorNumero(form.planNumero);
+  const cotLigada=form.cotizacionFolio?([...presups,...cots].find(d=>(form.cotizacionId&&d.id===form.cotizacionId)||String(d.folio||"").toUpperCase()===form.cotizacionFolio.trim().toUpperCase())||null):null;
+  const cotResultados=buscarCotizaciones(cotQ,cots,presups,6);
   const totTotal=filt.reduce((a,f)=>a+(f.total||0),0);
   const cobrado=filt.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const pendiente=filt.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
@@ -7234,7 +7457,8 @@ function Facturas({rol="admin"}){
           <p style={{color:MUTED,fontSize:13,marginTop:3}}>{isAdmin?"Control mensual · PDF descargable · Proyecciones anuales":"Registro de servicios prestados"}</p>
           {!isAdmin&&<p style={{color:BLUE,fontSize:12,fontWeight:600,marginTop:4,display:"flex",alignItems:"center",gap:5}}><Shield size={12}/>Los totales son visibles solo para administradores</p>}
         </div>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+          {isAdmin&&<button onClick={()=>setNormPlan({aplicando:false})} className="btn" title="Lee el texto libre del plan de cada factura y guarda el número de catálogo en planNumero (no borra el texto original)" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Hash size={13}/>Normalizar planes y clientes</button>}
           {isAdmin&&<button onClick={()=>setShowBitacora(true)} className="btn" title="Importar bitácora operativa (Excel) y clasificar automáticamente" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Upload size={13}/>Importar bitácora</button>}
           {isAdmin&&<button onClick={()=>downloadTodasSolicitudesXLSX(filt,mesF==="todos"?"Todas":mesF+"-"+(new Date().getFullYear()))} className="btn" title="Descargar TODAS las solicitudes de factura del mes en un solo XLSX (una pestaña por factura)" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><FileText size={13}/>Solicitudes (todas)</button>}
           {isAdmin&&<button onClick={()=>exportFacturasXLSX(filt,mesF==="todos"?null:mesF)} className="btn" title="Exportar facturas a Excel" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+GREEN+"40",color:GREEN,borderRadius:12,padding:"10px 16px",fontFamily:SANS,fontWeight:700,fontSize:13}}><Download size={13}/>XLSX Facturas</button>}
@@ -7331,6 +7555,19 @@ function Facturas({rol="admin"}){
         <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
           {["todos",...MESES].map(m=><button key={m} onClick={()=>setMesF(m)} className="btn" style={{padding:"5px 13px",borderRadius:8,border:"1.5px solid "+(mesF===m?A:BD2),background:mesF===m?A+"10":"#fff",color:mesF===m?A:MUTED,fontSize:12,fontWeight:mesF===m?700:500,cursor:"pointer"}}>{m==="todos"?"Todos":m}</button>)}
         </div>
+        {/* Filtro por etapa (semáforo): Solicitada → Emitida → En intranet → Pagada */}
+        <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
+          <span style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginRight:4}}>Etapa</span>
+          {["todas",...ETAPAS_FACTURA].map(e=>{
+            const c=e==="todas"?A:ETAPA_COLOR[e];const on=etapaF===e;const n=e==="todas"?filtMes.length:(nEtapa[e]||0);
+            return <button key={e} onClick={()=>setEtapaF(e)} className="btn" aria-pressed={on} style={{padding:"5px 11px",borderRadius:8,border:"1.5px solid "+(on?c:BD2),background:on?c+"12":"#fff",color:on?c:MUTED,fontSize:12,fontWeight:on?700:500,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+              {e!=="todas"&&<span style={{width:7,height:7,borderRadius:"50%",background:c}}/>}{e==="todas"?"Todas":e}<span style={{fontFamily:MONO,fontSize:10,opacity:.75}}>{n}</span>
+            </button>;
+          })}
+          {isAdmin&&(nSinFechaPago>0||sinFechaPago)&&<button onClick={()=>setSinFechaPago(v=>!v)} className="btn" aria-pressed={sinFechaPago} title="Facturas marcadas Pagada sin fecha de cobro ni abonos. Captura la fecha en la columna Estado." style={{marginLeft:"auto",padding:"5px 11px",borderRadius:8,border:"1.5px "+(sinFechaPago?"solid ":"dashed ")+AMBER,background:sinFechaPago?AMBER+"14":"#fff",color:AMBER,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+            <AlertCircle size={12}/>Pagadas sin fecha de pago<span style={{fontFamily:MONO,fontSize:10}}>{nSinFechaPago}</span>
+          </button>}
+        </div>
         {isAdmin&&mesF!=="todos"&&totTotal>0&&<div style={{display:"flex",gap:0,marginBottom:14,background:"#fff",border:"1px solid "+BORDER,borderRadius:12,overflow:"hidden"}}>
           {[[TEXT,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt||f.iva||0),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v],i)=>(
             <div key={l} style={{flex:1,padding:"11px 18px",borderLeft:i>0?"1px solid "+BORDER:"none",display:"flex",alignItems:"baseline",gap:10}}>
@@ -7342,15 +7579,15 @@ function Facturas({rol="admin"}){
         {load?<div style={{padding:40,textAlign:"center",color:MUTED}}>Cargando…</div>
         :<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
           {filt.length===0?<div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin registros. <button onClick={openNew} style={{color:A,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Crear →</button></div>
-          :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:960}}>
+          :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:1180}}>
             <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
               <th style={{padding:"8px 10px"}}><input type="checkbox" checked={filt.length>0&&filt.every(f=>selected.has(f.id))} onChange={()=>toggleAll(filt)} style={{cursor:"pointer",width:14,height:14}}/></th>
-              {["Folio","Mes/Año","Empresa","Solicitante","Plan","Servicio",...(isAdmin?["Subtotal","IVA","Total"]:[]),"Estado","Acciones"].map(h=><th key={h} style={{padding:"8px 10px",textAlign:["Subtotal","IVA","Total"].includes(h)?"right":"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+              {["Folio","Mes/Año","Empresa","Solicitante","Plan","Servicio",...(isAdmin?["Subtotal","IVA","Total"]:[]),"Etapa","Intranet","Estado","Acciones"].map(h=><th key={h} style={{padding:"8px 10px",textAlign:["Subtotal","IVA","Total"].includes(h)?"right":"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
             </tr></thead>
             <tbody>{filt.map((f,i)=>(
               <tr key={f.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER,background:selected.has(f.id)?GREEN+"08":"transparent"}}>
                 <td style={{padding:"8px 10px"}}><input type="checkbox" checked={selected.has(f.id)} onChange={()=>toggleSel(f.id)} style={{cursor:"pointer",width:14,height:14}}/></td>
-                <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:10,color:MUTED,whiteSpace:"nowrap"}}>{f.folio||"—"}</td>
+                <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:10,color:MUTED,whiteSpace:"nowrap"}}>{f.folio||"—"}{f.cfdiFolio&&<div style={{color:TEXT,fontWeight:700,marginTop:1}} title="Folio CFDI">{f.cfdiFolio}</div>}</td>
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}><span style={{background:A+"12",color:A,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700}}>{f.mesOp||"—"} {String(f.anio||"").slice(-2)}</span></td>
                 <td style={{padding:"8px 10px",fontWeight:700,fontSize:12,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.empresa||f.cliente||""}>{f.empresa||f.cliente||"—"}</td>
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.solicitante||"—"}</td>
@@ -7358,11 +7595,27 @@ function Facturas({rol="admin"}){
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.servicio||""}>{f.servicio||"—"}</td>
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11.5,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.subtotal||f.monto||0)}</td>}
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11,color:MUTED,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.ivaAmt||f.iva||0)}</td>}
-                {isAdmin?<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:12.5,fontWeight:800,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.total||0)}</td>:<td style={{padding:"8px 10px",fontSize:12,color:MUTED}}>🔒</td>}
+                {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:12.5,fontWeight:800,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.total||0)}</td>}
+                <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}><EtapaChip f={f}/></td>
+                <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{(()=>{
+                  if(!f.intranetFolio){
+                    const pl=planPorNumero(planDeFactura(f));
+                    return <span style={{fontSize:11,color:MUTED}} title={pl&&!pl.vaPorIntranet?pl.nota:""}>{pl&&!pl.vaPorIntranet?"No aplica":"—"}</span>;
+                  }
+                  const sub=etapaFactura({intranetFolio:f.intranetFolio,intranetEstatus:f.intranetEstatus}).subestado;
+                  const c=sub==="Tesorería"?GREEN:sub==="Director"?AMBER:BLUE;
+                  return <div style={{display:"flex",alignItems:"center",gap:6}} title={[f.intranetEstatus,f.intranetDirector&&("Autoriza: "+f.intranetDirector),f.intranetFecha].filter(Boolean).join(" · ")}>
+                    <span style={{fontFamily:MONO,fontSize:11.5,fontWeight:700,color:TEXT}}>{f.intranetFolio}</span>
+                    {f.intranetEstatus&&<span style={{background:c+"12",color:c,border:"1px solid "+c+"30",borderRadius:6,padding:"1px 7px",fontSize:10,fontWeight:700,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",display:"inline-block",verticalAlign:"middle"}}>{f.intranetEstatus}</span>}
+                  </div>;
+                })()}</td>
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>
-                  <select value={f.status||"Pendiente"} onChange={e=>updStatus(f.id,e.target.value)} style={{background:(sc[f.status]||MUTED)+"0c",border:"1.5px solid "+(sc[f.status]||MUTED)+"30",borderRadius:8,padding:"3px 6px",color:sc[f.status]||MUTED,fontSize:10.5,fontWeight:700,cursor:"pointer",maxWidth:118}}>
-                    {["Solicitada a Katia","Pendiente","Pagada","Vencida"].map(s=><option key={s} value={s}>{s==="Solicitada a Katia"?"Sol. a Katia":s}</option>)}
+                  <select value={f.status||"Pendiente"} onChange={e=>cambiarStatus(f,e.target.value)} title={f.status==="Pagada"?(f.fechaPago?"Pagada el "+f.fechaPago:"Pagada · sin fecha de pago capturada"):undefined} style={{background:(sc[f.status]||MUTED)+"0c",border:"1.5px solid "+(sc[f.status]||MUTED)+"30",borderRadius:8,padding:"3px 6px",color:sc[f.status]||MUTED,fontSize:10.5,fontWeight:700,cursor:"pointer",maxWidth:118}}>
+                    {["Solicitada a Katia","Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s==="Solicitada a Katia"?"Sol. a Katia":s}</option>)}
                   </select>
+                  {isAdmin&&esPagadaSinFecha(f)&&<input type="date" aria-label={"Fecha de pago de "+(f.folio||"la factura")} title="Fecha real del cobro — se guarda al salir del campo" max={fechaLocalISO()}
+                    onBlur={e=>{const v=e.target.value;if(v&&v>="2020-01-01"&&v<=fechaLocalISO()) updateDoc(doc(db,"facturas",f.id),{fechaPago:v}).then(()=>showT("✓ Fecha de pago guardada · "+(f.folio||""))).catch(er=>showT(er.message,"err"));}}
+                    style={{display:"block",marginTop:4,width:118,border:"1.5px dashed "+AMBER,borderRadius:7,padding:"2px 5px",fontSize:10.5,color:AMBER,background:AMBER+"08"}}/>}
                 </td>
                 <td style={{padding:"8px 10px"}}>
                   <div style={{display:"flex",gap:4,alignItems:"center"}}>
@@ -7444,6 +7697,54 @@ function Facturas({rol="admin"}){
       </>}
 
       {showBitacora&&<BitacoraImport onClose={()=>setShowBitacora(false)} showT={showT}/>}
+      {normPlan&&normData&&<Modal title="Normalizar planes y clientes" onClose={()=>!normPlan.aplicando&&setNormPlan(null)} icon={Hash} iconColor={VIOLET} wide>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div style={{fontSize:12.5,color:MUTED,lineHeight:1.6}}>Lee el texto libre del campo <strong style={{color:TEXT}}>plan</strong> de cada factura y guarda el número del catálogo en <span style={{fontFamily:MONO,color:TEXT}}>planNumero</span>. También corrige <span style={{fontFamily:MONO,color:TEXT}}>clienteId</span>: le pone el cliente del plan y lo quita cuando apunta a un cliente de otra razón social (así las ventas dejan de sumarse al cliente equivocado). <strong style={{color:TEXT}}>No modifica el texto original</strong> y guarda el valor anterior. Nada se escribe hasta que confirmes.</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+            {[[GREEN,"Ya normalizadas",normData.yaNormalizadas],[VIOLET,"Por actualizar",normData.cambios.length],[AMBER,"Sin resolver",normData.sinResolver.length]].map(([c,l,v])=>(
+              <div key={l} style={{background:c+"0a",border:"1px solid "+c+"30",borderRadius:10,padding:"10px 12px"}}>
+                <div style={{fontSize:9.5,fontWeight:800,color:c,textTransform:"uppercase",letterSpacing:"0.06em"}}>{l}</div>
+                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:c,marginTop:2}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          {normData.cambios.length>0&&<div style={{border:"1px solid "+BORDER,borderRadius:10,maxHeight:230,overflowY:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+              <thead><tr style={{background:"#fafbfd",position:"sticky",top:0}}>{["Folio","Empresa · texto en plan","planNumero","clienteId"].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+              <tbody>{normData.cambios.map(c=>(
+                <tr key={c.id} style={{borderTop:"1px solid "+BORDER}}>
+                  <td style={{padding:"6px 10px",fontFamily:MONO,fontSize:10.5,color:MUTED,whiteSpace:"nowrap"}}>{c.folio||"—"}</td>
+                  <td style={{padding:"6px 10px"}}><div style={{fontSize:10.5,color:MUTED}}>{c.empresa||"—"}</div>{c.plan||<span style={{color:MUTED,fontStyle:"italic"}}>sin plan</span>}</td>
+                  <td style={{padding:"6px 10px",whiteSpace:"nowrap"}}>{c.cambiaPlan?<><span style={{fontFamily:MONO,color:MUTED}}>{c.de||"∅"}</span> → <strong style={{fontFamily:MONO,color:VIOLET}}>{c.a}</strong> <span style={{color:MUTED}}>{planPorNumero(c.a)?.nombre}</span></>:<span style={{color:MUTED}}>sin cambio</span>}</td>
+                  <td style={{padding:"6px 10px",whiteSpace:"nowrap"}}>{c.cambiaCliente?<><span style={{fontFamily:MONO,color:MUTED}}>{c.clienteDe||"∅"}</span> → <strong style={{fontFamily:MONO,color:c.clienteA?BLUE:ROSE}}>{c.clienteA||"(se quita)"}</strong></>:<span style={{color:MUTED}}>sin cambio</span>}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>}
+          {normData.sinResolver.length>0&&<div style={{border:"1px solid "+AMBER+"35",background:AMBER+"06",borderRadius:10,padding:"10px 12px"}}>
+            <div style={{fontSize:11,fontWeight:800,color:AMBER,marginBottom:6}}>Sin resolver — el texto no identifica un plan. Elige aquí el plan de cada una; se guarda al momento y conserva el texto original.</div>
+            <div style={{maxHeight:210,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
+              {normData.sinResolver.map(c=>{
+                const sugeridos=PLANES.filter(p=>mismaEmpresa(c.empresa,p.empresa));
+                return(
+                <div key={c.id} style={{display:"flex",gap:10,fontSize:11.5,alignItems:"center"}}>
+                  <span style={{fontFamily:MONO,fontSize:10.5,color:MUTED,minWidth:84}}>{c.folio||"—"}</span>
+                  <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={c.empresa}>{c.empresa||"—"}</span>
+                  <span style={{color:MUTED,fontStyle:c.plan?"normal":"italic",maxWidth:170,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={c.plan}>{c.plan||"sin plan"}</span>
+                  <select aria-label={"Plan para "+(c.folio||"la factura")} value="" onChange={e=>e.target.value&&asignarPlan(c.id,e.target.value)} style={{width:200,background:"#fff",border:"1.5px solid "+AMBER+"60",borderRadius:7,padding:"3px 6px",fontSize:11,cursor:"pointer"}}>
+                    <option value="">Asignar plan…</option>
+                    {sugeridos.length>0&&<optgroup label="De esta empresa">{sugeridos.map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}</optgroup>}
+                    <optgroup label={sugeridos.length>0?"Otros planes":"Planes"}>{PLANES.filter(p=>!sugeridos.includes(p)).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}</optgroup>
+                  </select>
+                </div>);
+              })}
+            </div>
+          </div>}
+          <button onClick={aplicarNormalizacion} disabled={normPlan.aplicando||normData.cambios.length===0} className="btn" style={{padding:"12px 0",borderRadius:11,background:normData.cambios.length===0?BD2:"linear-gradient(135deg,"+VIOLET+",#8b5cf6)",color:"#fff",fontWeight:800,fontSize:14,opacity:normPlan.aplicando?.6:1,cursor:normData.cambios.length===0?"default":"pointer"}}>
+            {normPlan.aplicando?"Guardando…":normData.cambios.length===0?"Nada por actualizar":"Guardar plan y cliente en "+normData.cambios.length+" factura"+(normData.cambios.length===1?"":"s")}
+          </button>
+        </div>
+      </Modal>}
       {pagoModal&&<Modal title={"Registrar pago · "+(pagoModal.folio||"")} onClose={()=>setPagoModal(null)} icon={DollarSign} iconColor={GREEN}>
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <div style={{background:"#f8fafc",border:"1px solid "+BORDER,borderRadius:10,padding:"12px 14px",fontSize:13}}>
@@ -7466,6 +7767,29 @@ function Facturas({rol="admin"}){
       </Modal>}
       {modal&&<Modal title={editItem?"Editar registro":"Nuevo registro de facturación"} onClose={()=>{setModal(false);setEditItem(null);}} icon={FileText} iconColor={BLUE} wide>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          {/* Semáforo de etapa — se recalcula en vivo con lo capturado en el formulario */}
+          {editItem&&(()=>{
+            const e=etapaFactura({...editItem,...form});
+            const pasos=["Solicitada","Emitida","En intranet","Pagada"];
+            const idx=pasos.indexOf(e.etapa);
+            return(
+              <div style={{gridColumn:"1/-1",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                {pasos.map((p,i)=>{
+                  const cur=i===idx,done=idx>=0&&i<idx;const c=cur?ETAPA_COLOR[p]:done?GREEN:MUTED;
+                  return(
+                    <div key={p} style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 10px",borderRadius:8,fontSize:11,fontWeight:cur?800:600,color:c,background:cur?c+"14":"transparent",border:"1.5px solid "+(cur?c:done?GREEN+"50":BD2),opacity:cur||done?1:.6}}>
+                        {done?<Check size={10}/>:<span style={{width:6,height:6,borderRadius:"50%",background:c}}/>}{p}{cur&&e.subestado?" · "+e.subestado:""}
+                      </span>
+                      {i<pasos.length-1&&<div style={{width:14,height:2,background:done?GREEN+"70":BD2,borderRadius:1}}/>}
+                    </div>
+                  );
+                })}
+                {idx<0&&<EtapaChip f={{...editItem,...form}}/>}
+                <span style={{marginLeft:"auto",fontFamily:MONO,fontSize:10.5,color:MUTED}}>{editItem.folio||""}</span>
+              </div>
+            );
+          })()}
           <div>
             <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Mes de operación *</div>
             <select value={form.mesOp} onChange={sf("mesOp")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
@@ -7485,7 +7809,7 @@ function Facturas({rol="admin"}){
               {CLIENTE_PLANES.map(cp=>{
                 const active = (form.empresa||"").toLowerCase().trim()===cp.empresa.toLowerCase().trim();
                 return(
-                  <button key={cp.id} type="button" onClick={()=>setForm(f=>({...f,empresa:cp.empresa,plan:cp.plan,_clienteId:cp.id,solicitante:f.solicitante||cp.cliente}))} className="btn" style={{padding:"7px 12px",borderRadius:9,border:"1.5px solid "+(active?cp.color:BD2),background:active?cp.color+"14":"#fff",color:active?cp.color:TEXT,fontWeight:active?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}>
+                  <button key={cp.id} type="button" onClick={()=>aplicarCliente(cp,f=>({solicitante:f.solicitante||cp.cliente}))} className="btn" style={{padding:"7px 12px",borderRadius:9,border:"1.5px solid "+(active?cp.color:BD2),background:active?cp.color+"14":"#fff",color:active?cp.color:TEXT,fontWeight:active?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}>
                     <div style={{width:7,height:7,borderRadius:"50%",background:cp.color}}/>
                     {cp.cliente}
                   </button>
@@ -7493,12 +7817,13 @@ function Facturas({rol="admin"}){
               })}
             </div>
             {form.empresa&&(()=>{
-              const matched = CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim());
+              const matched = (form._clienteId&&CLIENTE_PLANES.find(cp=>cp.id===form._clienteId&&cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim()))
+                || CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim());
               if(!matched) return null;
               return(
                 <>
                   <div style={{marginTop:8,fontSize:11,color:matched.color,fontWeight:700,display:"flex",alignItems:"center",gap:5,padding:"6px 10px",background:matched.color+"08",borderRadius:7,border:"1px solid "+matched.color+"30"}}>
-                    <CheckCircle size={11}/>Detectado: <strong>{matched.cliente}</strong> · {form.planOverride||matched.plan}
+                    <CheckCircle size={11}/>Detectado: <strong>{matched.cliente}</strong> · {form.planOverride||form.plan||matched.plan}
                   </div>
                   {/* Selector de plan alternativo (TACRE: Servicios Logística vs Mucha Chamba) */}
                   {matched.planAlternativos&&matched.planAlternativos.length>1&&<div style={{marginTop:7,padding:"7px 10px",background:"#fff",border:"1.5px dashed "+matched.color+"40",borderRadius:8}}>
@@ -7508,7 +7833,7 @@ function Facturas({rol="admin"}){
                         const cur = form.planOverride||matched.planSolicitud;
                         const active = cur===p.value;
                         return(
-                          <button key={p.value} type="button" onClick={()=>setForm(f=>({...f,planOverride:p.value,plan:`${p.value.replace("P-","")}`}))} className="btn" style={{padding:"6px 12px",borderRadius:8,border:"1.5px solid "+(active?matched.color:BD2),background:active?matched.color+"14":"#fff",color:active?matched.color:TEXT,fontWeight:active?800:600,fontSize:11}}>
+                          <button key={p.value} type="button" onClick={()=>setForm(f=>({...f,planOverride:p.value,plan:`${p.value.replace("P-","")}`,planNumero:normalizarPlan(p.value)||f.planNumero,planOtro:false}))} className="btn" style={{padding:"6px 12px",borderRadius:8,border:"1.5px solid "+(active?matched.color:BD2),background:active?matched.color+"14":"#fff",color:active?matched.color:TEXT,fontWeight:active?800:600,fontSize:11}}>
                             {p.label}
                           </button>
                         );
@@ -7521,12 +7846,38 @@ function Facturas({rol="admin"}){
           </div>
           <Inp label="Empresa a facturar *" value={form.empresa} onChange={e=>{
             const v = e.target.value;
-            const matched = lookupPlanForCliente(v);
-            if(matched) setForm(f=>({...f,empresa:matched.empresa,plan:matched.plan,_clienteId:matched.id}));
+            const matched = lookupPlanForCliente(v,{prefijo:true});
+            // Si el plan ya elegido es de esa misma empresa, no lo pisa (ej. 3M sobre MAP)
+            if(matched&&planSel&&planSel.empresa===matched.empresa) setForm(f=>({...f,empresa:matched.empresa}));
+            else if(matched) aplicarCliente(matched);
             else sf("empresa")(e);
           }} placeholder="Escribe SCJ, Canon, Actnow, Sofia… o nombre directo"/>
+          <Inp label="RFC" value={form.rfc||""} onChange={sf("rfc")} placeholder="Se llena al elegir plan" style={{fontFamily:MONO}}/>
           <Inp label="Quien solicita el servicio" value={form.solicitante} onChange={sf("solicitante")} placeholder="Nombre del contacto"/>
-          <Inp label="Plan / Cuenta" value={form.plan} onChange={sf("plan")} placeholder="Ej: 210201 PL Campari Promotores"/>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Plan / Cuenta (catálogo)</div>
+            <select aria-label="Plan del catálogo" value={form.planOtro?"__otro":(form.planNumero||"")} onChange={e=>pickPlan(e.target.value)} style={{width:"100%",background:"#fff",border:"1.5px solid "+(planSel?VIOLET+"60":BD2),borderRadius:9,padding:"9px 12px",fontSize:13,cursor:"pointer"}}>
+              <option value="">— Sin plan —</option>
+              <optgroup label="Planes vigentes">
+                {PLANES.filter(p=>!p.porConfirmar).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}
+              </optgroup>
+              <optgroup label="Históricos (director por confirmar)">
+                {PLANES.filter(p=>p.porConfirmar).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}
+              </optgroup>
+              <option value="__otro">Otro (texto libre)…</option>
+            </select>
+          </div>
+          {form.planOtro&&<div style={{gridColumn:"1/-1"}}>
+            <Inp label="Plan fuera de catálogo (texto libre)" value={form.planOverride||form.plan||""} onChange={e=>{const v=e.target.value;setForm(f=>({...f,planOverride:v,plan:v}));}} placeholder="Ej: P-WALMART Canjes Promotores"/>
+            {(()=>{const p=planPorNumero(normalizarPlan(form.planOverride||form.plan));return p?<button type="button" onClick={()=>pickPlan(p.numero)} className="btn" style={{marginTop:6,fontSize:11,fontWeight:700,color:VIOLET,background:VIOLET+"0c",border:"1px solid "+VIOLET+"30",borderRadius:7,padding:"4px 10px"}}>Este texto corresponde al plan {p.numero} · {p.nombre} — usar el del catálogo</button>:null;})()}
+          </div>}
+          {planSel&&<div style={{gridColumn:"1/-1",fontSize:11.5,color:MUTED,background:VIOLET+"06",border:"1px solid "+VIOLET+"22",borderRadius:9,padding:"8px 12px",lineHeight:1.65}}>
+            <div><strong style={{color:TEXT}}>{planSel.numero} · {planSel.nombre}</strong> → {planSel.empresa} · RFC <span style={{fontFamily:MONO}}>{planSel.rfc}</span>{planSel.nota&&planSel.vaPorIntranet?" · "+planSel.nota:""}</div>
+            {!planSel.vaPorIntranet?<div style={{color:AMBER,fontWeight:700}}>{planSel.nota||"Este plan no va por intranet"}</div>
+            :planSel.directorIntranet?<div>Autoriza en intranet: <strong style={{color:TEXT}}>{planSel.directorIntranet.nombre}</strong> <span style={{fontFamily:MONO}}>({planSel.directorIntranet.id})</span>{planSel.directorGeneralIntranet&&<> · Dir. general: <strong style={{color:TEXT}}>{planSel.directorGeneralIntranet.nombre}</strong> <span style={{fontFamily:MONO}}>({planSel.directorGeneralIntranet.id})</span></>}</div>
+            :<div style={{color:AMBER,fontWeight:600}}>Director de intranet por confirmar para este plan</div>}
+            {form.planOverride&&<div>Nombre de plan en la solicitud: <strong style={{color:TEXT}}>{form.planOverride}</strong> <button type="button" onClick={()=>setForm(f=>({...f,planOverride:"",plan:textoPlanCatalogo(planSel)}))} className="btn" style={{color:ROSE,fontSize:11,fontWeight:700,marginLeft:4}}>quitar</button></div>}
+          </div>}
           <div>
             <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado de pago</div>
             <select value={form.status} onChange={sf("status")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
@@ -7542,6 +7893,10 @@ function Facturas({rol="admin"}){
             <input type="date" value={form.fechaVenc||""} onChange={sf("fechaVenc")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}/>
           </div>
           <Inp label="Email cliente (para envío)" value={form.emailCliente||""} onChange={sf("emailCliente")} type="email" placeholder="contacto@cliente.com"/>
+          {form.status==="Pagada"&&<div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,alignItems:"end"}}>
+            <Inp label="Fecha de pago (cobro real)" type="date" value={form.fechaPago||""} onChange={sf("fechaPago")}/>
+            <div style={{fontSize:11.5,color:form.fechaPago?MUTED:AMBER,fontWeight:form.fechaPago?400:600,paddingBottom:10}}>{form.fechaPago?"Se usa en flujo de efectivo y en la conciliación contra el cierre contable.":"Sin fecha de pago: la conciliación no puede saber si se cobró antes o después del corte."}</div>
+          </div>}
           <div style={{gridColumn:"1/-1"}}><Inp label="Servicio / Descripción" value={form.servicio} onChange={sf("servicio")} placeholder="Ej: Distribución masiva Monterrey — Ruta Norte"/></div>
           <Inp label="Subtotal sin IVA *" type="number" value={form.subtotal} onChange={sf("subtotal")} placeholder="0.00"/>
           <div style={{display:"flex",alignItems:"center"}}><Tog checked={form.iva} onChange={v=>setForm(f=>({...f,iva:v}))} label="Incluir IVA 16%" sub={sub>0?"IVA: "+fmt(ivaP):"Escribe el subtotal"} color={BLUE}/></div>
@@ -7552,6 +7907,59 @@ function Facturas({rol="admin"}){
               ))}
             </div>
           </div>
+          {/* ── CFDI + intranet del grupo (Somos Uno) ── */}
+          {isAdmin&&<div style={{gridColumn:"1/-1",background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:11,padding:"12px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div style={{gridColumn:"1/-1",fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6}}><Hash size={11} color={A}/>CFDI e intranet (Somos Uno)</div>
+            {planSel&&!planSel.vaPorIntranet&&<div style={{gridColumn:"1/-1",fontSize:11.5,color:AMBER,fontWeight:600,background:AMBER+"0c",border:"1px solid "+AMBER+"30",borderRadius:8,padding:"7px 10px"}}>{planSel.nota||"Este plan no va por intranet"} — los campos de intranet normalmente quedan vacíos.</div>}
+            <Inp label="Folio CFDI" value={form.cfdiFolio||""} onChange={sf("cfdiFolio")} placeholder="Ej: A2064" style={{fontFamily:MONO}}/>
+            <Inp label="Folio intranet" value={form.intranetFolio||""} onChange={sf("intranetFolio")} placeholder="Ej: 131405" style={{fontFamily:MONO}}/>
+            <Inp label="Fecha en intranet" type="date" value={form.intranetFecha||""} onChange={sf("intranetFecha")}/>
+            <div>
+              <Inp label="Director que autoriza" list="dmov-directores-intranet" value={form.intranetDirector||""} onChange={sf("intranetDirector")} placeholder="Nombre del director"/>
+              <datalist id="dmov-directores-intranet">{[...new Set(PLANES.flatMap(p=>[p.directorIntranet?.nombre,p.directorGeneralIntranet?.nombre]).filter(Boolean))].map(n=><option key={n} value={n}/>)}</datalist>
+              {planSel?.directorIntranet&&form.intranetDirector!==planSel.directorIntranet.nombre&&<button type="button" onClick={()=>setForm(f=>({...f,intranetDirector:planSel.directorIntranet.nombre}))} className="btn" style={{marginTop:5,fontSize:11,fontWeight:700,color:VIOLET}}>Usar sugerido: {planSel.directorIntranet.nombre}</button>}
+            </div>
+            <div style={{gridColumn:"1/-1"}}>
+              <Inp label="Estatus en intranet" list="dmov-estatus-intranet" value={form.intranetEstatus||""} onChange={sf("intranetEstatus")} placeholder="Texto tal como aparece en la intranet (ej. con DIRECTOR / en TESORERÍA)"/>
+              <datalist id="dmov-estatus-intranet">{estatusIntranetVistos.map(n=><option key={n} value={n}/>)}</datalist>
+            </div>
+            {editItem?.uuid&&<div style={{gridColumn:"1/-1",fontSize:10.5,color:MUTED,fontFamily:MONO,wordBreak:"break-all"}}>UUID {editItem.uuid}</div>}
+          </div>}
+          {/* ── Seguimiento: envío al responsable + respuesta del cliente ── */}
+          {isAdmin&&<div style={{gridColumn:"1/-1",background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:11,padding:"12px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div style={{gridColumn:"1/-1",fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6}}><History size={11} color={A}/>Seguimiento</div>
+            <div style={{gridColumn:"1/-1"}}><Txt label="Envío al responsable · respuesta del cliente" value={form.seguimiento||""} onChange={sf("seguimiento")} placeholder="Ej: Enviada a Adán el 28-oct · cliente confirma recepción, pago programado…"/></div>
+            <Inp label="Última respuesta del cliente" type="date" value={form.seguimientoFecha||""} onChange={sf("seguimientoFecha")}/>
+            <div style={{display:"flex",alignItems:"flex-end",fontSize:11.5,color:MUTED,paddingBottom:10}}>{form.seguimientoFecha?(()=>{const d=Math.floor((Date.now()-new Date(form.seguimientoFecha+"T00:00:00").getTime())/86400000);return d<=0?"Respuesta de hoy":"Hace "+d+" día"+(d===1?"":"s")+" sin nueva respuesta";})():"Sin respuesta del cliente registrada"}</div>
+          </div>}
+          {/* ── Liga con cotización / presupuesto ── */}
+          {isAdmin&&<div style={{gridColumn:"1/-1",background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:11,padding:"12px"}}>
+            <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6,marginBottom:8}}><Paperclip size={11} color={A}/>Cotización / presupuesto ligado</div>
+            {form.cotizacionFolio&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",background:"#fff",border:"1.5px solid "+BLUE+"30",borderRadius:9,padding:"8px 11px",marginBottom:8}}>
+              <span style={{fontFamily:MONO,fontSize:12.5,fontWeight:800,color:BLUE}}>{form.cotizacionFolio}</span>
+              {cotLigada?<span style={{fontSize:11.5,color:MUTED}}>{String(cotLigada.folio||"").startsWith("PRE")?"Presupuesto":"Cotización"} · {cotLigada.cliente||"sin cliente"} · <span style={{fontFamily:MONO}}>{fmt(Number(cotLigada.total)||0)}</span></span>
+              :<span style={{fontSize:11,color:AMBER,fontWeight:600}}>Folio capturado a mano — no está en cotizaciones ni presupuestos del sistema</span>}
+              <button type="button" onClick={()=>setForm(f=>({...f,cotizacionFolio:"",cotizacionId:""}))} aria-label="Quitar liga" className="btn" style={{marginLeft:"auto",color:ROSE,border:"1px solid "+ROSE+"28",borderRadius:6,padding:4,display:"flex"}}><X size={11}/></button>
+            </div>}
+            <div style={{background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"7px 11px",display:"flex",alignItems:"center",gap:8}}>
+              <Search size={13} color={MUTED}/>
+              <input value={cotQ} onChange={e=>setCotQ(e.target.value)} aria-label="Buscar cotización o presupuesto" placeholder="Buscar por folio o cliente (COT-…, PRE-…)" style={{background:"none",border:"none",fontSize:13,flex:1,outline:"none"}}/>
+            </div>
+            {cotQ.trim()&&<div style={{marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
+              {cotResultados.map(r=>(
+                <button key={r.tipo+r.id} type="button" onClick={()=>{setForm(f=>({...f,cotizacionFolio:r.folio,cotizacionId:r.id}));setCotQ("");}} className="btn" style={{display:"flex",alignItems:"center",gap:9,textAlign:"left",background:"#fff",border:"1px solid "+BORDER,borderRadius:8,padding:"7px 10px",fontSize:12}}>
+                  <span style={{background:(r.tipo==="presupuesto"?VIOLET:A)+"12",color:r.tipo==="presupuesto"?VIOLET:A,borderRadius:5,padding:"1px 6px",fontSize:9.5,fontWeight:800,textTransform:"uppercase"}}>{r.tipo==="presupuesto"?"PRE":"COT"}</span>
+                  <span style={{fontFamily:MONO,fontWeight:700}}>{r.folio||"—"}</span>
+                  <span style={{color:MUTED,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.cliente||"sin cliente"}</span>
+                  <span style={{fontFamily:MONO,fontSize:11,color:MUTED}}>{r.fecha}</span>
+                  <span style={{fontFamily:MONO,fontWeight:700}}>{fmt(r.total)}</span>
+                </button>
+              ))}
+              {!cotResultados.some(r=>r.folio.toUpperCase()===cotQ.trim().toUpperCase())&&<button type="button" onClick={()=>{setForm(f=>({...f,cotizacionFolio:cotQ.trim().toUpperCase(),cotizacionId:""}));setCotQ("");}} className="btn" style={{textAlign:"left",background:"transparent",border:"1px dashed "+BD2,borderRadius:8,padding:"7px 10px",fontSize:11.5,color:MUTED}}>
+                {cotResultados.length===0?"Sin coincidencias. ":""}Usar <strong style={{color:TEXT,fontFamily:MONO}}>{cotQ.trim().toUpperCase()}</strong> como folio (texto libre)
+              </button>}
+            </div>}
+          </div>}
           <div style={{gridColumn:"1/-1"}}><Txt label="Notas" value={form.notas} onChange={sf("notas")} placeholder="Observaciones, número de OC, folio interno…"/></div>
           <button onClick={save} className="btn" style={{gridColumn:"1/-1",background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:"pointer"}}>
             {editItem?"Guardar cambios":"Crear registro"}
@@ -7650,14 +8058,480 @@ function Clientes(){
 ══════════════════════════════════════════════════════════════════════════ */
 const MESES_REP  = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MESES_FULL_REP = ["ENERO","FEBRERO","MARZO","ABRIL","MAYO","JUNIO","JULIO","AGOSTO","SEPTIEMBRE","OCTUBRE","NOVIEMBRE","DICIEMBRE"];
-const CATS_COSTO = ["Nómina","Subcontrato","Transporte","Viáticos","Operación","Administración","Comunicación","Fiscal","Bancario","Otro"];
+// "Nómina" se divide en Sueldos (lo que gana la gente) y Cargas Sociales
+// (IMSS/SAR/Infonavit/ISN — carga patronal, no sueldo) para no inflar la lectura.
+const CATS_COSTO = ["Sueldos","Cargas Sociales","Subcontrato","Transporte","Viáticos","Operación","Administración","Comunicación","Fiscal","Bancario","Otro"];
 const CATS_COLOR = {
-  "Nómina":"#2563eb","Subcontrato":"#7c3aed","Transporte":"#0891b2",
+  "Sueldos":"#2563eb","Cargas Sociales":"#60a5fa","Subcontrato":"#7c3aed","Transporte":"#0891b2",
   "Viáticos":"#d97706","Operación":"#16a34a","Administración":"#db2777",
   "Comunicación":"#0f766e","Fiscal":"#b45309","Bancario":"#64748b","Otro":"#9ca3af"
 };
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   CIERRE CONTABLE — vista de SOLO LECTURA sobre la colección `cierresContables`
+   (un doc por mes de cierre, id YYYY-MM, cargado desde la balanza). No escribe
+   nada. La forma y los cálculos viven en domain.ts (kpisCierre, filasPorPeriodo,
+   ingresosPorColumna): lo que el doc no trae se muestra como "—".
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* Etiqueta para viáticos con `estimado: true` (monto repartido, no de balanza mensual) */
+function EstimadoTag({title}){
+  return <span title={title||"Monto estimado: no proviene de una balanza mensual"} style={{display:"inline-block",marginLeft:6,background:AMBER+"16",color:AMBER,border:"1px dashed "+AMBER+"70",borderRadius:6,padding:"0 6px",fontSize:9.5,fontWeight:800,letterSpacing:"0.04em",textTransform:"uppercase",verticalAlign:"middle",whiteSpace:"nowrap"}}>estimado</span>;
+}
+const NOTA_ESTIMADO_SEP26="Jul y Ago: el acumulado jul+ago de la balanza se repartió 50/50 porque falta la balanza mensual";
+const CIERRE_LABELS={caja:"Caja",bancos:"Bancos",clientes:"Clientes",iva_favor:"IVA a favor",isr_favor:"ISR a favor",pago_indebido:"Pago de lo indebido",creski:"Creski",florida:"Florida",tarjetas:"Tarjetas de crédito",cxp:"Cuentas por pagar",capital_social:"Capital social",res_ant:"Resultados de ejercicios anteriores",ini:"Saldo inicial",entradas:"Entradas",salidas:"Salidas",cobranza:"Cobranza"};
+const labelCierre=k=>CIERRE_LABELS[k]||(rangoPeriodo(k)||/^ytd$/i.test(k)?etiquetaPeriodo(k):String(k).replace(/_/g," ").replace(/([a-z])([A-Z])/g,"$1 $2").replace(/^./,c=>c.toUpperCase()));
+const BAL_GRUPOS=[["Activo",["caja","bancos","clientes","iva_favor","isr_favor","pago_indebido"],BLUE],["Pasivo",["creski","florida","tarjetas","cxp"],ROSE],["Capital",["capital_social","res_ant"],VIOLET]];
+const fmtCierre=v=>(v===null||v===undefined||v==="")?"—":(typeof v==="number"&&Number.isFinite(v))?fmt(v):(typeof v==="string"&&v.trim()!==""&&Number.isFinite(Number(v)))?fmt(Number(v)):String(v);
+const pctCierre=v=>(v===null||v===undefined||!Number.isFinite(v))?"—":v.toFixed(1)+"%";
+const fechaCierre=v=>{
+  if(!v) return "";
+  if(typeof v==="object"&&v.seconds) return new Date(v.seconds*1000).toLocaleDateString("es-MX");
+  if(typeof v==="object"&&typeof v.toDate==="function") return v.toDate().toLocaleDateString("es-MX");
+  return String(v);
+};
+/* Lista clave → importe para mapas sueltos del doc (cuotas, pasivo al corte, bancos…) */
+function ParesCierre({obj,color=TEXT,barras=false}){
+  const filas=Object.entries(obj||{}).filter(([,v])=>v!==null&&v!==undefined&&typeof v!=="object");
+  const anidados=Object.entries(obj||{}).filter(([,v])=>v&&typeof v==="object"&&!v.seconds);
+  if(!filas.length&&!anidados.length) return <div style={{fontSize:12,color:MUTED}}>Sin datos en este cierre</div>;
+  const max=Math.max(...filas.map(([,v])=>Math.abs(Number(v))||0),1);
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:barras?8:5}}>
+      {filas.map(([k,v])=>(
+        <div key={k}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12}}>
+            <span style={{color:MUTED}}>{labelCierre(k)}</span>
+            <span style={{fontFamily:MONO,fontWeight:700,color:Number(v)<0?ROSE:color,whiteSpace:"nowrap"}}>{fmtCierre(v)}</span>
+          </div>
+          {barras&&<div style={{marginTop:3}}><MiniBar pct={(Math.abs(Number(v))||0)/max*100} color={color===TEXT?BLUE:color} h={4}/></div>}
+        </div>
+      ))}
+      {anidados.map(([k,v])=>(
+        <div key={k} style={{marginTop:4,paddingLeft:10,borderLeft:"2px solid "+BORDER}}>
+          <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{labelCierre(k)}</div>
+          <ParesCierre obj={v} color={color}/>
+        </div>
+      ))}
+    </div>
+  );
+}
+function TablaPeriodosCierre({tabla,encabezado,filaTop,totalLabel,colPct="% ingresos",pctTotal=null}){
+  const th={padding:"10px 12px",fontWeight:700,color:BLUE,borderBottom:"2px solid "+BLUE+"20",whiteSpace:"nowrap",fontSize:11};
+  const td={padding:"8px 12px",borderBottom:"1px solid "+BORDER+"50",fontFamily:MONO,fontSize:11.5,textAlign:"right",whiteSpace:"nowrap"};
+  if(!tabla.filas.length) return <div style={{fontSize:12,color:MUTED,padding:"10px 0"}}>Sin datos en este cierre</div>;
+  return(
+    <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+        <thead><tr style={{background:BLUE+"08"}}>
+          <th style={{...th,textAlign:"left"}}>{encabezado}</th>
+          {tabla.columnas.map(c=><th key={c} style={{...th,textAlign:"right"}}>{etiquetaPeriodo(c)}</th>)}
+          <th style={{...th,textAlign:"right"}}>{colPct}</th>
+        </tr></thead>
+        <tbody>
+          {filaTop&&<tr style={{background:GREEN+"08"}}>
+            <td style={{padding:"9px 12px",fontWeight:800,color:GREEN,borderBottom:"1px solid "+BORDER+"50"}}>{filaTop.nombre}</td>
+            {tabla.columnas.map(c=><td key={c} style={{...td,fontWeight:800,color:GREEN}}>{fmtCierre(filaTop.valores[c])}</td>)}
+            <td style={{...td,color:MUTED}}>{filaTop.pct}</td>
+          </tr>}
+          {tabla.filas.map((f,i)=>(
+            <tr key={f.nombre} style={{background:i%2?"#fafbfd":"#fff"}}>
+              <td style={{padding:"8px 12px",fontWeight:600,color:TEXT,borderBottom:"1px solid "+BORDER+"50"}}>{f.nombre}</td>
+              {tabla.columnas.map(c=><td key={c} style={{...td,color:(f.valores[c]??0)<0?ROSE:TEXT}}>{fmtCierre(f.valores[c])}</td>)}
+              <td style={{...td,color:MUTED,fontFamily:SANS,fontWeight:700}}>{pctCierre(f.pctIngresos)}</td>
+            </tr>
+          ))}
+        </tbody>
+        {totalLabel&&<tfoot><tr style={{background:BLUE+"10",borderTop:"2px solid "+BLUE+"30"}}>
+          <td style={{padding:"10px 12px",fontWeight:800,color:BLUE,fontSize:12}}>{totalLabel}</td>
+          {tabla.columnas.map(c=><td key={c} style={{...td,fontWeight:800,color:BLUE,borderBottom:"none"}}>{fmt(tabla.totales[c]||0)}</td>)}
+          <td style={{...td,fontFamily:SANS,fontWeight:800,color:BLUE,borderBottom:"none"}}>{pctCierre(pctTotal)}</td>
+        </tr></tfoot>}
+      </table>
+    </div>
+  );
+}
+
+/* ─── CONCILIACIÓN CIERRE CONTABLE vs SISTEMA (solo lectura) ───────────────
+   Contabilidad (doc de cierresContables) contra facturas y pagos del sistema.
+   Toda la comparación vive en domain.ts (conciliarIngresos / conciliarCxC);
+   aquí solo se pinta. Diferencia = sistema − contabilidad. */
+const ESTADO_CONC={ok:[GREEN,"Cuadra"],diferencia:[AMBER,"Diferencia"],solo_contable:[ROSE,"Solo en contabilidad"],solo_sistema:[VIOLET,"Solo en sistema"]};
+function EstadoConcChip({estado}){
+  const [c,l]=ESTADO_CONC[estado]||[MUTED,estado];
+  return <span style={{display:"inline-flex",alignItems:"center",gap:5,background:c+"12",color:c,border:"1px solid "+c+"30",borderRadius:7,padding:"2px 8px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}><span style={{width:6,height:6,borderRadius:"50%",background:c}}/>{l}</span>;
+}
+function ConciliacionCierre({cierre,facts,pagos,cargando}){
+  const [base,setBase]=useState("operacion");
+  const [soloDif,setSoloDif]=useState(false);
+  const [abierto,setAbierto]=useState("");
+  const ing=useMemo(()=>conciliarIngresos(cierre,facts,{base}),[cierre,facts,base]);
+  const cxc=useMemo(()=>conciliarCxC(cierre,facts,pagos),[cierre,facts,pagos]);
+  const card={background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22,marginBottom:16};
+  const h2={fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT};
+  const sub={fontSize:11,color:MUTED,marginTop:2};
+  const lbl={fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"};
+  const th={padding:"10px 12px",fontWeight:700,color:BLUE,borderBottom:"2px solid "+BLUE+"20",whiteSpace:"nowrap",fontSize:11,textAlign:"right"};
+  const td={padding:"8px 12px",borderBottom:"1px solid "+BORDER+"50",fontFamily:MONO,fontSize:11.5,textAlign:"right",whiteSpace:"nowrap"};
+  const tol=ing.tolerancia;
+  const dif=v=>Math.abs(v)<=tol?<span style={{color:MUTED}}>{fmt(0)}</span>:<span style={{color:v<0?ROSE:VIOLET,fontWeight:800}}>{v>0?"+":""}{fmt(v)}</span>;
+  const cont=v=>v===null?<span style={{color:MUTED,fontFamily:SANS}}>no aparece</span>:fmt(v);
+  const pctDif=f=>f.contable?pctCierre(f.diferencia/Math.abs(f.contable)*100):"—";
+  const toggle=k=>setAbierto(a=>a===k?"":k);
+
+  if(!ing.periodo) return <div style={{...card,color:ROSE,fontSize:13}}>El cierre <span style={{fontFamily:MONO}}>{String(cierre?.id)}</span> no tiene un id con formato <span style={{fontFamily:MONO}}>AAAA-MM</span>, así que no se puede saber contra qué meses del sistema compararlo.</div>;
+  const mesCorte=MESES_FULL_REP[ing.periodo.mes];
+  const filasIng=soloDif?ing.filas.filter(f=>f.estado!=="ok"):ing.filas;
+  const filasCxc=soloDif?cxc.filas.filter(f=>f.estado!=="ok"):cxc.filas;
+  const nDif=ing.filas.filter(f=>f.estado!=="ok").length+cxc.filas.filter(f=>f.estado!=="ok").length;
+  const sinClientes=!cierre.clientes||!Object.keys(cierre.clientes).length;
+  const sinCxc=!cierre.cuentasPorCobrar||!Object.keys(cierre.cuentasPorCobrar).length;
+
+  const resumen=(titulo,nota,t,color)=>(
+    <div style={{...card,marginBottom:0,borderTop:"3px solid "+(t.estado==="ok"?GREEN:color)}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:12}}>
+        <div><div style={h2}>{titulo}</div><div style={sub}>{nota}</div></div>
+        {t.contable!==null&&<EstadoConcChip estado={t.estado}/>}
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+        {[["Contabilidad",t.contable===null?"—":fmt(t.contable),TEXT],["Sistema",fmt(t.sistema),TEXT],["Diferencia",t.contable===null?"—":dif(t.diferencia),null]].map(([l,v])=>(
+          <div key={l}><div style={lbl}>{l}</div><div style={{fontFamily:MONO,fontSize:18,fontWeight:800,color:TEXT,marginTop:3}}>{v}</div></div>
+        ))}
+      </div>
+      <div style={{fontSize:11,color:MUTED,marginTop:10}}>{t.n} factura{t.n===1?"":"s"} del sistema{t.contable?" · diferencia de "+pctCierre(t.diferencia/Math.abs(t.contable)*100):""}</div>
+    </div>
+  );
+  const listaFacturas=(fs,cxcModo)=>(
+    <div style={{border:"1px solid "+BORDER,borderRadius:10,overflow:"hidden",background:"#fff"}}>
+      {fs.length===0?<div style={{padding:"10px 12px",fontSize:12,color:MUTED}}>El sistema no tiene facturas de este cliente en el periodo.</div>
+      :<div style={{maxHeight:240,overflowY:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+        <thead><tr style={{background:"#fafbfd"}}>{["Folio","CFDI","Mes","Emisión","Empresa en la factura",...(cxcModo?["Total","Abonado al corte","Saldo al corte"]:["Subtotal"]),"Etapa"].map(h=><th key={h} style={{padding:"7px 10px",textAlign:["Total","Abonado al corte","Saldo al corte","Subtotal"].includes(h)?"right":"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+        <tbody>{fs.map(f=>(
+          <tr key={f.id} style={{borderTop:"1px solid "+BORDER}}>
+            <td style={{padding:"6px 10px",fontFamily:MONO,fontSize:10.5,color:MUTED,whiteSpace:"nowrap"}}>{f.folio||"—"}</td>
+            <td style={{padding:"6px 10px",fontFamily:MONO,fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>{f.cfdiFolio||"—"}</td>
+            <td style={{padding:"6px 10px",whiteSpace:"nowrap"}}>{f.mesOp||f.mes||"—"} {String(f.anio||"").slice(-2)}</td>
+            <td style={{padding:"6px 10px",color:MUTED,whiteSpace:"nowrap"}}>{f.fechaEmision||"—"}</td>
+            <td style={{padding:"6px 10px",maxWidth:220,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.empresa||f.cliente||""}>{f.empresa||f.cliente||"—"}</td>
+            {cxcModo?<>
+              <td style={{padding:"6px 10px",fontFamily:MONO,textAlign:"right"}}>{fmt(f.total||0)}</td>
+              <td style={{padding:"6px 10px",fontFamily:MONO,textAlign:"right",color:MUTED}}>{fmt(f._pagadoCorte||0)}</td>
+              <td style={{padding:"6px 10px",fontFamily:MONO,textAlign:"right",fontWeight:800}}>{fmt(f._saldoCorte||0)}</td>
+            </>:<td style={{padding:"6px 10px",fontFamily:MONO,textAlign:"right",fontWeight:700}}>{fmt(Number(f.subtotal)||0)}</td>}
+            <td style={{padding:"6px 10px"}}><EtapaChip f={f}/></td>
+          </tr>
+        ))}</tbody>
+      </table></div>}
+    </div>
+  );
+  const tablaClientes=(filas,pref,cxcModo,colSistema)=>(
+    <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+      <thead><tr style={{background:BLUE+"08"}}>
+        <th style={{...th,textAlign:"left"}}>Cliente (razón social)</th><th style={th}>Contabilidad</th><th style={th}>{colSistema}</th><th style={th}>Diferencia</th><th style={th}>%</th><th style={th}>Facturas</th><th style={{...th,textAlign:"left"}}>Estado</th><th style={th}/>
+      </tr></thead>
+      <tbody>{filas.map((f,i)=>{
+        const k=pref+f.empresa,on=abierto===k;
+        return [
+          <tr key={k} onClick={()=>toggle(k)} className="fr" style={{background:on?BLUE+"06":i%2?"#fafbfd":"#fff",cursor:"pointer"}}>
+            <td style={{padding:"8px 12px",borderBottom:"1px solid "+BORDER+"50"}}>
+              <div style={{fontWeight:700,color:TEXT}}>{f.empresa||"Sin empresa"}</div>
+              {f.nombres.length>0&&f.nombres.join(", ").toUpperCase()!==f.empresa&&<div style={{fontSize:10.5,color:MUTED}}>en balanza: {f.nombres.join(", ")}</div>}
+            </td>
+            <td style={td}>{cont(f.contable)}</td>
+            <td style={td}>{fmt(f.sistema)}</td>
+            <td style={td}>{dif(f.diferencia)}</td>
+            <td style={{...td,color:MUTED}}>{pctDif(f)}</td>
+            <td style={{...td,color:MUTED}}>{f.facturas.length}</td>
+            <td style={{...td,textAlign:"left"}}><EstadoConcChip estado={f.estado}/></td>
+            <td style={{...td,color:MUTED}}><button aria-expanded={on} aria-label={(on?"Ocultar":"Ver")+" facturas de "+f.empresa} className="btn" style={{color:MUTED,display:"inline-flex"}}>{on?<ChevronUp size={14}/>:<ChevronDown size={14}/>}</button></td>
+          </tr>,
+          on&&<tr key={k+":d"}><td colSpan={8} style={{padding:"10px 12px 14px",background:BLUE+"04",borderBottom:"1px solid "+BORDER}}>
+            {f.porColumna.length>0&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+              {f.porColumna.map(c=>(
+                <div key={c.columna} style={{background:"#fff",border:"1px solid "+(Math.abs(c.diferencia)>tol?AMBER+"60":BORDER),borderRadius:9,padding:"7px 11px",minWidth:150}}>
+                  <div style={lbl}>{etiquetaPeriodo(c.columna)}</div>
+                  <div style={{fontSize:11,color:MUTED,marginTop:3}}>Contab. <span style={{fontFamily:MONO,color:TEXT}}>{c.contable===null?"—":fmt(c.contable)}</span> · Sist. <span style={{fontFamily:MONO,color:TEXT}}>{fmt(c.sistema)}</span></div>
+                  <div style={{fontFamily:MONO,fontSize:12,marginTop:2}}>{dif(c.diferencia)}</div>
+                </div>
+              ))}
+            </div>}
+            {listaFacturas(f.facturas,cxcModo)}
+          </td></tr>
+        ];
+      })}</tbody>
+    </table></div>
+  );
+
+  return(<>
+    {/* Criterios */}
+    <div style={{...card,padding:"14px 18px",display:"flex",gap:14,alignItems:"center",flexWrap:"wrap"}}>
+      <div style={{flex:"1 1 340px",fontSize:12,color:MUTED,lineHeight:1.6}}>
+        <strong style={{color:TEXT}}>Contabilidad</strong> = balanza del cierre a {mesCorte.toLowerCase()} {ing.periodo.anio}. <strong style={{color:TEXT}}>Sistema</strong> = facturas y pagos capturados aquí. No cuentan las facturas Canceladas ni las apenas solicitadas a Katia. Diferencia = sistema − contabilidad: <span style={{color:ROSE,fontWeight:700}}>negativa</span> le falta al sistema, <span style={{color:VIOLET,fontWeight:700}}>positiva</span> le sobra. Cuadra si la diferencia es de ${tol} o menos.
+      </div>
+      <div>
+        <div style={{...lbl,marginBottom:5}}>Ubicar cada factura por</div>
+        <div style={{display:"flex",background:"#f5f7fc",borderRadius:11,padding:3,gap:2}}>
+          {[["operacion","Mes de operación"],["emision","Fecha de emisión (CFDI)"]].map(([k,l])=>(
+            <button key={k} onClick={()=>setBase(k)} aria-pressed={base===k} className="btn" style={{padding:"7px 13px",borderRadius:9,background:base===k?"#fff":"transparent",color:base===k?A:MUTED,fontSize:12,fontWeight:base===k?700:500,boxShadow:base===k?"0 1px 6px rgba(12,24,41,.1)":"none"}}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{width:230}}><Tog checked={soloDif} onChange={setSoloDif} label="Solo diferencias" sub={nDif+" cliente"+(nDif===1?"":"s")+" sin cuadrar"} color={AMBER}/></div>
+    </div>
+    {cargando&&<div style={{...card,textAlign:"center",color:MUTED,fontSize:13}}>Cargando facturas y pagos del sistema…</div>}
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(380px,1fr))",gap:16,marginBottom:16}}>
+      {resumen("Ingresos acumulados","Sin IVA · enero a "+mesCorte.toLowerCase()+" "+ing.periodo.anio,ing.total,AMBER)}
+      {resumen("Cuentas por cobrar","Con IVA · saldo al "+cxc.corte,cxc.total,AMBER)}
+    </div>
+
+    {/* Ingresos por periodo */}
+    <div style={card}>
+      <div style={{marginBottom:14}}><div style={h2}>Ingresos por periodo</div><div style={sub}>Dónde, en el año, se separan las dos fuentes · {base==="emision"?"facturas ubicadas por fecha de emisión":"facturas ubicadas por mes de operación"}</div></div>
+      {ing.porPeriodo.length===0?<div style={{fontSize:12,color:MUTED}}>Este cierre no trae ingresos por periodo.</div>
+      :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+        <thead><tr style={{background:BLUE+"08"}}><th style={{...th,textAlign:"left"}}>Periodo</th><th style={th}>Contabilidad</th><th style={th}>Sistema</th><th style={th}>Diferencia</th><th style={th}>Facturas</th><th style={{...th,textAlign:"left"}}>Estado</th></tr></thead>
+        <tbody>{ing.porPeriodo.map((p,i)=>(
+          <tr key={p.periodo} style={{background:i%2?"#fafbfd":"#fff"}}>
+            <td style={{padding:"8px 12px",fontWeight:700,color:TEXT,borderBottom:"1px solid "+BORDER+"50"}}>{etiquetaPeriodo(p.periodo)}</td>
+            <td style={td}>{cont(p.contable)}</td><td style={td}>{fmt(p.sistema)}</td><td style={td}>{dif(p.diferencia)}</td><td style={{...td,color:MUTED}}>{p.n}</td>
+            <td style={{...td,textAlign:"left"}}><EstadoConcChip estado={p.estado}/></td>
+          </tr>
+        ))}</tbody>
+        <tfoot><tr style={{background:BLUE+"10",borderTop:"2px solid "+BLUE+"30"}}>
+          <td style={{padding:"10px 12px",fontWeight:800,color:BLUE}}>Acumulado</td>
+          <td style={{...td,fontWeight:800,borderBottom:"none"}}>{cont(ing.total.contable)}</td><td style={{...td,fontWeight:800,borderBottom:"none"}}>{fmt(ing.total.sistema)}</td><td style={{...td,borderBottom:"none"}}>{ing.total.contable===null?"—":dif(ing.total.diferencia)}</td><td style={{...td,color:MUTED,borderBottom:"none"}}>{ing.total.n}</td><td style={{...td,borderBottom:"none"}}/>
+        </tr></tfoot>
+      </table></div>}
+    </div>
+
+    {/* Ingresos por cliente */}
+    <div style={card}>
+      <div style={{marginBottom:14}}><div style={h2}>Ingresos por cliente</div><div style={sub}>Acumulado sin IVA, agrupado por la razón social a la que se factura · clic en un cliente para ver sus periodos y facturas</div></div>
+      {sinClientes&&<div style={{fontSize:12,color:AMBER,fontWeight:600,marginBottom:10}}>Este cierre no trae ingresos por cliente: solo se muestra lo que tiene el sistema.</div>}
+      {filasIng.length===0?<div style={{fontSize:12,color:soloDif?GREEN:MUTED,fontWeight:soloDif?700:400}}>{soloDif?"✓ Todos los clientes cuadran":"Sin facturas ni clientes que comparar"}</div>:tablaClientes(filasIng,"ing:",false,"Sistema")}
+    </div>
+
+    {/* Cuentas por cobrar */}
+    <div style={card}>
+      <div style={{marginBottom:14}}><div style={h2}>Cuentas por cobrar por cliente</div><div style={sub}>Saldo con IVA al {cxc.corte}: total de la factura menos los abonos con fecha hasta ese día</div></div>
+      {sinCxc&&<div style={{fontSize:12,color:AMBER,fontWeight:600,marginBottom:10}}>Este cierre no trae cuentas por cobrar por cliente: solo se muestra lo que tiene el sistema.</div>}
+      {filasCxc.length===0?<div style={{fontSize:12,color:soloDif?GREEN:MUTED,fontWeight:soloDif?700:400}}>{soloDif?"✓ Todos los saldos cuadran":"Sin saldos que comparar"}</div>:tablaClientes(filasCxc,"cxc:",true,"Sistema al corte")}
+    </div>
+
+    {/* Avisos sobre la calidad del dato del sistema */}
+    {(cxc.pagadasSinFecha.n>0||ing.sinFechaEmision>0||ing.sinPeriodo>0)&&<div style={{...card,border:"1px solid "+AMBER+"40",background:AMBER+"06"}}>
+      <div style={{...h2,fontSize:14,marginBottom:8,display:"flex",alignItems:"center",gap:7}}><AlertCircle size={15} color={AMBER}/>Lo que el sistema no puede afirmar</div>
+      <div style={{fontSize:12.5,color:TEXT,lineHeight:1.7}}>
+        {cxc.pagadasSinFecha.n>0&&<div>· <strong>{cxc.pagadasSinFecha.n} factura{cxc.pagadasSinFecha.n===1?"":"s"} "Pagada" sin fecha de pago ni abonos</strong> ({fmt(cxc.pagadasSinFecha.monto)}): se tomaron como cobradas antes del corte. Si alguna se cobró después del {cxc.corte}, ese día sí era cuenta por cobrar y falta en la columna Sistema.</div>}
+        {ing.sinFechaEmision>0&&<div>· <strong>{ing.sinFechaEmision} factura{ing.sinFechaEmision===1?"":"s"} sin fecha de emisión</strong>: se ubicaron por su mes de operación.</div>}
+        {ing.sinPeriodo>0&&<div>· <strong>{ing.sinPeriodo} factura{ing.sinPeriodo===1?"":"s"} sin mes o año</strong>: no se pudieron ubicar y no entran en ninguna suma.</div>}
+      </div>
+    </div>}
+  </>);
+}
+
+function CierreContable(){
+  const [cierres,setCierres]=useState([]);
+  const [load,setLoad]=useState(true);
+  const [err,setErr]=useState("");
+  const [sel,setSel]=useState("");
+  // Conciliación: facturas y pagos del sistema (solo lectura)
+  const [tab,setTab]=useState("cierre");
+  const [facts,setFacts]=useState(null);const [pagos,setPagos]=useState(null);
+  useEffect(()=>onSnapshot(collection(db,"facturas"),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))),()=>setFacts([])),[]);
+  useEffect(()=>onSnapshot(collection(db,"pagos"),s=>setPagos(s.docs.map(d=>({id:d.id,...d.data()}))),()=>setPagos([])),[]);
+  useEffect(()=>onSnapshot(collection(db,"cierresContables"),s=>{
+    const docs=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>String(b.id).localeCompare(String(a.id))); // más reciente primero
+    setCierres(docs);setLoad(false);setErr("");
+  },e=>{setErr(e?.message||"No se pudo leer la colección");setLoad(false);}),[]);
+
+  const c=cierres.find(x=>x.id===sel)||cierres[0]||null;
+  const card={background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22};
+  const h2={fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT};
+  const sub={fontSize:11,color:MUTED,marginTop:2};
+  const lbl={fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"};
+
+  const wrap=children=>(
+    <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,flexWrap:"wrap",marginBottom:22}}>
+        <div>
+          <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Cierre contable</h1>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>{c?[c.periodo||c.id,c.corte&&("corte "+fechaCierre(c.corte)),c.fuente].filter(Boolean).join(" · "):"Resultados, nómina y balance según la balanza del contador"}</p>
+          <p style={{color:BLUE,fontSize:12,fontWeight:600,marginTop:4,display:"flex",alignItems:"center",gap:5}}><Shield size={12}/>Solo lectura · datos cargados desde la balanza{c?.cargadoEl?" el "+fechaCierre(c.cargadoEl):""}</p>
+        </div>
+        {cierres.length>0&&<div>
+          <div style={{...lbl,marginBottom:5}}>Periodo de cierre</div>
+          <select aria-label="Periodo de cierre" value={c?.id||""} onChange={e=>setSel(e.target.value)} style={{background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"9px 13px",fontSize:14,fontWeight:700,cursor:"pointer",minWidth:190}}>
+            {cierres.map(x=><option key={x.id} value={x.id}>{x.periodo?x.periodo+" ("+x.id+")":x.id}</option>)}
+          </select>
+        </div>}
+      </div>
+      {children}
+    </div>
+  );
+  if(load) return wrap(<div style={{padding:40,textAlign:"center",color:MUTED}}>Cargando…</div>);
+  if(err) return wrap(<div style={{...card,color:ROSE,fontSize:13}}><strong>No se pudo leer <span style={{fontFamily:MONO}}>cierresContables</span>.</strong> Esta colección solo la puede leer un perfil admin.<div style={{fontFamily:MONO,fontSize:11,color:MUTED,marginTop:6}}>{err}</div></div>);
+  if(!c) return wrap(<div style={{...card,textAlign:"center",color:MUTED,fontSize:13,padding:40}}>Aún no hay cierres cargados en <span style={{fontFamily:MONO}}>cierresContables</span>.</div>);
+
+  const r=c.resultados||{},nom=c.nomina||{},bal=c.balance||{};
+  const k=kpisCierre(c);
+  const tablaCostos=filasPorPeriodo(r.costosPorCategoria,k.ingresos);
+  const ingCols=ingresosPorColumna(r.ingresosPorPeriodo,tablaCostos.columnas,k.ingresos);
+  const colYtd=tablaCostos.columnas.find(x=>etiquetaPeriodo(x)==="Acumulado");
+  const tablaClientes=filasPorPeriodo(c.clientes,k.ingresos);
+  const ingPeriodos=Object.entries(r.ingresosPorPeriodo||{}).map(([p,v])=>({p,v:Number(v)||0,o:rangoPeriodo(p)?.[0]??99})).sort((a,b)=>a.o-b.o);
+  const maxIng=Math.max(...ingPeriodos.map(x=>x.v),1);
+  const perdida=k.utilidadNeta!==null&&k.utilidadNeta<0;
+  const bajoEquilibrio=k.brechaEquilibrio!==null&&k.brechaEquilibrio<0;
+  // utilidadNetaSep, utilidadNetaOct…: resultado del mes del cierre
+  const utilMes=Object.entries(r).find(([key])=>/^utilidadNeta.+/.test(key));
+  const cxc=Object.entries(c.cuentasPorCobrar||{}).map(([n,v])=>({n,v:Number(v)||0})).sort((a,b)=>b.v-a.v);
+  const cxcTotal=cxc.reduce((a,x)=>a+x.v,0);
+  const maxCxc=Math.max(...cxc.map(x=>Math.abs(x.v)),1);
+  const balConocidas=BAL_GRUPOS.flatMap(g=>g[1]);
+  const balOtras=Object.fromEntries(Object.entries(bal).filter(([key])=>!balConocidas.includes(key)));
+  const bancosMes=Object.entries(c).find(([key,v])=>/^bancos.+/.test(key)&&v&&typeof v==="object");
+  const hallazgos=Array.isArray(c.hallazgos)?c.hallazgos:[];
+  const K=v=>v===null?"—":fmtK(v);
+
+  return wrap(<>
+    <div style={{display:"flex",gap:4,marginBottom:16,flexWrap:"wrap"}}>
+      {[["cierre","📘 Cierre"],["conciliacion","⚖️ Conciliación vs sistema"]].map(([t,l])=>(
+        <button key={t} onClick={()=>setTab(t)} className="btn" style={{padding:"7px 18px",borderRadius:10,border:"1.5px solid "+(tab===t?A:BD2),background:tab===t?A+"10":"#fff",color:tab===t?A:MUTED,fontWeight:tab===t?700:500,fontSize:13,cursor:"pointer"}}>{l}</button>
+      ))}
+    </div>
+    {tab==="conciliacion"&&<ConciliacionCierre cierre={c} facts={facts||[]} pagos={pagos||[]} cargando={facts===null||pagos===null}/>}
+    {tab==="cierre"&&<>
+    {/* Tarjetas */}
+    <div className="g4" style={{marginBottom:12}}>
+      <KpiCard icon={TrendingUp} color={GREEN} label="Ingresos acumulados" value={K(k.ingresos)} sub={k.ingresoPromedioMensual!==null?"Promedio "+fmt(k.ingresoPromedioMensual)+" / mes":"sin IVA"}/>
+      <KpiCard icon={Zap} color={ROSE} label="Costos y gastos" value={K(k.costosYGastos)} sub={k.costosYGastos!==null&&k.ingresos?pctCierre(k.costosYGastos/k.ingresos*100)+" de los ingresos":k.costoPromedioMensual!==null?"Promedio "+fmt(k.costoPromedioMensual)+" / mes":""}/>
+      <KpiCard icon={BarChart2} color={perdida?ROSE:GREEN} accent={perdida} label={perdida?"Pérdida neta":"Utilidad neta"} value={K(k.utilidadNeta)} valueColor={perdida?ROSE:GREEN} sub={utilMes?labelCierre(utilMes[0].replace(/^utilidadNeta/,""))+": "+fmtCierre(utilMes[1]):k.utilidadNeta!==null&&k.ingresos?pctCierre(k.utilidadNeta/k.ingresos*100)+" de los ingresos":""}/>
+      <KpiCard icon={Target} color={bajoEquilibrio?ROSE:GREEN} accent={bajoEquilibrio} label="Punto de equilibrio mensual" value={K(k.puntoEquilibrioMensual)} sub={k.brechaEquilibrio===null?"":"Ingreso promedio "+fmtK(k.ingresoPromedioMensual)+(bajoEquilibrio?" · faltan "+fmtK(-k.brechaEquilibrio)+" / mes":" · lo supera por "+fmtK(k.brechaEquilibrio))}/>
+    </div>
+    <div className="g4" style={{marginBottom:18}}>
+      <KpiCard icon={CreditCard} color={AMBER} label="Deuda Creski" value={K(k.deudaCreski)} sub={k.pasivoTotal?pctCierre((k.deudaCreski||0)/Math.abs(k.pasivoTotal)*100)+" del pasivo total":"saldo al corte"}/>
+      <KpiCard icon={Shield} color={k.capitalContable!==null&&k.capitalContable<0?ROSE:VIOLET} label="Capital contable" value={K(k.capitalContable)} valueColor={k.capitalContable!==null&&k.capitalContable<0?ROSE:undefined} sub={k.activoTotal!==null&&k.pasivoTotal!==null?"Activo "+fmtK(k.activoTotal)+" · Pasivo "+fmtK(k.pasivoTotal):""}/>
+      <KpiCard icon={Users} color={BLUE} label="Costo laboral / ingresos" value={pctCierre(k.costoLaboralPct)} sub={k.costoLaboral!==null?"Costo laboral "+fmtK(k.costoLaboral):""}/>
+      <KpiCard icon={Activity} color={k.margenContribucionPct!==null&&k.margenContribucionPct<0?ROSE:GREEN} label="Margen de contribución" value={pctCierre(k.margenContribucionPct)} sub={r.costosVariables!==undefined?"Costos variables "+fmtCierre(r.costosVariables):""}/>
+    </div>
+
+    {/* Estado de resultados gerencial */}
+    <div style={{...card,marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:16,flexWrap:"wrap",marginBottom:14}}>
+        <div><div style={h2}>Estado de resultados gerencial</div><div style={sub}>Costos y gastos por categoría · cifras de la balanza</div></div>
+        {ingPeriodos.length>0&&<div style={{display:"flex",alignItems:"flex-end",gap:5,height:64}} aria-label="Ingresos por periodo">
+          {ingPeriodos.map(x=>(
+            <div key={x.p} title={etiquetaPeriodo(x.p)+": "+fmt(x.v)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2,width:34}}>
+              <div style={{fontSize:7.5,fontFamily:MONO,color:MUTED}}>{fmtK(x.v)}</div>
+              <div style={{width:"100%",height:Math.max(3,Math.round(x.v/maxIng*36)),background:GREEN+"70",borderRadius:"3px 3px 0 0"}}/>
+              <div style={{fontSize:8.5,color:MUTED,whiteSpace:"nowrap"}}>{etiquetaPeriodo(x.p)}</div>
+            </div>
+          ))}
+        </div>}
+      </div>
+      <TablaPeriodosCierre tabla={tablaCostos} encabezado="Categoría" filaTop={{nombre:"Ingresos",valores:ingCols,pct:"100%"}} totalLabel="Total por categorías" pctTotal={colYtd&&k.ingresos?tablaCostos.totales[colYtd]/k.ingresos*100:null}/>
+      <div style={{display:"flex",gap:0,marginTop:14,border:"1px solid "+BORDER,borderRadius:12,overflow:"hidden",flexWrap:"wrap"}}>
+        {[["Ingresos",r.ingresos,GREEN],["(−) Costos y gastos",r.costosYGastos,ROSE],["(−) Gastos financieros",r.gastosFinancieros,ROSE],["(+) Otros productos",r.otrosProductos,BLUE],[perdida?"= Pérdida neta":"= Utilidad neta",r.utilidadNeta,perdida?ROSE:GREEN]].map(([l,v,col],i)=>(
+          <div key={l} style={{flex:"1 1 150px",padding:"10px 14px",borderLeft:i>0?"1px solid "+BORDER:"none",background:i===4?col+"0a":"#fff"}}>
+            <div style={lbl}>{l}</div>
+            <div style={{fontFamily:MONO,fontSize:16,fontWeight:800,color:col,marginTop:3}}>{fmtCierre(v)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* Ingresos por cliente */}
+    {tablaClientes.filas.length>0&&<div style={{...card,marginBottom:16}}>
+      <div style={{marginBottom:14}}><div style={h2}>Ingresos por cliente</div><div style={sub}>Participación sobre los ingresos acumulados</div></div>
+      <TablaPeriodosCierre tabla={tablaClientes} encabezado="Cliente" totalLabel="Total clientes" colPct="% del ingreso" pctTotal={(()=>{const y=tablaClientes.columnas.find(x=>etiquetaPeriodo(x)==="Acumulado");return y&&k.ingresos?tablaClientes.totales[y]/k.ingresos*100:null;})()}/>
+    </div>}
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(380px,1fr))",gap:16,marginBottom:16}}>
+      {/* Nómina y seguridad social */}
+      <div style={card}>
+        <div style={{marginBottom:14}}><div style={h2}>Nómina y seguridad social</div><div style={sub}>Percepciones, cuotas patronales y pasivo al corte</div></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
+          {[["Percepciones",fmtCierre(nom.percepciones),TEXT,""],["Carga social",fmtCierre(nom.cargaSocial),AMBER,pctCierre(k.cargaSocialPct)+" de percepciones"],["Costo laboral",fmtCierre(k.costoLaboral),BLUE,pctCierre(k.costoLaboralPct)+" de ingresos"]].map(([l,v,col,s])=>(
+            <div key={l} style={{background:"#f8fafd",border:"1px solid "+BORDER,borderRadius:11,padding:"10px 12px"}}>
+              <div style={lbl}>{l}</div>
+              <div style={{fontFamily:MONO,fontSize:16,fontWeight:800,color:col,marginTop:3}}>{v}</div>
+              {s&&<div style={{fontSize:10.5,color:MUTED,marginTop:2}}>{s}</div>}
+            </div>
+          ))}
+        </div>
+        <div style={{...lbl,marginBottom:8}}>Cuotas patronales</div>
+        <ParesCierre obj={nom.cuotas} color={AMBER} barras/>
+        {(nom.sbcEstimado!==undefined||nom.cesantiaVejezPctSBC!==undefined||nom.topeCesantia2026!==undefined)&&<div style={{display:"flex",gap:16,flexWrap:"wrap",marginTop:12,padding:"9px 12px",background:"#f8fafd",border:"1px solid "+BORDER,borderRadius:10,fontSize:11.5,color:MUTED}}>
+          {nom.sbcEstimado!==undefined&&<span>SBC estimado <strong style={{fontFamily:MONO,color:TEXT}}>{fmtCierre(nom.sbcEstimado)}</strong></span>}
+          {nom.cesantiaVejezPctSBC!==undefined&&<span>Cesantía y vejez <strong style={{fontFamily:MONO,color:TEXT}}>{pctCierre(pctGuardado(nom.cesantiaVejezPctSBC))}</strong> del SBC</span>}
+          {nom.topeCesantia2026!==undefined&&<span>Tope 2026 <strong style={{fontFamily:MONO,color:TEXT}}>{pctCierre(pctGuardado(nom.topeCesantia2026))}</strong></span>}
+        </div>}
+        {nom.sueldosPorPeriodo&&<><div style={{...lbl,margin:"14px 0 8px"}}>Sueldos por periodo</div><ParesCierre obj={nom.sueldosPorPeriodo}/></>}
+        <div style={{...lbl,margin:"14px 0 8px"}}>Pasivo al corte</div>
+        <ParesCierre obj={nom.pasivoAlCorte} color={ROSE}/>
+      </div>
+
+      {/* Balance resumido */}
+      <div style={card}>
+        <div style={{marginBottom:14}}><div style={h2}>Balance resumido</div><div style={sub}>Saldos al corte{c.corte?" · "+fechaCierre(c.corte):""}</div></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
+          {[["Activo total",c.activoTotal,BLUE],["Pasivo total",c.pasivoTotal,ROSE],["Capital contable",c.capitalContable,VIOLET]].map(([l,v,col])=>(
+            <div key={l} style={{background:col+"08",border:"1px solid "+col+"28",borderRadius:11,padding:"10px 12px"}}>
+              <div style={{...lbl,color:col}}>{l}</div>
+              <div style={{fontFamily:MONO,fontSize:16,fontWeight:800,color:Number(v)<0?ROSE:col,marginTop:3}}>{fmtCierre(v)}</div>
+            </div>
+          ))}
+        </div>
+        {BAL_GRUPOS.map(([g,keys,col])=>{
+          const o=Object.fromEntries(keys.filter(x=>bal[x]!==undefined).map(x=>[x,bal[x]]));
+          if(!Object.keys(o).length) return null;
+          return <div key={g} style={{marginBottom:12}}><div style={{...lbl,color:col,marginBottom:6}}>{g}</div><ParesCierre obj={o}/></div>;
+        })}
+        {Object.keys(balOtras).length>0&&<div style={{marginBottom:12}}><div style={{...lbl,marginBottom:6}}>Otras cuentas del balance</div><ParesCierre obj={balOtras}/></div>}
+        {c.creskiHistorico&&<><div style={{...lbl,color:AMBER,margin:"14px 0 8px"}}>Creski · evolución del saldo</div><ParesCierre obj={c.creskiHistorico} color={AMBER} barras/></>}
+        {bancosMes&&<><div style={{...lbl,margin:"14px 0 8px"}}>Bancos · movimiento {labelCierre(bancosMes[0].replace(/^bancos/,""))}</div><ParesCierre obj={bancosMes[1]}/></>}
+      </div>
+    </div>
+
+    {/* Cuentas por cobrar por cliente */}
+    {cxc.length>0&&<div style={{...card,marginBottom:16}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:14}}>
+        <div><div style={h2}>Cuentas por cobrar por cliente</div><div style={sub}>Saldo al corte según la balanza</div></div>
+        <div style={{fontFamily:MONO,fontSize:17,fontWeight:800,color:AMBER}}>{fmt(cxcTotal)}</div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:"10px 28px"}}>
+        {cxc.map(x=>(
+          <div key={x.n}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12,marginBottom:3}}>
+              <span style={{fontWeight:600,color:TEXT,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={x.n}>{x.n}</span>
+              <span style={{fontFamily:MONO,fontWeight:700,color:x.v<0?ROSE:TEXT,whiteSpace:"nowrap"}}>{fmt(x.v)} <span style={{color:MUTED,fontWeight:500}}>{cxcTotal?pctCierre(x.v/cxcTotal*100):""}</span></span>
+            </div>
+            <MiniBar pct={Math.abs(x.v)/maxCxc*100} color={AMBER} h={5}/>
+          </div>
+        ))}
+      </div>
+    </div>}
+
+    {/* Hallazgos */}
+    <div style={card}>
+      <div style={{marginBottom:12}}><div style={h2}>Hallazgos del cierre</div><div style={sub}>{hallazgos.length?hallazgos.length+" observaciones del análisis de la balanza":"Sin hallazgos registrados"}</div></div>
+      {hallazgos.map((t,i)=>(
+        <div key={i} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 12px",background:i%2?"#fff":"#f8fafd",border:"1px solid "+BORDER,borderRadius:10,marginBottom:6}}>
+          <div style={{width:22,height:22,borderRadius:7,background:AMBER+"16",color:AMBER,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:MONO,fontSize:11,fontWeight:800,flexShrink:0}}>{i+1}</div>
+          <div style={{fontSize:13,color:TEXT,lineHeight:1.55}}>{typeof t==="string"?t:JSON.stringify(t)}</div>
+        </div>
+      ))}
+    </div>
+    </>}
+  </>);
+}
+
 function getCategoria(concepto=""){
+  // Nómina: separar cuotas patronales (cargas sociales) del sueldo real
+  if(/^n[óo]mina/i.test(concepto)){
+    return /cuotas patronales|imss|sar|infonavit|isn|patronal|seguridad social/i.test(concepto) ? "Cargas Sociales" : "Sueldos";
+  }
   for(const c of CATS_COSTO){ if(concepto.startsWith(c)) return c; }
   return "Otro";
 }
@@ -7686,7 +8560,8 @@ function buildPLData(facts, viat, mesDesde, mesHasta, anio="2026"){
     const margen     = subtotal>0?utilidad/subtotal:null;
     return {mes:m, mesFull:MESES_FULL_REP[MESES_REP.indexOf(m)], ingresos, subtotal, cobrado, pendiente,
             costosCat, totalCostos, utilidad, margen,
-            nFacts:mFacts.length, nViat:mViat.length};
+            nFacts:mFacts.length, nViat:mViat.length,
+            nEstimados:mViat.filter(v=>v.estimado===true).length};
   });
 }
 
@@ -7694,7 +8569,7 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
   await ensureOfficeLibs();
   const pl   = buildPLData(facts, viat, mesDesde, mesHasta, anio);
   const tag  = mesDesde===mesHasta?mesDesde:`${mesDesde}-${mesHasta}`;
-  const fecha= new Date().toISOString().slice(0,10);
+  const fecha= fechaLocalISO();
   const wb   = XLSX.utils.book_new();
 
   /* ── HOJA 1: P&L Mensual ─────────────────────────────────────────── */
@@ -7727,7 +8602,7 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
     sc(2,  d.subtotal,  NUM_FMT);
     sc(3,  d.cobrado,   NUM_FMT);
     sc(4,  d.pendiente, NUM_FMT);
-    const catKeys=["Nómina","Subcontrato","Transporte","Viáticos","Operación","Administración","Comunicación","Fiscal"];
+    const catKeys=["Sueldos","Cargas Sociales","Subcontrato","Transporte","Viáticos","Operación","Administración","Comunicación","Fiscal"];
     catKeys.forEach((c,ci)=>sc(5+ci, d.costosCat[c]||0, NUM_FMT));
     const otros=(d.costosCat["Bancario"]||0)+(d.costosCat["Otro"]||0);
     sc(13, otros, NUM_FMT);
@@ -7754,7 +8629,7 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
   // Totales
   setCell(ws1, XLSX.utils.encode_cell({r,c:0}), `TOTAL ${tag} ${anio}`, styleGrandTotalLabel);
   [gI, gI-(gI*0.16/1.16), gCob, gPend,
-   gCat["Nómina"],gCat["Subcontrato"],gCat["Transporte"],gCat["Viáticos"],
+   (gCat["Sueldos"]||0)+(gCat["Cargas Sociales"]||0),gCat["Subcontrato"],gCat["Transporte"],gCat["Viáticos"],
    gCat["Operación"],gCat["Administración"],gCat["Comunicación"],gCat["Fiscal"],
    (gCat["Bancario"]||0)+(gCat["Otro"]||0), gC, gU
   ].forEach((v,i)=>setCell(ws1, XLSX.utils.encode_cell({r,c:i+1}), v, styleGrandTotal, NUM_FMT));
@@ -7848,12 +8723,12 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
     ["Facturas cobradas (Pagadas)",                  factsF.filter(f=>f.status==="Pagada").length,"",""],
     ["% Cobro sobre facturado",                      gI>0?gCob/gI:0,"≥ 80% objetivo",""],
     ["Cartera por cobrar",                           gPend,       "",""],
-    ["Nómina total",                                 gCat["Nómina"]||0,"",""],
+    ["Nómina total (sueldos + cargas)",              (gCat["Sueldos"]||0)+(gCat["Cargas Sociales"]||0),"",""],
     ["Subcontratos RESICO",                          gCat["Subcontrato"]||0,"",""],
     ["Costos de transporte",                         gCat["Transporte"]||0,"",""],
     ["Viáticos de campo",                            gCat["Viáticos"]||0,"",""],
     ["Gastos operación/admin",                       (gCat["Operación"]||0)+(gCat["Administración"]||0),"",""],
-    ["Costo/ingreso: Nómina %",                      gI>0?(gCat["Nómina"]||0)/gI:0,"< 40% saludable",""],
+    ["Costo/ingreso: Nómina %",                      gI>0?((gCat["Sueldos"]||0)+(gCat["Cargas Sociales"]||0))/gI:0,"< 40% saludable",""],
     ["Costo/ingreso: Total %",                       gI>0?gC/gI:0,"< 85% objetivo",""],
     ["Clientes con factura",                         [...new Set(factsF.map(f=>normEmpresa(f.empresa||f.cliente)))].filter(Boolean).length,"",""],
     ["Meses en el período",                          pl.length,"",""],
@@ -8335,7 +9210,7 @@ async function exportPagosPDF(rows,label,filtrosDesc){
 function PagosProveedores({userProfile}){
   const usuario=userProfile?.nombre||"admin";
   const ANIO="2026";
-  const hoyISO=new Date().toISOString().slice(0,10);
+  const hoyISO=fechaLocalISO();
   const mesActual=MESES_ID[new Date().getMonth()];
   const [pagos,setPagos]=useState([]);
   const [facts,setFacts]=useState([]);
@@ -8543,7 +9418,7 @@ function PagosProveedores({userProfile}){
 
   const scPago={Pendiente:AMBER,Programado:BLUE,Pagado:GREEN};
   const filtroDesc=[fMes!=="todos"&&"Mes: "+fMes,fCat!=="todas"&&fCat,fEst!=="todos"&&fEst,fProv!=="todos"&&fProv].filter(Boolean).join(" · ")||"Todos los registros";
-  const labelExp=(fMes!=="todos"?fMes+"-":"")+ANIO+"_"+new Date().toISOString().slice(0,10);
+  const labelExp=(fMes!=="todos"?fMes+"-":"")+ANIO+"_"+fechaLocalISO();
 
   const inpS={width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"8px 11px",fontSize:13,boxSizing:"border-box"};
   const lblS={fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4};
@@ -9021,7 +9896,7 @@ function Reportes(){
       {/* KPI Cards */}
       <div className="g4" style={{marginBottom:20}}>
         <KpiCard icon={TrendingUp} color={GREEN} label="Ingresos (sin IVA)" value={fmtK(totalSub)} sub={pl.reduce((a,d)=>a+d.nFacts,0)+" facturas · "+fmtK(totalIng)+" c/IVA"}/>
-        <KpiCard icon={Zap} color={ROSE} label="Costos" value={fmtK(totalCos)} sub={pl.reduce((a,d)=>a+d.nViat,0)+" registros contables"}/>
+        <KpiCard icon={Zap} color={ROSE} label="Costos" value={fmtK(totalCos)} sub={pl.reduce((a,d)=>a+d.nViat,0)+" registros contables"+(pl.some(d=>d.nEstimados>0)?" · "+pl.reduce((a,d)=>a+d.nEstimados,0)+" estimados ("+pl.filter(d=>d.nEstimados>0).map(d=>d.mes).join(", ")+")":"")}/>
         <KpiCard icon={BarChart2} color={margenColor} label="Utilidad" value={fmtK(totalUtil)} sub={margenGral!==null?(Math.round(margenGral*100))+"% margen s/ingresos sin IVA":"—"}/>
         <KpiCard icon={DollarSign} color={BLUE} label="Cobrado" value={fmtK(totalCob)} sub={pctCob+"% del facturado · $"+Math.round(totalPend/1000)+"k pendiente"}/>
       </div>
@@ -9032,7 +9907,7 @@ function Reportes(){
           {label:"Margen %", val:margenGral!==null?Math.round(margenGral*100)+"%":"—", ok:margenGral!==null&&margenGral>=0.15, warn:margenGral!==null&&margenGral>=0&&margenGral<0.15, ref:"≥ 15% óptimo"},
           {label:"% Cobrado", val:pctCob+"%", ok:pctCob>=80, warn:pctCob>=50&&pctCob<80, ref:"≥ 80% objetivo"},
           {label:"Costo / Ingreso", val:totalSub>0?Math.round(totalCos/totalSub*100)+"%":"—", ok:totalSub>0&&totalCos/totalSub<=0.85, warn:totalSub>0&&totalCos/totalSub>0.85&&totalCos<=totalSub, ref:"< 85% objetivo (sin IVA)"},
-          {label:"Nómina / Ingreso", val:totalSub>0?Math.round((catAcum["Nómina"]||0)/totalSub*100)+"%":"—", ok:totalSub>0&&(catAcum["Nómina"]||0)/totalSub<=0.4, warn:totalSub>0&&(catAcum["Nómina"]||0)/totalSub>0.4&&(catAcum["Nómina"]||0)/totalSub<=0.6, ref:"< 40% saludable"},
+          {label:"Nómina / Ingreso", val:totalSub>0?Math.round(((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub*100)+"%":"—", ok:totalSub>0&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub<=0.4, warn:totalSub>0&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub>0.4&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub<=0.6, ref:"< 40% saludable"},
         ].map(({label,val,ok,warn,ref})=>{
           const c=ok?GREEN:warn?AMBER:ROSE;
           return(
@@ -9176,7 +10051,7 @@ function Reportes(){
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
               <thead>
                 <tr style={{background:BLUE+"08"}}>
-                  {["Mes","Ingresos s/IVA","Nómina","Subcontrato","Transporte","Viáticos","Operación","Otros","Total Costos","Utilidad","Margen"].map(h=>(
+                  {["Mes","Ingresos s/IVA","Sueldos","Cargas Sociales","Subcontrato","Transporte","Viáticos","Operación","Otros","Total Costos","Utilidad","Margen"].map(h=>(
                     <th key={h} style={{padding:"10px 12px",textAlign:h==="Mes"?"left":"right",fontWeight:700,color:BLUE,borderBottom:"2px solid "+BLUE+"20",whiteSpace:"nowrap",fontSize:11}}>{h}</th>
                   ))}
                 </tr>
@@ -9188,9 +10063,9 @@ function Reportes(){
                   const otros=(d.costosCat["Bancario"]||0)+(d.costosCat["Otro"]||0)+(d.costosCat["Administración"]||0)+(d.costosCat["Comunicación"]||0)+(d.costosCat["Fiscal"]||0);
                   return(
                     <tr key={d.mes} style={{background:bg}}>
-                      <td style={{padding:"9px 12px",fontWeight:700,color:TEXT,borderBottom:"1px solid "+BORDER+"50"}}>{d.mesFull}</td>
-                      {[d.subtotal,d.costosCat["Nómina"]||0,d.costosCat["Subcontrato"]||0,d.costosCat["Transporte"]||0,d.costosCat["Viáticos"]||0,d.costosCat["Operación"]||0,otros,d.totalCostos].map((v,ci)=>(
-                        <td key={ci} style={{padding:"9px 12px",textAlign:"right",fontFamily:MONO,fontSize:11,color:ci===0?GREEN:ci===7?ROSE:TEXT,fontWeight:ci===0||ci===7?700:400,borderBottom:"1px solid "+BORDER+"50"}}>{v>0?fmt(v):"—"}</td>
+                      <td style={{padding:"9px 12px",fontWeight:700,color:TEXT,borderBottom:"1px solid "+BORDER+"50",whiteSpace:"nowrap"}}>{d.mesFull}{d.nEstimados>0&&<EstimadoTag title={d.nEstimados+" registros de costo estimados en este mes · "+NOTA_ESTIMADO_SEP26}/>}</td>
+                      {[d.subtotal,d.costosCat["Sueldos"]||0,d.costosCat["Cargas Sociales"]||0,d.costosCat["Subcontrato"]||0,d.costosCat["Transporte"]||0,d.costosCat["Viáticos"]||0,d.costosCat["Operación"]||0,otros,d.totalCostos].map((v,ci)=>(
+                        <td key={ci} style={{padding:"9px 12px",textAlign:"right",fontFamily:MONO,fontSize:11,color:ci===0?GREEN:ci===8?ROSE:TEXT,fontWeight:ci===0||ci===8?700:400,borderBottom:"1px solid "+BORDER+"50"}}>{v>0?fmt(v):"—"}</td>
                       ))}
                       <td style={{padding:"9px 12px",textAlign:"right",fontFamily:MONO,fontSize:11,fontWeight:800,color:uColor,borderBottom:"1px solid "+BORDER+"50"}}>{fmt(d.utilidad)}</td>
                       <td style={{padding:"9px 12px",textAlign:"right",fontSize:11,fontWeight:700,color:uColor,borderBottom:"1px solid "+BORDER+"50"}}>{d.margen!==null?Math.round(d.margen*100)+"%":"—"}</td>
@@ -9201,8 +10076,8 @@ function Reportes(){
               <tfoot>
                 <tr style={{background:BLUE+"10",borderTop:"2px solid "+BLUE+"30"}}>
                   <td style={{padding:"10px 12px",fontWeight:800,color:BLUE,fontSize:12}}>TOTAL</td>
-                  {[totalSub,catAcum["Nómina"]||0,catAcum["Subcontrato"]||0,catAcum["Transporte"]||0,catAcum["Viáticos"]||0,catAcum["Operación"]||0,(catAcum["Bancario"]||0)+(catAcum["Otro"]||0)+(catAcum["Administración"]||0)+(catAcum["Comunicación"]||0)+(catAcum["Fiscal"]||0),totalCos].map((v,ci)=>(
-                    <td key={ci} style={{padding:"10px 12px",textAlign:"right",fontFamily:MONO,fontSize:12,color:ci===0?GREEN:ci===7?ROSE:BLUE,fontWeight:800}}>{fmt(v)}</td>
+                  {[totalSub,catAcum["Sueldos"]||0,catAcum["Cargas Sociales"]||0,catAcum["Subcontrato"]||0,catAcum["Transporte"]||0,catAcum["Viáticos"]||0,catAcum["Operación"]||0,(catAcum["Bancario"]||0)+(catAcum["Otro"]||0)+(catAcum["Administración"]||0)+(catAcum["Comunicación"]||0)+(catAcum["Fiscal"]||0),totalCos].map((v,ci)=>(
+                    <td key={ci} style={{padding:"10px 12px",textAlign:"right",fontFamily:MONO,fontSize:12,color:ci===0?GREEN:ci===8?ROSE:BLUE,fontWeight:800}}>{fmt(v)}</td>
                   ))}
                   <td style={{padding:"10px 12px",textAlign:"right",fontFamily:MONO,fontSize:12,fontWeight:900,color:totalUtil>=0?GREEN:ROSE}}>{fmt(totalUtil)}</td>
                   <td style={{padding:"10px 12px",textAlign:"right",fontSize:12,fontWeight:800,color:margenColor}}>{margenGral!==null?Math.round(margenGral*100)+"%":"—"}</td>
@@ -9307,6 +10182,9 @@ function Viaticos(){
   const maxMes=Math.max(...porMes.map(d=>d.total),1);
 
   const tipoInfo=k=>TIPOS.find(t=>t.k===k)||{label:k,color:MUTED};
+  // Registros con estimado:true (cierre sep-2026: jul+ago repartido 50/50)
+  const est=resumenEstimados(items);
+  const estFilt=resumenEstimados(filt);
 
   return(
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
@@ -9326,7 +10204,7 @@ function Viaticos(){
 
       {/* KPIs */}
       <div className="g4" style={{marginBottom:20}}>
-        <KpiCard icon={TrendingUp} color={ROSE} label="Total gastos" value={fmtK(items.reduce((a,g)=>a+(g.monto||0),0))} sub={items.length+" registros"}/>
+        <KpiCard icon={TrendingUp} color={ROSE} label="Total gastos" value={fmtK(items.reduce((a,g)=>a+(g.monto||0),0))} sub={items.length+" registros"+(est.n>0?" · "+est.n+" estimados ("+fmtK(est.monto)+")":"")}/>
         <KpiCard icon={Calendar} color={AMBER} label={mesActual+" "+ANIO} value={fmtK(items.filter(g=>g.mes===mesActual&&g.anio===ANIO).reduce((a,g)=>a+(g.monto||0),0))} sub="mes actual"/>
         <KpiCard icon={Truck} color={BLUE} label="Gasolina+Casetas+TAG" value={fmtK(items.filter(g=>["gasolina","casetas","tag"].includes(g.tipo)).reduce((a,g)=>a+(g.monto||0),0))}/>
         <KpiCard icon={Users} color={GREEN} label="Comida+Hotel" value={fmtK(items.filter(g=>["comida","hotel"].includes(g.tipo)).reduce((a,g)=>a+(g.monto||0),0))}/>
@@ -9335,13 +10213,13 @@ function Viaticos(){
       <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16,marginBottom:16}}>
         {/* Gráfica por mes */}
         <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20}}>
-          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:16}}>Gastos por mes {ANIO}</div>
+          <div style={{fontFamily:DISP,fontWeight:700,fontSize:15,marginBottom:16}}>Gastos por mes {ANIO}{est.n>0&&<span style={{fontFamily:SANS,fontSize:11,fontWeight:500,color:MUTED,marginLeft:8}}><EstimadoTag title={NOTA_ESTIMADO_SEP26}/> {est.meses.join(", ")}</span>}</div>
           <div style={{display:"flex",alignItems:"flex-end",gap:5,height:100}}>
             {porMes.map(d=>(
               <div key={d.m} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
                 {d.total>0&&<div style={{fontSize:7,fontFamily:MONO,color:d.m===mesActual?ROSE:MUTED,fontWeight:700}}>{fmtK(d.total)}</div>}
                 <div style={{width:"100%",background:d.m===mesActual?ROSE:ROSE+"38",borderRadius:"3px 3px 0 0",height:d.total>0?Math.max(4,Math.round(d.total/maxMes*80))+"%":"3px",minHeight:3}}/>
-                <div style={{fontSize:8,fontWeight:d.m===mesActual?800:400,color:d.m===mesActual?ROSE:MUTED}}>{d.m}</div>
+                <div title={est.porMes[d.m]?est.porMes[d.m].n+" registros estimados · "+fmt(est.porMes[d.m].monto):undefined} style={{fontSize:8,fontWeight:d.m===mesActual||est.porMes[d.m]?800:400,color:est.porMes[d.m]?AMBER:d.m===mesActual?ROSE:MUTED}}>{d.m}{est.porMes[d.m]?"*":""}</div>
               </div>
             ))}
           </div>
@@ -9384,7 +10262,7 @@ function Viaticos(){
 
       {/* Total filtrado */}
       {(filtMes!=="todos"||filtTipo!=="todos")&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:11,padding:"10px 16px",marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <span style={{fontSize:13,color:MUTED}}>{filt.length} gasto(s) {filtMes!=="todos"?`· ${filtMes}`:""} {filtTipo!=="todos"?`· ${tipoInfo(filtTipo).label}`:""}</span>
+        <span style={{fontSize:13,color:MUTED}}>{filt.length} gasto(s) {filtMes!=="todos"?`· ${filtMes}`:""} {filtTipo!=="todos"?`· ${tipoInfo(filtTipo).label}`:""}{estFilt.n>0&&<><EstimadoTag title={NOTA_ESTIMADO_SEP26}/> <span style={{fontSize:11.5}}>{estFilt.n} registros · {fmt(estFilt.monto)}</span></>}</span>
         <span style={{fontFamily:MONO,fontSize:16,fontWeight:800,color:ROSE}}>{fmt(totGastos)}</span>
       </div>}
 
@@ -9409,7 +10287,7 @@ function Viaticos(){
                     <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:10,color:MUTED}}>{g.folio||"—"}</td>
                     <td style={{padding:"10px 14px"}}><span style={{background:AMBER+"12",color:AMBER,borderRadius:6,padding:"2px 7px",fontSize:11,fontWeight:700}}>{g.mes||"—"} {g.anio||""}</span></td>
                     <td style={{padding:"10px 14px"}}><span style={{background:ti.color+"14",color:ti.color,borderRadius:7,padding:"3px 9px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{ti.label}</span></td>
-                    <td style={{padding:"10px 14px",fontWeight:600,fontSize:13}}>{g.concepto||"—"}</td>
+                    <td style={{padding:"10px 14px",fontWeight:600,fontSize:13}}>{g.concepto||"—"}{g.estimado===true&&<EstimadoTag title={g.cierreSep2026?NOTA_ESTIMADO_SEP26:undefined}/>}</td>
                     <td style={{padding:"10px 14px",fontSize:12,color:MUTED}}>{g.operador||"—"}</td>
                     <td style={{padding:"10px 14px",fontSize:12,color:MUTED}}>{g.ruta||"—"}</td>
                     <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:14,fontWeight:800,color:ROSE}}>{fmt(g.monto||0)}</td>
@@ -9556,10 +10434,22 @@ function Presupuestos(){
   const [q,setQ]=useState("");
   const [statusF,setStatusF]=useState("todos");
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
-  const today=new Date().toISOString().slice(0,10);
-  const in15=new Date(Date.now()+15*86400000).toISOString().slice(0,10);
+  const today=fechaLocalISO();
+  const in15=fechaLocalISO(new Date(Date.now()+15*86400000));
   const empty={cliente:"",contacto:"",fecha:today,vigencia:in15,conceptos:[{desc:"",cant:1,precio:0}],iva:true,status:"Borrador",notas:""};
   const [form,setForm]=useState(empty);
+  // Liga con facturación: facturas ligadas por cotizacionFolio / cotizacionId
+  // (o por la conversión histórica presupuesto → factura).
+  const [vista,setVista]=useState("presupuestos");
+  const [facts,setFacts]=useState([]);const [cots,setCots]=useState([]);
+  useEffect(()=>onSnapshot(query(collection(db,"facturas"),limit(2000)),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
+  useEffect(()=>onSnapshot(query(collection(db,"cotizaciones"),limit(2000)),s=>setCots(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))),()=>{}),[]);
+  const ligadasCot=c=>{
+    // directas + las de presupuestos generados desde esta cotización
+    // (sin `new Map()`: en este archivo `Map` es el ícono de lucide-react)
+    const todas=[...facturasLigadas(c,facts),...items.filter(p=>p.cotizacionOrigenId===c.id).flatMap(p=>facturasLigadas(p,facts))];
+    return todas.filter((f,i)=>todas.findIndex(x=>x.id===f.id)===i);
+  };
 
   useEffect(()=>onSnapshot(collection(db,"presupuestos"),s=>{
     setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));
@@ -9616,7 +10506,7 @@ function Presupuestos(){
       if(!confirm("Este presupuesto ya fue convertido a factura. ¿Crear otra factura de todas formas?")) return;
     }
     const today = new Date();
-    const venc = new Date(Date.now()+30*86400000).toISOString().slice(0,10); // vencimiento +30 días
+    const venc = fechaLocalISO(new Date(Date.now()+30*86400000)); // vencimiento +30 días
     const serviciosDesc = (p.conceptos||[]).map(c=>`${c.cant}× ${c.desc}`).filter(Boolean).join(" · ")||p.folio;
     try{
       const ref = await addDoc(collection(db,"facturas"),{
@@ -9632,11 +10522,13 @@ function Presupuestos(){
         iva: (p.ivaAmt||0)>0,
         status: "Pendiente",
         notas: `Generada desde presupuesto ${p.folio||""}`,
-        fechaEmision: today.toISOString().slice(0,10),
+        fechaEmision: fechaLocalISO(today),
         fechaVenc: venc,
         emailCliente: p.emailCliente||"",
         presupuestoOrigenId: p.id,
         presupuestoOrigenFolio: p.folio||"",
+        cotizacionFolio: p.folio||"",
+        cotizacionId: p.id,
         folio: "FAC-"+uid(),
         createdAt: serverTimestamp(),
       });
@@ -9681,6 +10573,38 @@ function Presupuestos(){
         <KpiCard icon={Clock} color={BLUE} label="Enviados / por definir" value={fmtK(pendientes)}/>
       </div>
 
+      <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
+        {[["presupuestos","📋 Presupuestos"],["cotizaciones","🧾 Cotizaciones ("+cots.length+")"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setVista(k)} className="btn" style={{padding:"7px 18px",borderRadius:10,border:"1.5px solid "+(vista===k?A:BD2),background:vista===k?A+"10":"#fff",color:vista===k?A:MUTED,fontWeight:vista===k?700:500,fontSize:13,cursor:"pointer"}}>{l}</button>
+        ))}
+      </div>
+
+      {/* Cotizaciones guardadas + facturas ligadas (solo lectura) */}
+      {vista==="cotizaciones"&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+        {cots.length===0?<div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin cotizaciones guardadas. Se crean desde el Cotizador.</div>
+        :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:860}}>
+          <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
+            {["Folio","Cliente","Destino","Fecha","Total","Presupuesto","Facturas ligadas"].map(h=>
+              <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}
+          </tr></thead>
+          <tbody>{cots.filter(c=>!q||(c.cliente||"").toLowerCase().includes(q.toLowerCase())||(c.folio||"").toLowerCase().includes(q.toLowerCase())).map(c=>{
+            const pres=items.filter(p=>p.cotizacionOrigenId===c.id);
+            return(
+              <tr key={c.id} className="fr" style={{borderBottom:"1px solid "+BORDER,verticalAlign:"top"}}>
+                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}>{c.folio||"—"}</td>
+                <td style={{padding:"10px 12px",fontWeight:700,fontSize:13}}>{c.cliente||"—"}<div style={{fontSize:10,color:MUTED,fontWeight:400}}>{c.modoLabel||""}</div></td>
+                <td style={{padding:"10px 12px",fontSize:12,color:MUTED,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={c.destino||""}>{c.destino||"—"}</td>
+                <td style={{padding:"10px 12px",fontSize:12,color:MUTED,whiteSpace:"nowrap"}}>{c.createdAt?.seconds?new Date(c.createdAt.seconds*1000).toLocaleDateString("es-MX"):"—"}</td>
+                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:13,fontWeight:800,whiteSpace:"nowrap"}}>{fmt(Number(c.total)||0)}</td>
+                <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:10.5,color:pres.length?VIOLET:MUTED,whiteSpace:"nowrap"}}>{pres.length?pres.map(p=>p.folio).join(", "):"—"}</td>
+                <td style={{padding:"10px 12px",minWidth:240}}><FacturasLigadasList facturas={ligadasCot(c)}/></td>
+              </tr>
+            );
+          })}</tbody>
+        </table></div>}
+      </div>}
+
+      {vista==="presupuestos"&&<>
       <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
         {["todos",...statuses].map(s=>(
           <button key={s} onClick={()=>setStatusF(s)} className="btn" style={{padding:"6px 14px",borderRadius:9,border:"1.5px solid "+(statusF===s?A:BD2),background:statusF===s?A+"10":"#fff",color:statusF===s?A:MUTED,fontSize:12,fontWeight:statusF===s?700:500,cursor:"pointer"}}>{s==="todos"?"Todos":s}</button>
@@ -9697,7 +10621,7 @@ function Presupuestos(){
           <div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin presupuestos. <button onClick={openNew} style={{color:A,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Crear →</button></div>
           :<div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:900}}>
             <thead><tr style={{borderBottom:"1px solid "+BORDER}}>
-              {["Folio","Cliente","Fecha","Vigencia","Conceptos","Subtotal","IVA","Total","Estado","Acciones"].map(h=>
+              {["Folio","Cliente","Fecha","Vigencia","Conceptos","Subtotal","IVA","Total","Facturas","Estado","Acciones"].map(h=>
                 <th key={h} style={{padding:"9px 12px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>
               )}
             </tr></thead>
@@ -9711,6 +10635,13 @@ function Presupuestos(){
                 <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12}}>{fmt(p.subtotal||0)}</td>
                 <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:12,color:MUTED}}>{fmt(p.ivaAmt||0)}</td>
                 <td style={{padding:"10px 12px",fontFamily:MONO,fontSize:13,fontWeight:800}}>{fmt(p.total||0)}</td>
+                <td style={{padding:"10px 12px"}}>{(()=>{
+                  const lig=facturasLigadas(p,facts);
+                  if(!lig.length) return <span style={{fontSize:11,color:MUTED}}>—</span>;
+                  return <div style={{display:"flex",flexDirection:"column",gap:3}}>{lig.map(f=>(
+                    <div key={f.id} style={{display:"flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}><span style={{fontFamily:MONO,fontSize:10.5,fontWeight:700}}>{f.cfdiFolio||f.folio||"—"}</span><EtapaChip f={f}/></div>
+                  ))}</div>;
+                })()}</td>
                 <td style={{padding:"10px 12px"}}>
                   <select value={p.status||"Borrador"} onChange={e=>updStatus(p.id,e.target.value)} style={{background:"transparent",border:"1.5px solid "+(sc[p.status]||MUTED)+"28",borderRadius:8,padding:"3px 7px",color:sc[p.status]||MUTED,fontSize:11,fontWeight:700,cursor:"pointer"}}>
                     {statuses.map(s=><option key={s} value={s}>{s}</option>)}
@@ -9730,6 +10661,7 @@ function Presupuestos(){
             ))}</tbody>
           </table></div>}
       </div>}
+      </>}
 
       {modal&&<Modal title={editItem?"Editar presupuesto":"Nuevo presupuesto"} onClose={()=>{setModal(false);setEditItem(null);}} icon={ClipboardList} iconColor={A} wide>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
@@ -9777,6 +10709,11 @@ function Presupuestos(){
 
         <Txt label="Notas y condiciones" value={form.notas} onChange={e=>setForm({...form,notas:e.target.value})} placeholder="Términos, forma de pago, vigencia, etc."/>
 
+        {editItem&&<div style={{marginTop:12,background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:11,padding:"12px"}}>
+          <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6,marginBottom:8}}><FileText size={11} color={A}/>Facturas ligadas a {editItem.folio||"este presupuesto"}{editItem.cotizacionOrigenFolio&&<span style={{fontWeight:600,textTransform:"none",letterSpacing:0}}>· viene de {editItem.cotizacionOrigenFolio}</span>}</div>
+          <FacturasLigadasList facturas={facturasLigadas(editItem,facts)} vacio="Sin facturas ligadas. Se ligan con → Factura, o desde Facturación eligiendo este folio en “Cotización / presupuesto ligado”."/>
+        </div>}
+
         <div style={{display:"flex",gap:8,marginTop:12}}>
           <button onClick={save} className="btn" style={{flex:1,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:15}}>
             {editItem?"Guardar cambios":"Crear presupuesto"}
@@ -9809,8 +10746,8 @@ function Unidades(){
     setLoad(false);
   },()=>setLoad(false)),[]);
 
-  const HOY=new Date().toISOString().slice(0,10);
-  const en30=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+  const HOY=fechaLocalISO();
+  const en30=fechaLocalISO(new Date(Date.now()+30*86400000));
   const vencStatus=(fecha)=>{
     if(!fecha) return {label:"Sin registrar",color:MUTED,urgente:false};
     if(fecha<HOY) return {label:"VENCIDO "+fecha,color:ROSE,urgente:true};
@@ -10828,7 +11765,7 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
   const [tabChofer,setTabChofer]=useState("hoy");
   const [horaAhora, setHoraAhora] = useState(()=>new Date());
   useEffect(()=>{const t=setInterval(()=>setHoraAhora(new Date()),30000);return()=>clearInterval(t);},[]);
-  const hoy = new Date().toISOString().slice(0,10);
+  const hoy = fechaLocalISO();
   const rutasActivas = misRutas.filter(r=>r.status!=="Completada"&&r.status!=="Cancelada"&&!r.archivadaChofer);
   const rutasCompletadas = misRutas.filter(r=>r.status==="Completada"&&!r.archivadaChofer);
   const completadas = rutasCompletadas.length;
@@ -11343,11 +12280,11 @@ function ChoferGastos({chofer,showT}){
     setSaving(false);
   };
 
-  const hoyStr = new Date().toISOString().slice(0,10);
+  const hoyStr = fechaLocalISO();
   const gastosHoy = gastos.filter(g=>{
     const ts = g.fechaTs?.seconds;
     if(!ts) return false;
-    return new Date(ts*1000).toISOString().slice(0,10)===hoyStr;
+    return fechaLocalISO(new Date(ts*1000))===hoyStr;
   });
   const totalHoy = gastosHoy.reduce((a,g)=>a+(g.monto||0),0);
   const totalMes = gastos.filter(g=>{
@@ -11464,7 +12401,7 @@ function ChoferPerfil({chofer,misRutas,rutasCompletadas,onLogout}){
   // Checkin/Checkout — jornadas del chofer (horas trabajadas)
   const [jornadaActiva,setJornadaActiva]=useState(null);
   const [jornadasHoy,setJornadasHoy]=useState([]);
-  const hoyStr = new Date().toISOString().slice(0,10);
+  const hoyStr = fechaLocalISO();
   useEffect(()=>{
     const q = query(collection(db,"jornadas"),where("choferId","==",chofer.id));
     return onSnapshot(q,s=>{
@@ -11475,7 +12412,7 @@ function ChoferPerfil({chofer,misRutas,rutasCompletadas,onLogout}){
         const ts = j.inTs?.seconds;
         if(!ts) return false;
         const d = new Date(ts*1000);
-        return d.toISOString().slice(0,10)===hoyStr;
+        return fechaLocalISO(d)===hoyStr;
       });
       setJornadasHoy(today);
     });
@@ -11509,7 +12446,7 @@ function ChoferPerfil({chofer,misRutas,rutasCompletadas,onLogout}){
     const ts = r.completadaEn?.seconds;
     if(!ts) return;
     const d = new Date(ts*1000);
-    const ld = d.toISOString().slice(0,10);
+    const ld = fechaLocalISO(d);
     const e = (r.stopsStatus||[]).filter(s=>s.status==="entregado").length;
     byDay[ld] = (byDay[ld]||0)+e;
   });
@@ -12652,7 +13589,7 @@ function GastosAdmin(){
     const ws = XLSX.utils.json_to_sheet(data);
     ws["!cols"] = [{wch:12},{wch:22},{wch:14},{wch:14},{wch:12},{wch:30},{wch:14}];
     XLSX.utils.book_append_sheet(wb,ws,"Gastos Choferes");
-    XLSX.writeFile(wb,"gastos_choferes_"+new Date().toISOString().slice(0,10)+".xlsx");
+    XLSX.writeFile(wb,"gastos_choferes_"+fechaLocalISO()+".xlsx");
   };
 
   return(
@@ -12741,8 +13678,8 @@ function JornadasAdmin(){
   const [items,setItems]=useState([]);
   const [load,setLoad]=useState(true);
   const [choferFil,setChoferFil]=useState("todos");
-  const [desde,setDesde]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return d.toISOString().slice(0,10);});
-  const [hasta,setHasta]=useState(()=>new Date().toISOString().slice(0,10));
+  const [desde,setDesde]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return fechaLocalISO(d);});
+  const [hasta,setHasta]=useState(()=>fechaLocalISO());
 
   useEffect(()=>onSnapshot(collection(db,"jornadas"),s=>{
     setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.inTs?.seconds||0)-(a.inTs?.seconds||0)));
@@ -13286,7 +14223,7 @@ function PinScreen({userProfile,onVerified,onBack}){
         setLoading(false);return;
       }
       const hashed=await hashPin(pin,userProfile.uid);
-      await updateDoc(doc(db,"dmov_usuarios",userProfile.uid),{pin:hashed,pinSaltED:true,pinCreadoEn:new Date().toISOString().slice(0,10)});
+      await updateDoc(doc(db,"dmov_usuarios",userProfile.uid),{pin:hashed,pinSaltED:true,pinCreadoEn:fechaLocalISO()});
       onVerified();
     }catch(e){
       setErr(e.code==="auth/popup-closed-by-user"?"Verificación cancelada — se requiere confirmar identidad con Google":e.message);
@@ -13907,6 +14844,7 @@ export default function App(){
     rutas:<PlanificadorRutas/>,
     nacional:isAdmin?<PlanificadorNacional/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     facturas:<Facturas rol={rol}/>,
+    cierre:isAdmin?<CierreContable/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     reportes:isAdmin?<Reportes/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     pagos:isAdmin?<PagosProveedores userProfile={userProfile}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     viaticos:isAdmin?<Viaticos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
