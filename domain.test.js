@@ -328,6 +328,9 @@ describe("normalizarPlan — variantes reales del campo plan en facturas", () =>
     ["22845 Actnow Varios 2014",               "22845"],
     ["204113 Electrolit WM E RDE",             "204113"],
     ["619715 Loreal Logística",                "619715"],
+    ["P-204113 GMAP ELECTROLIT",                "204113"],
+    ["619716 Loreal",                           "619716"],
+    ["142805 Rentas Logística",                 "142805"],
   ];
   it.each(casos)("%j → %s", (texto, esperado) => {
     expect(normalizarPlan(texto)).toBe(esperado);
@@ -338,6 +341,8 @@ describe("normalizarPlan — variantes reales del campo plan en facturas", () =>
     expect(normalizarPlan("Campari Summit Actnow")).toBe("210212");
     expect(normalizarPlan("L'Oréal logística")).toBe("619715");
     expect(normalizarPlan("hersheys")).toBe("222829");
+    expect(normalizarPlan("Entrega LP Agency Puebla")).toBe("204113");   // Ceci (LP Agency) factura con el plan Electrolit
+    expect(normalizarPlan("Loreal")).toBe("619715");                      // el plan 2 solo por número
     expect(normalizarPlan("Campari")).toBeNull();          // ¿Promotores o Summit?
     expect(normalizarPlan("Actnow")).toBeNull();           // 3 planes Actnow
     expect(normalizarPlan("SCJ y Canon")).toBeNull();      // dos planes
