@@ -271,6 +271,8 @@ export interface PlanCatalogo {
   alias: string[];                      // palabras clave SIN acentos, en mayúsculas
   nota?: string;
   porConfirmar?: boolean;               // plan heredado de los datos: falta validar director
+  activo?: boolean;                     // false = dado de baja desde la app (no se ofrece ni se normaliza a él)
+  origen?: "base" | "editado" | "nuevo"; // de dónde sale: código, código corregido en la app, o creado en la app
 }
 
 const _MAP  = { empresa:"MARKETING & PROMOTION SAPI DE CV",            rfc:"MPR930115NN0" };
@@ -319,6 +321,63 @@ export const PLANES: PlanCatalogo[] = [
     directorIntranet:null, vaPorIntranet:true, alias:["MUSTELLA","MUSTELA"], porConfirmar:true },
 ];
 
+/* ── Catálogo ACTIVO ─────────────────────────────────────────────────────────
+   PLANES es la semilla del código. La app puede completarla o corregirla desde
+   la colección `planes` de Firestore (alta de planes nuevos, directores, bajas)
+   sin tocar código: setCatalogoPlanes(fusionarCatalogoPlanes(PLANES, docs)).
+   Todas las funciones de este bloque leen el catálogo activo. */
+let _catalogoActivo: PlanCatalogo[] = PLANES;
+export function catalogoPlanes(): PlanCatalogo[] { return _catalogoActivo; }
+export function setCatalogoPlanes(lista: PlanCatalogo[] | null | undefined): void {
+  _catalogoActivo = lista && lista.length ? lista : PLANES;
+}
+const _dir = (x: unknown): DirectorIntranet | null => {
+  if(!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  const nombre = String(o.nombre ?? "").trim(), id = String(o.id ?? "").trim();
+  return nombre || id ? { nombre, id } : null;
+};
+/* Doc de la colección `planes` (id = número) → PlanCatalogo. null si no trae número. */
+export function planDesdeDoc(d: Record<string, any> | null | undefined): PlanCatalogo | null {
+  const numero = String(d?.numero ?? d?.id ?? "").trim();
+  if(!numero) return null;
+  const alias = (Array.isArray(d!.alias) ? d!.alias : String(d!.alias ?? "").split(","))
+    .map((a: unknown) => _planTxt(a)).filter((a: string) => a.length > 0);
+  const dg = _dir(d!.directorGeneralIntranet);
+  return {
+    numero, nombre: String(d!.nombre ?? "").trim(), empresa: String(d!.empresa ?? "").trim().toUpperCase(),
+    rfc: String(d!.rfc ?? "").trim().toUpperCase(), clienteId: String(d!.clienteId ?? "").trim(),
+    directorIntranet: _dir(d!.directorIntranet), ...(dg ? { directorGeneralIntranet: dg } : {}),
+    vaPorIntranet: d!.vaPorIntranet !== false, alias,
+    ...(d!.nota ? { nota: String(d!.nota) } : {}), porConfirmar: d!.porConfirmar === true, activo: d!.activo !== false,
+  };
+}
+/* Semilla + docs de Firestore. Un doc con el mismo número corrige la semilla
+   (solo con lo que trae capturado; los alias se suman); un número nuevo se
+   agrega; activo:false lo saca del catálogo. */
+export function fusionarCatalogoPlanes(base: PlanCatalogo[], docs: Record<string, any>[] | null | undefined): PlanCatalogo[] {
+  const out: PlanCatalogo[] = base.map(p => ({ ...p, alias: [...p.alias], origen: "base" as const }));
+  for(const d of docs || []){
+    const p = planDesdeDoc(d);
+    if(!p) continue;
+    const i = out.findIndex(x => x.numero === p.numero);
+    if(i >= 0){
+      const b = out[i];
+      out[i] = { ...b,
+        nombre: p.nombre || b.nombre, empresa: p.empresa || b.empresa, rfc: p.rfc || b.rfc, clienteId: p.clienteId || b.clienteId,
+        directorIntranet: p.directorIntranet ?? b.directorIntranet,
+        ...(p.directorGeneralIntranet ? { directorGeneralIntranet: p.directorGeneralIntranet } : {}),
+        vaPorIntranet: d.vaPorIntranet === undefined ? b.vaPorIntranet : p.vaPorIntranet,
+        alias: [...new Set([...b.alias, ...p.alias])], nota: p.nota ?? b.nota,
+        porConfirmar: d.porConfirmar === undefined ? b.porConfirmar : p.porConfirmar,
+        activo: p.activo, origen: "editado" };
+    } else {
+      out.push({ ...p, origen: "nuevo" });
+    }
+  }
+  return out.filter(p => p.activo !== false);
+}
+
 /* 142804 es el plan PROPIO de DMOV dentro del grupo: aparece en todas las
    solicitudes y en registros viejos antecede al nombre del plan del cliente
    ("142804 SCJ Promotores"). Por eso su número, solo, no decide el plan. */
@@ -326,7 +385,7 @@ export const PLAN_PROPIO_DMOV = "142804";
 
 export function planPorNumero(numero: unknown): PlanCatalogo | null {
   const n = String(numero ?? "").trim();
-  return n ? (PLANES.find(p => p.numero === n) || null) : null;
+  return n ? (catalogoPlanes().find(p => p.numero === n) || null) : null;
 }
 /* Etiqueta canónica que se guarda en `plan` y se muestra en la UI */
 export function etiquetaPlan(p: PlanCatalogo): string {
@@ -345,12 +404,13 @@ export function normalizarPlan(texto: unknown): string | null {
   const t = _planTxt(texto);
   if(!t) return null;
   const nums: string[] = t.match(/\d+/g) || [];
-  const delCatalogo = nums.filter(n => PLANES.some(p => p.numero === n));
+  const cat = catalogoPlanes();
+  const delCatalogo = nums.filter(n => cat.some(p => p.numero === n));
   const directo = delCatalogo.find(n => n !== PLAN_PROPIO_DMOV);
   if(directo) return directo;
 
   const hay = " " + t + " ";
-  const porAlias = PLANES.filter(p => p.alias.some(a => hay.includes(" " + a)));
+  const porAlias = cat.filter(p => p.alias.some(a => hay.includes(" " + a)));
   if(porAlias.length === 1) return porAlias[0].numero;
   if(porAlias.length > 1) return null;                 // ambiguo
 
@@ -420,7 +480,7 @@ export function clienteIdCorrecto(f: FacturaLike, planNum: string | null): strin
   if(!empresa) return actual;
   const plan = planPorNumero(planNum);
   if(plan && mismaEmpresa(empresa, plan.empresa)) return plan.clienteId;
-  const empresasDelCliente = PLANES.filter(p => p.clienteId === actual).map(p => p.empresa);
+  const empresasDelCliente = catalogoPlanes().filter(p => p.clienteId === actual).map(p => p.empresa);
   if(actual && empresasDelCliente.length && !empresasDelCliente.some(e => mismaEmpresa(empresa, e))) return "";
   return actual;
 }
@@ -462,7 +522,7 @@ export function etapaFactura(f: FacturaLike | null | undefined): EtapaInfo {
     const subestado = e.includes("TESORER") ? "Tesorería" : e.includes("DIRECTOR") ? "Director" : "";
     return { etapa:"En intranet", subestado, detalle };
   }
-  if(st === "Solicitada a Katia" && !tiene(f?.cfdiFolio)) return { etapa:"Solicitada", ...base };
+  if((st === "Solicitada a Katia" || st === "Solicitud interna" || f?.tipoDocumento === "solicitud_interna") && !tiene(f?.cfdiFolio)) return { etapa:"Solicitada", ...base };
   return { etapa:"Emitida", ...base };
 }
 
@@ -666,7 +726,7 @@ const _EMPRESA_ALIAS: [string, string[]][] = [
 export function empresaCanonica(nombre: unknown): string {
   const crudo = String(nombre ?? "").trim();
   if(!crudo) return "";
-  const empresas = [...new Set(PLANES.map(p => p.empresa))];
+  const empresas = [...new Set(catalogoPlanes().map(p => p.empresa))];
   const directa = empresas.find(e => mismaEmpresa(crudo, e));
   if(directa) return directa;
   const hay = " " + _planTxt(crudo) + " ";
@@ -677,7 +737,8 @@ export function empresaCanonica(nombre: unknown): string {
 }
 
 export type BaseConciliacion = "operacion" | "emision";
-const _cuentaComoIngreso = (f: FacturaLike): boolean => f.status !== "Cancelada" && f.status !== "Solicitada a Katia";
+const _cuentaComoIngreso = (f: FacturaLike): boolean =>
+  f.status !== "Cancelada" && f.status !== "Solicitada a Katia" && f.status !== "Solicitud interna" && f.tipoDocumento !== "solicitud_interna";
 const _mesIdx = (m: unknown): number => _MESES_CORTOS.indexOf(String(m ?? "").toLowerCase().slice(0, 3));
 /* Año y mes (0-11) en que una factura cuenta: mes de operación (como el P&L
    del sistema) o fecha de emisión del CFDI (como la contabilidad). */

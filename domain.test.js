@@ -12,6 +12,7 @@ import {
   pctGuardado, kpisCierre, resumenEstimados,
   periodoDeCierre, empresaCanonica, periodoDeFactura, conciliarIngresos, conciliarCxC,
   coincideAlias, clienteIdCorrecto, fechaLocalISO,
+  catalogoPlanes, setCatalogoPlanes, planDesdeDoc, fusionarCatalogoPlanes,
 } from "./domain";
 
 describe("diasRuta", () => {
@@ -402,8 +403,10 @@ describe("planDeFactura / planearNormalizacionPlanes", () => {
 });
 
 describe("etapaFactura (semáforo)", () => {
-  it("Solicitada: status Solicitada a Katia sin CFDI", () => {
+  it("Solicitada: status Solicitada a Katia (o solicitud interna) sin CFDI", () => {
     expect(etapaFactura({ status: "Solicitada a Katia" }).etapa).toBe("Solicitada");
+    expect(etapaFactura({ status: "Solicitud interna" }).etapa).toBe("Solicitada");
+    expect(etapaFactura({ status: "Pendiente", tipoDocumento: "solicitud_interna" }).etapa).toBe("Solicitada");
   });
   it("Emitida: tiene cfdiFolio y no intranetFolio", () => {
     expect(etapaFactura({ status: "Pendiente", cfdiFolio: "A2064" }).etapa).toBe("Emitida");
@@ -631,6 +634,8 @@ describe("conciliarIngresos", () => {
     F("6", "TACRE SA DE CV", "Sep", 70),                                 // no está en la balanza
     F("7", "MARKETING & PROMOTION SAPI DE CV", "Sep", 999, { status: "Cancelada" }),
     F("8", "MARKETING & PROMOTION SAPI DE CV", "Sep", 999, { status: "Solicitada a Katia" }),
+    F("8b", "MARKETING & PROMOTION SAPI DE CV", "Sep", 999, { status: "Solicitud interna" }),
+    F("8c", "MARKETING & PROMOTION SAPI DE CV", "Sep", 999, { tipoDocumento: "solicitud_interna" }),
     F("9", "MARKETING & PROMOTION SAPI DE CV", "Oct", 500),              // después del cierre
     F("10", "MARKETING & PROMOTION SAPI DE CV", "Sep", 500, { anio: 2025 }),
     F("11", "MARKETING & PROMOTION SAPI DE CV", "", 500),                // sin mes: no se puede ubicar
@@ -827,5 +832,54 @@ describe("fechaLocalISO", () => {
   it("sin argumento devuelve hoy en formato AAAA-MM-DD", () => {
     const d = new Date(), esperado = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
     expect(fechaLocalISO()).toBe(esperado);
+  });
+});
+
+/* ── Catálogo de planes editable desde la app (colección `planes`) ───────── */
+describe("catálogo de planes dinámico", () => {
+  const GMAP = "G-MAP OPERADORA SA DE CV";
+  it("planDesdeDoc normaliza un doc de Firestore", () => {
+    const p = planDesdeDoc({ id: "777001", nombre: "Plan de prueba", empresa: " g-map operadora sa de cv ", rfc: " gop170407fv7 ",
+      clienteId: "prueba", directorIntranet: { nombre: "APELLIDO NOMBRE", id: "1" }, alias: "Prueba, OTRO ALIAS", vaPorIntranet: true });
+    expect(p).toMatchObject({ numero: "777001", empresa: GMAP, rfc: "GOP170407FV7", clienteId: "prueba", alias: ["PRUEBA", "OTRO ALIAS"], activo: true, porConfirmar: false });
+    expect(p.directorIntranet).toEqual({ nombre: "APELLIDO NOMBRE", id: "1" });
+    expect(p.directorGeneralIntranet).toBeUndefined();
+    expect(planDesdeDoc({ nombre: "sin número" })).toBeNull();
+    expect(planDesdeDoc(null)).toBeNull();
+    expect(planDesdeDoc({ numero: "1", directorIntranet: { nombre: "", id: "" } }).directorIntranet).toBeNull();
+  });
+  it("fusionar: un doc corrige la semilla sin borrar lo que no trae", () => {
+    const lista = fusionarCatalogoPlanes(PLANES, [{ id: "210201", directorIntranet: { nombre: "DIRECTOR CONFIRMADO", id: "99" }, porConfirmar: false }]);
+    const p = lista.find(x => x.numero === "210201");
+    expect(p.directorIntranet).toEqual({ nombre: "DIRECTOR CONFIRMADO", id: "99" });
+    expect(p.porConfirmar).toBe(false);
+    expect(p.empresa).toBe("PROMOCIONES AMERICA LATINA SAPI DE CV");   // conservado de la semilla
+    expect(p.alias).toContain("CAMPARI PROMOTORES");
+    expect(p.origen).toBe("editado");
+    expect(lista.find(x => x.numero === "10344").origen).toBe("base");
+  });
+  it("fusionar: agrega planes nuevos y da de baja con activo:false", () => {
+    const lista = fusionarCatalogoPlanes(PLANES, [
+      { id: "777001", nombre: "Nuevo", empresa: GMAP, rfc: "GOP170407FV7", clienteId: "nuevo", alias: ["NUEVO"] },
+      { id: "210402", activo: false },
+    ]);
+    expect(lista.find(x => x.numero === "777001")).toMatchObject({ origen: "nuevo", vaPorIntranet: true });
+    expect(lista.find(x => x.numero === "210402")).toBeUndefined();
+    expect(lista.length).toBe(PLANES.length);   // +1 nuevo, −1 baja
+  });
+  it("las funciones del catálogo leen el catálogo activo", () => {
+    try {
+      setCatalogoPlanes(fusionarCatalogoPlanes(PLANES, [{ id: "777001", nombre: "Nuevo Plan GMAP", empresa: GMAP, rfc: "GOP170407FV7", clienteId: "nuevo", alias: ["NUEVOPLAN"] }]));
+      expect(planPorNumero("777001").nombre).toBe("Nuevo Plan GMAP");
+      expect(normalizarPlan("777001 lo que sea")).toBe("777001");
+      expect(normalizarPlan("Servicio NUEVOPLAN octubre")).toBe("777001");
+      expect(planDeFactura({ plan: "777001", empresa: GMAP })).toBe("777001");
+      expect(clienteIdCorrecto({ empresa: GMAP, clienteId: "" }, "777001")).toBe("nuevo");
+      expect(catalogoPlanes().length).toBe(PLANES.length + 1);
+    } finally {
+      setCatalogoPlanes(null);
+    }
+    expect(planPorNumero("777001")).toBeNull();        // de vuelta a la semilla
+    expect(catalogoPlanes()).toBe(PLANES);
   });
 });

@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, fix/verified-billing-requests]
 
 jobs:
   validar:
@@ -28,6 +28,14 @@ jobs:
       - name: Tests (36 — política de negocio protegida)
         run: npm test
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Private fiscal archive and profile rules (isolated demo emulator)
+        run: npm run test:security
+
       - name: Build de producción
         run: npm run build
 
@@ -38,3 +46,4 @@ jobs:
             exit 1
           fi
           echo "✓ Librerías pesadas siguen lazy"
+

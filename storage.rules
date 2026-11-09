@@ -1,19 +1,45 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // F0: antes era `allow read, write: if true` (bucket público total).
-    // Ahora requiere sesión de Firebase Auth — la app de chofer y el panel
-    // usan auth anónima, así que la operación no se rompe.
+    function fiscalOffice() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && firestore.exists(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid)).data.activo == true
+        && firestore.get(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid)).data.rol == 'admin';
+    }
+    // Immutable archive. Registry reserves the UUID and exact hashes before upload.
+    match /cfdi/{uuid}/{filename} {
+      function reservation() {
+        return firestore.get(/databases/(default)/documents/cfdi_archivo/$(uuid)).data;
+      }
+      allow read: if fiscalOffice();
+      allow create: if resource == null && fiscalOffice()
+        && firestore.exists(/databases/(default)/documents/cfdi_archivo/$(uuid))
+        && reservation().createdBy == request.auth.uid
+        && reservation().estado == 'pendiente'
+        && request.resource.metadata.uuid == uuid
+        && request.resource.metadata.facturaId == reservation().facturaId
+        && ((filename == 'original.xml'
+          && request.resource.contentType == 'application/xml'
+          && request.resource.size > 0 && request.resource.size <= 4 * 1024 * 1024
+          && request.resource.metadata.sha256 == reservation().xml.sha256)
+        || (filename == 'original.pdf'
+          && request.resource.contentType == 'application/pdf'
+          && request.resource.size > 0 && request.resource.size <= 10 * 1024 * 1024
+          && request.resource.metadata.sha256 == reservation().pdf.sha256));
+      allow update, delete: if false;
+    }
+    // Existing operational image evidence stays unchanged.
     match /evidencias/{allPaths=**} {
       allow read: if request.auth != null;
       allow write: if request.auth != null
-                   && request.resource.size < 5 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*');
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
     }
-
-    // Cualquier otra ruta del bucket: lectura autenticada, escritura bloqueada.
-    match /{allPaths=**} {
-      allow read: if request.auth != null;
+    // Exclude fiscal archive from this overlapping legacy read grant.
+    match /{first}/{rest=**} {
+      allow read: if first != 'cfdi' && request.auth != null;
       allow write: if false;
     }
   }

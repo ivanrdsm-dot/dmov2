@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useMemo, Component } from "react";
 import { initializeApp } from "firebase/app";
+import { getStorage } from "firebase/storage";
 import {
-  getFirestore, collection, addDoc, updateDoc, deleteDoc,
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, runTransaction,
   doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
   limit, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
 } from "firebase/firestore";
@@ -21,7 +22,10 @@ import {
   Phone, Camera, LogOut, Play, Square, Radio, Flag,
   CreditCard, Paperclip, History,
 } from "lucide-react";
-import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO, PL_ORDEN_DIRECTOS, PLANES, planPorNumero, etiquetaPlan, normalizarPlan, planDeFactura, planearNormalizacionPlanes, etapaFactura, ETAPAS_FACTURA, facturasLigadas, buscarCotizaciones, rangoPeriodo, etiquetaPeriodo, filasPorPeriodo, ingresosPorColumna, pctGuardado, kpisCierre, resumenEstimados, conciliarIngresos, conciliarCxC, coincideAlias, fechaLocalISO, mismaEmpresa, clienteIdCorrecto } from "./domain";
+import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO, PL_ORDEN_DIRECTOS, PLANES, planPorNumero, etiquetaPlan, normalizarPlan, planDeFactura, planearNormalizacionPlanes, etapaFactura, ETAPAS_FACTURA, facturasLigadas, buscarCotizaciones, rangoPeriodo, etiquetaPeriodo, filasPorPeriodo, ingresosPorColumna, pctGuardado, kpisCierre, resumenEstimados, conciliarIngresos, conciliarCxC, coincideAlias, fechaLocalISO, mismaEmpresa, clienteIdCorrecto, catalogoPlanes, setCatalogoPlanes, fusionarCatalogoPlanes } from "./domain";
+import CfdiArchive from "./CfdiArchive.jsx";
+import { invoiceArchiveFingerprint } from "./cfdiArchiveStore.js";
+import { billingFields, billingSnapshot } from "./billing.js";
 /* mapbox-gl (1.77MB) es LAZY: ver ensureMapbox()/useMapboxReady() más abajo.
    Ninguna de las 3 apps lo paga en el primer paint; carga al montar un mapa. */
 /* ─── CODE-SPLITTING (F5): librerías pesadas bajo demanda ──────────────────
@@ -1080,7 +1084,7 @@ const VEHK = [
    Single source of truth. Editable desde aqui o desde el modulo Clientes
    (la oficina pide que las facturas se emitan a la empresa correcta + plan).
    ─────────────────────────────────────────────────────────────────────────── */
-const CLIENTE_PLANES = [
+const CLIENTE_PLANES_BASE = [
   {
     id:"actnow",
     aliases:["ACTNOW","ACT NOW","CAMPARI","APEROL","APPEROL","PROMOCIONES AMERICA","PROMOCIONES AMÉRICA","PROMOLATINA"],
@@ -1208,6 +1212,54 @@ const CLIENTE_PLANES = [
     pendienteFiscales: true, // marcar para completar después
   },
 ];
+
+/* Catálogo ACTIVO de clientes: la semilla del código completada/corregida con
+   la colección `cuentas` (módulo Clientes). Una cuenta con razón social y RFC
+   se vuelve cliente facturable sin tocar código; una cuenta cuyo id o RFC
+   coincide con la semilla la complementa (domicilio, alias, contacto). */
+let CLIENTE_PLANES = CLIENTE_PLANES_BASE;
+const PALETA_CLIENTES=["#dc2626","#2563eb","#059669","#7c3aed","#d97706","#0891b2","#65a30d","#a16207","#0ea5e9","#db2777","#4f46e5","#0f766e"];
+const _aliasList=v=>(Array.isArray(v)?v:String(v||"").split(",")).map(a=>String(a).trim().toUpperCase()).filter(Boolean);
+function aplicarCuentasACatalogo(cuentas){
+  const lista=CLIENTE_PLANES_BASE.map(c=>({...c,aliases:[...c.aliases]}));
+  (cuentas||[]).forEach(c=>{
+    const nombre=String(c.nombre||"").trim();
+    if(!nombre) return;
+    const razon=String(c.razonSocial||"").trim().toUpperCase();
+    const rfc=String(c.rfc||"").trim().toUpperCase();
+    const aliases=[...new Set([..._aliasList(c.aliases),nombre.toUpperCase()])];
+    const base=lista.find(b=>b.id===c.id)||(rfc&&lista.find(b=>b.rfc===rfc&&(!razon||mismaEmpresa(razon,b.empresa))))||null;
+    if(base){
+      if(razon) base.empresa=razon;
+      if(rfc) base.rfc=rfc;
+      if(c.domicilio1) base.domicilio1=c.domicilio1;
+      if(c.domicilio2) base.domicilio2=c.domicilio2;
+      if(c.regimenFiscal) base.regimenFiscal=c.regimenFiscal;
+      if(c.planSolicitud) base.planSolicitud=c.planSolicitud;
+      base.aliases=[...new Set([...base.aliases,...aliases])];
+      base.cuentaId=c.id; base.contacto=c.contacto||base.contacto; base.email=c.email||base.email;
+      return;
+    }
+    if(!razon||!rfc) return; // sin razón social y RFC no se puede emitir la solicitud de factura
+    const plan=String(c.plan||"").trim();
+    lista.push({id:c.id,cuentaId:c.id,aliases,cliente:nombre,empresa:razon,rfc,
+      plan,planSolicitud:c.planSolicitud||(plan?"P-"+plan.replace(/^P-/i,""):""),
+      domicilio1:c.domicilio1||"",domicilio2:c.domicilio2||"",regimenFiscal:c.regimenFiscal||"(601) GENERAL DE LEY PERSONAS MORALES",
+      color:c.color||PALETA_CLIENTES[lista.length%PALETA_CLIENTES.length],desdeCuentas:true,contacto:c.contacto||"",email:c.email||""});
+  });
+  CLIENTE_PLANES=lista;
+}
+/* Suscribe los catálogos vivos (planes y cuentas) y devuelve una versión que
+   cambia con cada actualización, para que el componente vuelva a pintar. */
+function useCatalogos(){
+  const [v,setV]=useState(0);
+  useEffect(()=>{
+    const u1=onSnapshot(collection(db,"planes"),s=>{setCatalogoPlanes(fusionarCatalogoPlanes(PLANES,s.docs.map(d=>({id:d.id,...d.data()}))));setV(x=>x+1);},()=>{});
+    const u2=onSnapshot(collection(db,"cuentas"),s=>{aplicarCuentasACatalogo(s.docs.map(d=>({id:d.id,...d.data()})));setV(x=>x+1);},()=>{});
+    return()=>{u1();u2();};
+  },[]);
+  return v;
+}
 
 /* Constantes "siempre iguales" que aparecen en cada solicitud de factura.
    Editables aquí si la oficina cambia algún catalogo SAT. */
@@ -1372,7 +1424,7 @@ function printFactura(f){
   const bg={Pagada:"#d1fae5",Pendiente:"#fef3c7",Vencida:"#fee2e2","Solicitada a Katia":"#ede9fe"};
   const st=f.status||"Pendiente";
   const sub=Number(f.subtotal||f.monto||0);
-  const iva=Number(f.ivaAmt||f.iva||0);
+  const iva=Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0));
   const tot=Number(f.total||sub+iva||0);
   const html=`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>Factura ${f.folio||""}</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"/>
@@ -1543,7 +1595,7 @@ async function downloadFacturaPDF(f){
   pdfLabelValue(pdf,14,70,"Mes / Año",(f.mesOp||"")+" "+(f.anio||""));
   pdfLabelValue(pdf,110,70,"Plan / Cuenta",f.plan);
   const sub = Number(f.subtotal||f.monto||0);
-  const iva = Number(f.ivaAmt||f.iva||0);
+  const iva = Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0));
   const tot = Number(f.total||sub+iva||0);
   autoTable(pdf,{
     startY:84,
@@ -1728,8 +1780,13 @@ const styleStatusChip = (status)=>{
 // Aplica un estilo a una celda concreta, creando la celda si no existe
 function setCell(ws, addr, value, style, numFmt){
   if(value===undefined||value===null||value==="") value="";
-  const isNum = typeof value==="number";
-  ws[addr] = {t: isNum?"n":"s", v: value};
+  if(typeof value==="object"){
+    if(value.t!=="n"||typeof value.f!=="string"||!Number.isFinite(value.v)) throw new Error("Celda de fórmula inválida: "+addr);
+    ws[addr]={t:"n",f:value.f,v:value.v};
+  }else{
+    const isNum = typeof value==="number";
+    ws[addr] = {t: isNum?"n":"s", v: value};
+  }
   if(numFmt) ws[addr].z = numFmt;
   if(style) ws[addr].s = {...style, ...(numFmt?{numFmt}:{})};
 }
@@ -1817,7 +1874,7 @@ function buildRelacionFacturasSheet(facts, brand, year){
     grp.items.forEach(f=>{
       rowNumber++;
       const sub = Number(f.subtotal||f.monto||0);
-      const iva = Number(f.ivaAmt||f.iva||0);
+      const iva = Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0));
       const tot = Number(f.total||0);
       mSub+=sub; mIva+=iva; mTot+=tot;
       const zebra = r%2===0?XC.ROW_WHITE:XC.ROW_ALT;
@@ -1833,7 +1890,7 @@ function buildRelacionFacturasSheet(facts, brand, year){
       setCell(ws,XLSX.utils.encode_cell({r,c:2}),f.plan?(f.plan+(f.servicio?" "+f.servicio:"")):(f.servicio||""),styleCell(r,cellBase));
       setCell(ws,XLSX.utils.encode_cell({r,c:3}),f.cfdiFolio||f.folio||"",styleCell(r,{...cellBase,align:"center"}));
       setCell(ws,XLSX.utils.encode_cell({r,c:4}),fechaStr,styleCell(r,{...cellBase,align:"center"}));
-      setCell(ws,XLSX.utils.encode_cell({r,c:5}),f.periodo||f.solicitante||"",styleCell(r,cellBase));
+      setCell(ws,XLSX.utils.encode_cell({r,c:5}),f.periodoServicio||f.periodo||"",styleCell(r,cellBase));
       setCell(ws,XLSX.utils.encode_cell({r,c:6}),sub,styleCell(r,{...cellBase,align:"right"}),MONEY_FMT);
       setCell(ws,XLSX.utils.encode_cell({r,c:7}),iva,styleCell(r,{...cellBase,align:"right"}),MONEY_FMT);
       setCell(ws,XLSX.utils.encode_cell({r,c:8}),tot,styleCell(r,{...cellBase,align:"right",bold:true}),MONEY_FMT);
@@ -1865,8 +1922,8 @@ function buildRelacionFacturasSheet(facts, brand, year){
   const factsCurrentYear = facts.filter(f=>(f.anio||year)==year);
   const pipelineYear = year+1;
   const factsPipeline = facts.filter(f=>(f.anio||year)==pipelineYear);
-  const sumY = factsCurrentYear.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt||f.iva||0),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
-  const sumP = factsPipeline.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt||f.iva||0),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
+  const sumY = factsCurrentYear.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0)),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
+  const sumP = factsPipeline.reduce((a,f)=>({s:a.s+Number(f.subtotal||f.monto||0),i:a.i+Number(f.ivaAmt??(typeof f.iva==="number"?f.iva:0)),t:a.t+Number(f.total||0)}),{s:0,i:0,t:0});
   const addTotal = (label,s,i,t,style)=>{
     setCell(ws,XLSX.utils.encode_cell({r,c:0}),label,style.label);
     for(let c=1;c<6;c++) setCell(ws,XLSX.utils.encode_cell({r,c}),"",style.row);
@@ -2111,7 +2168,7 @@ function buildSolicitudWs(factura){
   const matched = (factura._clienteId && CLIENTE_PLANES.find(cp=>cp.id===factura._clienteId))
     || CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim())
     || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||"");
-  if(!matched) return null;
+  if(!matched) throw new Error("Cliente no identificado: la factura no tiene una empresa del catálogo ni un cliente reconocido.");
   const cfg = SOLICITUD_FACTURA_CONFIG;
 
   // Estilos base
@@ -2168,9 +2225,9 @@ function buildSolicitudWs(factura){
 
   const merges = [];
   const subtotal = Number(factura.subtotal||factura.monto||0);
-  const ivaAmt = Number(factura.ivaAmt||factura.iva||0);
+  const ivaAmt = Number(factura.ivaAmt??(typeof factura.iva==="number"?factura.iva:0));
   const total = Number(factura.total||subtotal+ivaAmt);
-  const periodo = `${factura.mesOp||""}-${factura.anio||new Date().getFullYear()}`.toUpperCase();
+  const periodo = (factura.periodoServicio||"").trim() || `${factura.mesOp||""}-${factura.anio||new Date().getFullYear()}`.toUpperCase();
   const fechaSolicitud = new Date(); // Hoy
 
   // ROW 1 — TÍTULO (B1:F1 merged, amarillo + rojo)
@@ -2280,7 +2337,11 @@ function buildSolicitudWs(factura){
     const oficial = CLIENTE_PLANES.find(cp=>(cp.planSolicitud||"").startsWith("P-"+planCat.numero+" "));
     planCatTxt = oficial ? oficial.planSolicitud : "P-"+planCat.numero+" "+planCat.nombre;
   }
-  const planFinal = factura.planOverride || planCatTxt || matched.planSolicitud || matched.plan;
+  // Orden: texto capturado a mano (planOverride) → plan del catálogo → texto guardado
+  // en la factura → plan por defecto del cliente. sinPlan:true deja la celda vacía.
+  // Si el texto guardado es solo el número y el cliente tiene su texto oficial ("P-777002 …"), va el oficial.
+  const planTexto = (factura.plan && matched.planSolicitud && String(matched.planSolicitud).toUpperCase().replace(/^P-/,"").startsWith(String(factura.plan).trim().toUpperCase().replace(/^P-/,""))) ? matched.planSolicitud : factura.plan;
+  const planFinal = factura.sinPlan===true ? "" : (factura.planOverride || planCatTxt || planTexto || matched.planSolicitud || matched.plan || "");
   setS("B20",planFinal,valBoldStyle);
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:19,c}),"",valBoldStyle);
   merges.push({s:{r:19,c:1},e:{r:19,c:5}});
@@ -2329,11 +2390,9 @@ function buildSolicitudWs(factura){
 // Descarga una sola factura como XLSX individual
 async function downloadSolicitudFacturaXLSX(factura){
   await ensureOfficeLibs();
-  const result = buildSolicitudWs(factura);
-  if(!result){
-    alert("Cliente no identificado. Asegúrate de que la factura tenga una empresa conocida.");
-    return;
-  }
+  let result;
+  try { result = buildSolicitudWs(factura); }
+  catch (error) { alert(error.message); return; }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, result.ws, result.sheetName);
   const fecha = fechaLocalISO();
@@ -2369,9 +2428,10 @@ async function downloadTodasSolicitudesXLSX(facts, mesLabel){
     }
   }
   if(ok===0){
-    alert("Ninguna factura pudo identificarse.\nVerifica que los registros tengan empresa o _clienteId reconocido.\nSkipped: "+skipped.join(", "));
+    alert("Ninguna factura pudo identificarse.\nVerifica que los registros tengan una empresa del catálogo de clientes.\nSin exportar: "+skipped.join(", "));
     return;
   }
+  if(skipped.length) alert("Se exportaron "+ok+" solicitudes. Quedaron fuera por no identificarse el cliente: "+skipped.join(", "));
   const fecha = fechaLocalISO();
   const label = (mesLabel||"facturas").replace(/[\s/\\?*[\]:]/g,"-").slice(0,30);
   XLSX.writeFile(wb, `Solicitudes_${label}_${fecha}.xlsx`);
@@ -3909,7 +3969,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     const enRango=(m,a)=>rango.includes(m)&&String(a||"")===String(ANIO);
 
     // INGRESOS: mismas exclusiones que buildPLData (conciliado con balanza)
-    const factsBase=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&enRango(f.mesOp||f.mes,f.anio));
+    const factsBase=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&enRango(f.mesOp||f.mes,f.anio));
     const ingTotales=factsBase.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
     const factsCli=clienteF==="todos"?factsBase:factsBase.filter(f=>(f.clienteId||normEmpresa(f.empresa||f.cliente))===clienteF);
     const ingCliente=factsCli.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
@@ -3928,7 +3988,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     const prevIni=Math.min(iD,iH)-nMeses;
     if(prevIni>=0){
       const rangoPrev=MESES.slice(prevIni,Math.min(iD,iH));
-      const fPrev=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&rangoPrev.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(ANIO));
+      const fPrev=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&rangoPrev.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(ANIO));
       const cPrev=viatAll.filter(v=>rangoPrev.includes(v.mes)&&String(v.anio||"")===String(ANIO))
         .map(v=>({bucket:getCategoria(v.concepto||""),monto:(Number(v.monto)||0)*peso}));
       erPrev=buildEstadoResultados({ingresos:fPrev.map(f=>({subtotal:Number(f.subtotal)||0})),costos:cPrev});
@@ -3988,7 +4048,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     // Respeta el filtro de cliente: ingresos exactos del cliente por mes,
     // costos prorrateados por su peso global (método revelado en UI).
     const serie=MESES.map(m=>{
-      const fM=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(ANIO));
+      const fM=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(ANIO));
       const fMC=clienteF==="todos"?fM:fM.filter(f=>(f.clienteId||normEmpresa(f.empresa||f.cliente))===clienteF);
       const ing=fMC.reduce((a,f)=>a+(Number(f.subtotal)||0),0);
       const cos=viatAll.filter(v=>v.mes===m&&String(v.anio||"")===String(ANIO)).reduce((a,v)=>a+(Number(v.monto)||0),0)*peso;
@@ -4213,16 +4273,16 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const sosSinAtender = alertasItems.filter(a=>a.type==="sos"&&!a.atendida).length;
   const alertasCriticas = alertasItems.filter(a=>(a.type==="sos"||a.type==="geofence")&&!a.atendida).length;
 
-  /* Facturas EMITIDAS con monto — la base de todo lo financiero.
+  /* Registros contables heredados con monto; emisión de CFDI aún no verificada.
      Se excluyen canceladas, solicitudes a Katia y los stubs de bitácora en $0. */
-  const factsEmitidas=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0);
+  const factsEmitidas=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&(f.total||0)>0);
   const totalFac=factsEmitidas.reduce((a,f)=>a+(f.total||0),0);
   const cobrado=factsEmitidas.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const pendiente=factsEmitidas.filter(f=>f.status!=="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const nPendientes=factsEmitidas.filter(f=>f.status!=="Pagada").length;
   /* Servicios sin facturar: stubs de bitácora ($0) + solicitadas a Katia —
      trabajo ya hecho cuyo dinero aún no entra al ciclo de cobranza. */
-  const sinFacturar=facts.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia"));
+  const sinFacturar=facts.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia"||f.status==="Solicitud interna"||f.tipoDocumento==="solicitud_interna"));
   // Cartera vencida — facturas emitidas con fechaVenc < hoy sin pagar
   const hoyTs = Date.now();
   const cartera = factsEmitidas.filter(f=>{
@@ -4331,7 +4391,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:"linear-gradient(90deg,"+A+",#fb923c,"+GREEN+")"}}/>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,flexWrap:"wrap",gap:8}}>
             <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.1em",textTransform:"uppercase",color:"#fdba74"}}>
-              📊 Estado de resultados 2026 · Ene – {mesActual} · conciliado con contabilidad
+              📊 Resultado provisional 2026 · Ene – {mesActual} · conciliación pendiente
             </div>
             <button onClick={()=>setView("reportes")} className="btn" style={{fontSize:11,fontWeight:700,color:"#fff",background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.18)",borderRadius:9,padding:"5px 12px"}}>Ver reportes →</button>
           </div>
@@ -4339,7 +4399,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
             <div>
               <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Ingresos (sin IVA)</div>
               <div style={{fontFamily:MONO,fontSize:34,fontWeight:900,color:"#4ade80",lineHeight:1,letterSpacing:"-0.02em"}}>{fmtK(ingYtd)}</div>
-              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{plYtd.reduce((a,d)=>a+d.nFacts,0)} facturas emitidas</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{plYtd.reduce((a,d)=>a+d.nFacts,0)} registros internos (CFDI por verificar)</div>
             </div>
             <div>
               <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Costos</div>
@@ -4371,7 +4431,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
       {/* ── SEGUIMIENTO: cobranza y facturación pendiente ── */}
       {isAdmin&&(
         <div className="g4 au2" style={{marginBottom:16}}>
-          <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" facturas emitidas sin pagar"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" registros internos sin pagar"} onClick={()=>setView("facturas")}/>
           <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":"al corriente ✓"} onClick={()=>setView("facturas")}/>
           <KpiCard icon={FileText} color={VIOLET} accent={sinFacturar.length>0} label="Sin facturar" value={sinFacturar.length} valueColor={VIOLET} sub="servicios por solicitar a Katia" onClick={()=>setView("facturas")}/>
           <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"} onClick={()=>setView("facturas")}/>
@@ -4420,10 +4480,10 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
               <div>
                 <div style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Facturación mensual {new Date().getFullYear()}</div>
-                <div style={{fontSize:11,color:MUTED,marginTop:2}}>Facturado vs cobrado</div>
+                <div style={{fontSize:11,color:MUTED,marginTop:2}}>Registrado vs cobrado</div>
               </div>
               <div style={{display:"flex",gap:12}}>
-                {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
+                {[[A,"Registrado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
               </div>
             </div>
             <div style={{display:"flex",alignItems:"flex-end",gap:4,height:130}}>
@@ -7214,6 +7274,10 @@ function BitacoraImport({onClose,showT}){
   );
 }
 
+/* Campos que se pueden editar aunque la factura tenga un CFDI archivado
+   (cfdiArchiveLocked): seguimiento y cobranza, nada que cambie el documento
+   fiscal. Debe coincidir con la regla de `facturas` en firestore.rules. */
+const CAMPOS_SEGUIMIENTO_FACTURA=["notas","status","fechaPago","fechaVenc","emailCliente","intranetFolio","intranetFecha","intranetEstatus","intranetDirector","seguimiento","seguimientoFecha","cotizacionFolio","cotizacionId"];
 /* ── Facturación: semáforo de etapa, texto de plan y facturas ligadas ───────
    La lógica vive en domain.ts (etapaFactura / PLANES / facturasLigadas). */
 const ETAPA_COLOR = {Solicitada:VIOLET,Emitida:BLUE,"En intranet":AMBER,Pagada:GREEN,Vencida:ROSE,Cancelada:MUTED};
@@ -7251,6 +7315,7 @@ function FacturasLigadasList({facturas=[],vacio="Sin facturas ligadas"}){
 
 function Facturas({rol="admin"}){
   const isAdmin=rol==="admin";
+  const catVersion=useCatalogos(); // planes y clientes vivos (Firestore sobre la semilla)
   const [items,setItems]=useState([]);const [load,setLoad]=useState(true);
   const [modal,setModal]=useState(false);const [editItem,setEditItem]=useState(null);
   const [showBitacora,setShowBitacora]=useState(false);
@@ -7263,7 +7328,7 @@ function Facturas({rol="admin"}){
   const ANIO=new Date().getFullYear();
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   // planOtro es solo de UI (plan fuera de catálogo → texto libre en planOverride); no se guarda.
-  const empty={mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:fechaLocalISO(),fechaVenc:"",emailCliente:"",planOverride:"",
+  const empty={...billingFields({}),mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:fechaLocalISO(),fechaVenc:"",emailCliente:"",planOverride:"",
     planNumero:"",planOtro:false,rfc:"",cfdiFolio:"",intranetFolio:"",intranetFecha:"",intranetEstatus:"",intranetDirector:"",seguimiento:"",seguimientoFecha:"",cotizacionFolio:"",cotizacionId:"",fechaPago:""};
   const [form,setForm]=useState(empty);
   const [etapaF,setEtapaF]=useState("todas");
@@ -7287,7 +7352,7 @@ function Facturas({rol="admin"}){
     const pCat=planPorNumero(num);
     // RFC: el guardado, o el del catálogo si el plan es de la misma empresa fiscal
     const rfc=f.rfc||(pCat&&normEmpresa(f.empresa||f.cliente)===pCat.empresa?pCat.rfc:"");
-    setForm({mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||"",fechaEmision:f.fechaEmision||"",fechaVenc:f.fechaVenc||"",emailCliente:f.emailCliente||"",
+    setForm({...billingFields(f),mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||"",fechaEmision:f.fechaEmision||"",fechaVenc:f.fechaVenc||"",emailCliente:f.emailCliente||"",
       planOverride:f.planOverride||"",planNumero:num||"",planOtro:!num&&!!(f.planOverride||f.plan),_clienteId:f._clienteId||"",rfc,
       cfdiFolio:String(f.cfdiFolio||""),intranetFolio:String(f.intranetFolio||""),intranetFecha:f.intranetFecha||"",intranetEstatus:f.intranetEstatus||"",intranetDirector:f.intranetDirector||"",
       seguimiento:f.seguimiento||"",seguimientoFecha:f.seguimientoFecha||"",cotizacionFolio:f.cotizacionFolio||f.presupuestoOrigenFolio||"",cotizacionId:f.cotizacionId||f.presupuestoOrigenId||"",fechaPago:f.fechaPago||""});
@@ -7331,12 +7396,19 @@ function Facturas({rol="admin"}){
     // Si cambia el texto del plan, el original se conserva una sola vez en planOriginal
     if(editItem&&editItem.plan&&editItem.plan!==data.plan&&!editItem.planOriginal) data.planOriginal=editItem.plan;
     try{
-      if(editItem){await updateDoc(doc(db,"facturas",editItem.id),data);showT("✓ Registro actualizado");}
+      if(editItem){
+        if(editItem.cfdiArchiveLocked && invoiceArchiveFingerprint({...editItem,...data})!==invoiceArchiveFingerprint(editItem)){
+          showT("El expediente tiene originales fiscales reservados o archivados. No se pueden cambiar sus datos de vinculación; requiere revisión.","err");return;
+        }
+        // Expediente con CFDI archivado: solo se tocan campos de seguimiento (mismos que permite firestore.rules)
+        const update=editItem.cfdiArchiveLocked?Object.fromEntries(CAMPOS_SEGUIMIENTO_FACTURA.filter(k=>k in data).map(k=>[k,data[k]])):data;
+        await updateDoc(doc(db,"facturas",editItem.id),update);showT("✓ Registro actualizado");
+      }
       else{await addDoc(collection(db,"facturas"),{...data,folio:"FAC-"+uid(),createdAt:serverTimestamp()});showT("✓ Registro creado");}
       setModal(false);setForm(empty);setEditItem(null);
     }catch(e){showT(e.message,"err");}
   };
-  const del=async id=>{if(!confirm("¿Eliminar este registro?"))return;await deleteDoc(doc(db,"facturas",id));showT("Eliminado");};
+  const del=async id=>{if(items.find(f=>f.id===id)?.cfdiArchiveLocked){showT("Un expediente con originales fiscales no se puede eliminar.","err");return;}if(!confirm("¿Eliminar este registro?"))return;await deleteDoc(doc(db,"facturas",id));showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"facturas",id),{status});
   /* Cambio de estado desde la tabla. "Pagada" necesita fecha de cobro (flujo de
      efectivo, cartera y conciliación contra el cierre contable dependen de
@@ -7373,7 +7445,7 @@ function Facturas({rol="admin"}){
 
   // La vista previa se recalcula con los datos en vivo: al asignar un plan a
   // mano, la factura sale sola de "sin resolver".
-  const normData=useMemo(()=>normPlan?planearNormalizacionPlanes(items):null,[normPlan,items]);
+  const normData=useMemo(()=>normPlan?planearNormalizacionPlanes(items):null,[normPlan,items,catVersion]);
   /* Asignar a mano el plan de una factura cuyo texto no se pudo leer. Guarda el
      número y el texto del catálogo, conserva el texto anterior en planOriginal
      y corrige el clienteId. No cambia la empresa de la factura. */
@@ -7445,7 +7517,7 @@ function Facturas({rol="admin"}){
   const proyAnual=porMes.reduce((a,m)=>a+m.fac,0);
   const avgMes=porMes.filter(m=>m.fac>0).reduce((a,m,_,arr)=>a+m.fac/arr.length,0)||0;
   const mesActual=MESES[new Date().getMonth()];
-  const sc={Pendiente:AMBER,Pagada:GREEN,Vencida:ROSE,"Solicitada a Katia":VIOLET};
+  const sc={Pendiente:AMBER,Pagada:GREEN,Vencida:ROSE,"Solicitada a Katia":VIOLET,"Solicitud interna":VIOLET};
   const sub=parseFloat(form.subtotal)||0;const ivaP=form.iva?sub*.16:0;const totP=sub+ivaP;
 
   return(
@@ -7454,7 +7526,7 @@ function Facturas({rol="admin"}){
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
         <div>
           <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>{isAdmin?"Facturación & Finanzas":"Registrar Servicio"}</h1>
-          <p style={{color:MUTED,fontSize:13,marginTop:3}}>{isAdmin?"Control mensual · PDF descargable · Proyecciones anuales":"Registro de servicios prestados"}</p>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>{isAdmin?"Registros internos y solicitudes · Los folios FAC/SOL y el PDF interno no acreditan CFDI emitidos":"Registro de servicios prestados"}</p>
           {!isAdmin&&<p style={{color:BLUE,fontSize:12,fontWeight:600,marginTop:4,display:"flex",alignItems:"center",gap:5}}><Shield size={12}/>Los totales son visibles solo para administradores</p>}
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
@@ -7569,7 +7641,7 @@ function Facturas({rol="admin"}){
           </button>}
         </div>
         {isAdmin&&mesF!=="todos"&&totTotal>0&&<div style={{display:"flex",gap:0,marginBottom:14,background:"#fff",border:"1px solid "+BORDER,borderRadius:12,overflow:"hidden"}}>
-          {[[TEXT,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt||f.iva||0),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v],i)=>(
+          {[[TEXT,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt??(typeof f.iva==="number"?f.iva:0)),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v],i)=>(
             <div key={l} style={{flex:1,padding:"11px 18px",borderLeft:i>0?"1px solid "+BORDER:"none",display:"flex",alignItems:"baseline",gap:10}}>
               <span style={{fontSize:10,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>{l}</span>
               <span style={{fontFamily:MONO,fontSize:17,fontWeight:800,color:c}}>{v}</span>
@@ -7594,7 +7666,7 @@ function Facturas({rol="admin"}){
                 <td style={{padding:"8px 10px",maxWidth:150}}>{f.plan&&<span title={f.plan} style={{background:VIOLET+"12",color:VIOLET,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700,display:"inline-block",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",verticalAlign:"middle"}}>{f.plan}</span>}</td>
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.servicio||""}>{f.servicio||"—"}</td>
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11.5,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.subtotal||f.monto||0)}</td>}
-                {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11,color:MUTED,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.ivaAmt||f.iva||0)}</td>}
+                {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11,color:MUTED,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.ivaAmt??(typeof f.iva==="number"?f.iva:0))}</td>}
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:12.5,fontWeight:800,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.total||0)}</td>}
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}><EtapaChip f={f}/></td>
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{(()=>{
@@ -7611,7 +7683,7 @@ function Facturas({rol="admin"}){
                 })()}</td>
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>
                   <select value={f.status||"Pendiente"} onChange={e=>cambiarStatus(f,e.target.value)} title={f.status==="Pagada"?(f.fechaPago?"Pagada el "+f.fechaPago:"Pagada · sin fecha de pago capturada"):undefined} style={{background:(sc[f.status]||MUTED)+"0c",border:"1.5px solid "+(sc[f.status]||MUTED)+"30",borderRadius:8,padding:"3px 6px",color:sc[f.status]||MUTED,fontSize:10.5,fontWeight:700,cursor:"pointer",maxWidth:118}}>
-                    {["Solicitada a Katia","Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s==="Solicitada a Katia"?"Sol. a Katia":s}</option>)}
+                    {["Solicitud interna","Solicitada a Katia","Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s==="Solicitada a Katia"?"Sol. a Katia":s==="Solicitud interna"?"Sol. interna":s}</option>)}
                   </select>
                   {isAdmin&&esPagadaSinFecha(f)&&<input type="date" aria-label={"Fecha de pago de "+(f.folio||"la factura")} title="Fecha real del cobro — se guarda al salir del campo" max={fechaLocalISO()}
                     onBlur={e=>{const v=e.target.value;if(v&&v>="2020-01-01"&&v<=fechaLocalISO()) updateDoc(doc(db,"facturas",f.id),{fechaPago:v}).then(()=>showT("✓ Fecha de pago guardada · "+(f.folio||""))).catch(er=>showT(er.message,"err"));}}
@@ -7653,9 +7725,9 @@ function Facturas({rol="admin"}){
       {tab==="proyecciones"&&<>
         <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:24,marginBottom:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-            <div><div style={{fontFamily:DISP,fontWeight:700,fontSize:16}}>Facturación mensual {ANIO}</div><div style={{fontSize:12,color:MUTED,marginTop:2}}>Facturado vs cobrado</div></div>
+            <div><div style={{fontFamily:DISP,fontWeight:700,fontSize:16}}>Facturación mensual {ANIO}</div><div style={{fontSize:12,color:MUTED,marginTop:2}}>Registrado vs cobrado</div></div>
             <div style={{display:"flex",gap:14}}>
-              {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontSize:11,color:MUTED}}>{l}</span></div>)}
+              {[[A,"Registrado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontSize:11,color:MUTED}}>{l}</span></div>)}
               <div style={{fontFamily:MONO,fontSize:13,fontWeight:700,color:VIOLET}}>Anual: {fmtK(proyAnual)}</div>
             </div>
           </div>
@@ -7725,7 +7797,7 @@ function Facturas({rol="admin"}){
             <div style={{fontSize:11,fontWeight:800,color:AMBER,marginBottom:6}}>Sin resolver — el texto no identifica un plan. Elige aquí el plan de cada una; se guarda al momento y conserva el texto original.</div>
             <div style={{maxHeight:210,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
               {normData.sinResolver.map(c=>{
-                const sugeridos=PLANES.filter(p=>mismaEmpresa(c.empresa,p.empresa));
+                const sugeridos=catalogoPlanes().filter(p=>mismaEmpresa(c.empresa,p.empresa));
                 return(
                 <div key={c.id} style={{display:"flex",gap:10,fontSize:11.5,alignItems:"center"}}>
                   <span style={{fontFamily:MONO,fontSize:10.5,color:MUTED,minWidth:84}}>{c.folio||"—"}</span>
@@ -7734,7 +7806,7 @@ function Facturas({rol="admin"}){
                   <select aria-label={"Plan para "+(c.folio||"la factura")} value="" onChange={e=>e.target.value&&asignarPlan(c.id,e.target.value)} style={{width:200,background:"#fff",border:"1.5px solid "+AMBER+"60",borderRadius:7,padding:"3px 6px",fontSize:11,cursor:"pointer"}}>
                     <option value="">Asignar plan…</option>
                     {sugeridos.length>0&&<optgroup label="De esta empresa">{sugeridos.map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}</optgroup>}
-                    <optgroup label={sugeridos.length>0?"Otros planes":"Planes"}>{PLANES.filter(p=>!sugeridos.includes(p)).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}</optgroup>
+                    <optgroup label={sugeridos.length>0?"Otros planes":"Planes"}>{catalogoPlanes().filter(p=>!sugeridos.includes(p)).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}</optgroup>
                   </select>
                 </div>);
               })}
@@ -7859,10 +7931,10 @@ function Facturas({rol="admin"}){
             <select aria-label="Plan del catálogo" value={form.planOtro?"__otro":(form.planNumero||"")} onChange={e=>pickPlan(e.target.value)} style={{width:"100%",background:"#fff",border:"1.5px solid "+(planSel?VIOLET+"60":BD2),borderRadius:9,padding:"9px 12px",fontSize:13,cursor:"pointer"}}>
               <option value="">— Sin plan —</option>
               <optgroup label="Planes vigentes">
-                {PLANES.filter(p=>!p.porConfirmar).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}
+                {catalogoPlanes().filter(p=>!p.porConfirmar).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}
               </optgroup>
               <optgroup label="Históricos (director por confirmar)">
-                {PLANES.filter(p=>p.porConfirmar).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}
+                {catalogoPlanes().filter(p=>p.porConfirmar).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}
               </optgroup>
               <option value="__otro">Otro (texto libre)…</option>
             </select>
@@ -7878,10 +7950,11 @@ function Facturas({rol="admin"}){
             :<div style={{color:AMBER,fontWeight:600}}>Director de intranet por confirmar para este plan</div>}
             {form.planOverride&&<div>Nombre de plan en la solicitud: <strong style={{color:TEXT}}>{form.planOverride}</strong> <button type="button" onClick={()=>setForm(f=>({...f,planOverride:"",plan:textoPlanCatalogo(planSel)}))} className="btn" style={{color:ROSE,fontSize:11,fontWeight:700,marginLeft:4}}>quitar</button></div>}
           </div>}
+          {editItem&&isAdmin&&<CfdiArchive key={editItem.id} db={db} storage={getStorage(fbApp)} user={auth.currentUser} dirty={invoiceArchiveFingerprint({...editItem,...form,subtotal:sub,ivaAmt:ivaP,total:totP})!==invoiceArchiveFingerprint(editItem)} factura={editItem} records={items} receptorRfc={CLIENTE_PLANES.find(cp=>cp.id===editItem._clienteId)?.rfc||""} emisorRfc={SOLICITUD_FACTURA_CONFIG.emisorRFC}/>}
           <div>
             <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Estado de pago</div>
             <select value={form.status} onChange={sf("status")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}>
-              {["Solicitada a Katia","Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s}</option>)}
+              {["Solicitud interna","Solicitada a Katia","Pendiente","Pagada","Vencida","Cancelada"].map(s=><option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div>
@@ -7916,7 +7989,7 @@ function Facturas({rol="admin"}){
             <Inp label="Fecha en intranet" type="date" value={form.intranetFecha||""} onChange={sf("intranetFecha")}/>
             <div>
               <Inp label="Director que autoriza" list="dmov-directores-intranet" value={form.intranetDirector||""} onChange={sf("intranetDirector")} placeholder="Nombre del director"/>
-              <datalist id="dmov-directores-intranet">{[...new Set(PLANES.flatMap(p=>[p.directorIntranet?.nombre,p.directorGeneralIntranet?.nombre]).filter(Boolean))].map(n=><option key={n} value={n}/>)}</datalist>
+              <datalist id="dmov-directores-intranet">{[...new Set(catalogoPlanes().flatMap(p=>[p.directorIntranet?.nombre,p.directorGeneralIntranet?.nombre]).filter(Boolean))].map(n=><option key={n} value={n}/>)}</datalist>
               {planSel?.directorIntranet&&form.intranetDirector!==planSel.directorIntranet.nombre&&<button type="button" onClick={()=>setForm(f=>({...f,intranetDirector:planSel.directorIntranet.nombre}))} className="btn" style={{marginTop:5,fontSize:11,fontWeight:700,color:VIOLET}}>Usar sugerido: {planSel.directorIntranet.nombre}</button>}
             </div>
             <div style={{gridColumn:"1/-1"}}>
@@ -7970,51 +8043,173 @@ function Facturas({rol="admin"}){
   );
 }
 /* ─── CLIENTES ──────────────────────────────────────────────────────────── */
+/* ─── CLIENTES Y PLANES DEL GRUPO ───────────────────────────────────────────
+   Dos catálogos editables desde la app, sin tocar código:
+   - Clientes (colección `cuentas`): razón social, RFC, domicilio y alias →
+     con eso la factura se identifica sola y la solicitud XLSX sale completa.
+   - Planes del grupo (colección `planes`, id = número): empresa a la que se
+     factura, RFC, director que autoriza en intranet. La semilla del código
+     (PLANES) se completa o corrige desde aquí. */
+const REGIMENES_FISCALES=["(601) GENERAL DE LEY PERSONAS MORALES","(612) PERSONAS FÍSICAS CON ACTIVIDADES EMPRESARIALES Y PROFESIONALES","(626) RÉGIMEN SIMPLIFICADO DE CONFIANZA","(603) PERSONAS MORALES CON FINES NO LUCRATIVOS"];
 function Clientes(){
+  const catVersion=useCatalogos();
+  const [vista,setVista]=useState("clientes");
   const [items,setItems]=useState([]);const[load,setLoad]=useState(true);
   const[modal,setModal]=useState(false);const[editItem,setEditItem]=useState(null);
   const[toast,setToast]=useState(null);
   const[q,setQ]=useState("");
-  const emptyForm={nombre:"",contacto:"",email:"",tel:"",rfc:"",plan:"",notas:""};
+  const emptyForm={nombre:"",razonSocial:"",contacto:"",email:"",tel:"",rfc:"",plan:"",domicilio1:"",domicilio2:"",regimenFiscal:REGIMENES_FISCALES[0],aliases:"",notas:""};
   const[form,setForm]=useState(emptyForm);
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   useEffect(()=>onSnapshot(collection(db,"cuentas"),s=>{setItems(s.docs.map(d=>({id:d.id,...d.data()})));setLoad(false);}),[]);
   const openNew=()=>{setForm(emptyForm);setEditItem(null);setModal(true);};
-  const openEdit=c=>{setForm({nombre:c.nombre||"",contacto:c.contacto||"",email:c.email||"",tel:c.tel||"",rfc:c.rfc||"",plan:c.plan||"",notas:c.notas||""});setEditItem(c);setModal(true);};
+  const openEdit=c=>{setForm({nombre:c.nombre||"",razonSocial:c.razonSocial||"",contacto:c.contacto||"",email:c.email||"",tel:c.tel||"",rfc:c.rfc||"",plan:c.plan||c.planNumero||"",
+    domicilio1:c.domicilio1||"",domicilio2:c.domicilio2||"",regimenFiscal:c.regimenFiscal||REGIMENES_FISCALES[0],aliases:_aliasList(c.aliases).join(", "),notas:c.notas||""});setEditItem(c);setModal(true);};
   const save=async()=>{
     if(!form.nombre){showT("Nombre requerido","err");return;}
+    const rfc=String(form.rfc||"").trim().toUpperCase();
+    if(rfc&&!/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(rfc)){showT("El RFC no tiene formato válido (ej. MPR930115NN0)","err");return;}
+    const data={...form,rfc,razonSocial:String(form.razonSocial||"").trim().toUpperCase(),aliases:_aliasList(form.aliases)};
     try{
-      if(editItem){await updateDoc(doc(db,"cuentas",editItem.id),form);showT("✓ Cliente actualizado");}
-      else{await addDoc(collection(db,"cuentas"),{...form,createdAt:serverTimestamp()});showT("✓ Cliente creado");}
+      if(editItem){await updateDoc(doc(db,"cuentas",editItem.id),data);showT("✓ Cliente actualizado");}
+      else{await addDoc(collection(db,"cuentas"),{...data,createdAt:serverTimestamp()});showT("✓ Cliente creado");}
       setModal(false);setForm(emptyForm);setEditItem(null);
     }catch(e){showT(e.message,"err");}
+  };
+  // Desde la semilla del código: si no existe cuenta para un cliente base, se crea con sus datos fiscales (editable después)
+  const importarBase=async()=>{
+    const faltan=CLIENTE_PLANES_BASE.filter(cp=>cp.empresa!=="POR DEFINIR"&&!items.some(c=>c.id===cp.id||(c.rfc&&String(c.rfc).toUpperCase()===cp.rfc)));
+    if(!faltan.length){showT("Todos los clientes base ya tienen su cuenta");return;}
+    if(!confirm("Se crearán "+faltan.length+" cuentas con los datos fiscales del catálogo base ("+faltan.map(c=>c.cliente).join(", ")+"). ¿Continuar?")) return;
+    try{
+      for(const cp of faltan){
+        await setDoc(doc(db,"cuentas",cp.id),{nombre:cp.cliente,razonSocial:cp.empresa,rfc:cp.rfc,plan:(normalizarPlan(cp.plan)||""),planSolicitud:cp.planSolicitud||"",domicilio1:cp.domicilio1||"",domicilio2:cp.domicilio2||"",
+          regimenFiscal:cp.regimenFiscal||REGIMENES_FISCALES[0],aliases:cp.aliases,color:cp.color,esCatalogoMaestro:true,createdAt:serverTimestamp()},{merge:true});
+      }
+      showT("✓ "+faltan.length+" cuentas creadas desde el catálogo base");
+    }catch(e){showT(e.message,"err");}
+  };
+
+  /* ── Planes del grupo ── */
+  const [planModal,setPlanModal]=useState(false);const [planEdit,setPlanEdit]=useState(null);
+  const planVacio={numero:"",nombre:"",empresa:"",rfc:"",clienteId:"",dirNombre:"",dirId:"",dgNombre:"",dgId:"",vaPorIntranet:true,alias:"",nota:"",porConfirmar:false};
+  const [pf,setPf]=useState(planVacio);
+  const spf=k=>e=>setPf(f=>({...f,[k]:e.target.value}));
+  const planes=catalogoPlanes();
+  const empresasCat=[...new Set(CLIENTE_PLANES.filter(c=>c.empresa!=="POR DEFINIR").map(c=>c.empresa))];
+  const abrirPlan=p=>{
+    setPlanEdit(p||null);
+    setPf(p?{numero:p.numero,nombre:p.nombre,empresa:p.empresa,rfc:p.rfc,clienteId:p.clienteId,dirNombre:p.directorIntranet?.nombre||"",dirId:p.directorIntranet?.id||"",
+      dgNombre:p.directorGeneralIntranet?.nombre||"",dgId:p.directorGeneralIntranet?.id||"",vaPorIntranet:p.vaPorIntranet!==false,alias:(p.alias||[]).join(", "),nota:p.nota||"",porConfirmar:!!p.porConfirmar}:planVacio);
+    setPlanModal(true);
+  };
+  const guardarPlan=async()=>{
+    const numero=String(pf.numero||"").trim();
+    if(!/^\d{3,8}$/.test(numero)){showT("El número de plan debe ser numérico (ej. 204113)","err");return;}
+    if(!pf.nombre.trim()||!pf.empresa.trim()){showT("Nombre del plan y empresa son requeridos","err");return;}
+    if(!planEdit&&planes.some(p=>p.numero===numero)){showT("Ese número de plan ya existe; edítalo desde la lista","err");return;}
+    const cp=CLIENTE_PLANES.find(c=>mismaEmpresa(c.empresa,pf.empresa));
+    const data={numero,nombre:pf.nombre.trim(),empresa:pf.empresa.trim().toUpperCase(),rfc:(pf.rfc||cp?.rfc||"").trim().toUpperCase(),
+      clienteId:(pf.clienteId||cp?.id||"").trim(),
+      directorIntranet:pf.dirNombre.trim()?{nombre:pf.dirNombre.trim().toUpperCase(),id:pf.dirId.trim()}:null,
+      directorGeneralIntranet:pf.dgNombre.trim()?{nombre:pf.dgNombre.trim().toUpperCase(),id:pf.dgId.trim()}:null,
+      vaPorIntranet:!!pf.vaPorIntranet,alias:_aliasList(pf.alias),nota:pf.nota.trim(),porConfirmar:!!pf.porConfirmar&&!pf.dirNombre.trim(),activo:true,actualizadoEn:serverTimestamp()};
+    try{
+      await setDoc(doc(db,"planes",numero),data,{merge:true});
+      showT("✓ Plan "+numero+" guardado"+(cp?"":" · empresa nueva: revisa su RFC en Clientes"));
+      setPlanModal(false);setPlanEdit(null);
+    }catch(e){showT(e.message,"err");}
+  };
+  const bajaPlan=async p=>{
+    if(!confirm("¿Dar de baja el plan "+p.numero+" · "+p.nombre+"?\n\nDeja de ofrecerse en facturas nuevas; las facturas que ya lo tienen no cambian. Se puede reactivar guardándolo de nuevo."))return;
+    try{await setDoc(doc(db,"planes",p.numero),{numero:p.numero,activo:false,actualizadoEn:serverTimestamp()},{merge:true});showT("Plan "+p.numero+" dado de baja");}catch(e){showT(e.message,"err");}
   };
   const del=async id=>{if(!confirm("¿Eliminar?"))return;await deleteDoc(doc(db,"cuentas",id));showT("Eliminado");};
   const filt=items.filter(c=>c.nombre?.toLowerCase().includes(q.toLowerCase())||c.contacto?.toLowerCase().includes(q.toLowerCase())||c.plan?.toLowerCase().includes(q.toLowerCase()));
   return(
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
-      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22}}>
-        <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Clientes</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>{items.length} cuentas activas</p></div>
+      <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,gap:10,flexWrap:"wrap"}}>
+        <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>{vista==="planes"?"Planes del grupo":"Clientes"}</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>{vista==="planes"?planes.length+" planes · número, empresa que factura y director que autoriza en intranet":items.length+" cuentas · "+CLIENTE_PLANES.filter(c=>c.empresa!=="POR DEFINIR").length+" clientes facturables"}</p></div>
+        {vista==="planes"&&<button onClick={()=>abrirPlan(null)} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+VIOLET+",#8b5cf6)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+VIOLET+"30"}}><Plus size={14}/>Nuevo plan</button>}
+        {vista==="clientes"&&<div style={{display:"flex",gap:8}}>
+          <button onClick={importarBase} className="btn" title="Crea las cuentas que falten con los datos fiscales del catálogo base del código" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Download size={13}/>Traer clientes base</button>
         <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo cliente</button>
+        </div>}
       </div>
+      <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
+        {[["clientes","🏢 Clientes"],["planes","🧾 Planes del grupo ("+planes.length+")"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setVista(k)} className="btn" style={{padding:"7px 18px",borderRadius:10,border:"1.5px solid "+(vista===k?A:BD2),background:vista===k?A+"10":"#fff",color:vista===k?A:MUTED,fontWeight:vista===k?700:500,fontSize:13,cursor:"pointer"}}>{l}</button>
+        ))}
+      </div>
+
+      {vista==="planes"&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
+        <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:980}}>
+          <thead><tr style={{borderBottom:"1px solid "+BORDER,background:"#f8fafd"}}>{["Plan","Nombre","Empresa que factura","RFC","Autoriza en intranet","Intranet","Origen",""].map(h=><th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase",whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+          <tbody>{planes.map(p=>(
+            <tr key={p.numero} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
+              <td style={{padding:"10px 14px",fontFamily:MONO,fontWeight:800,color:VIOLET,whiteSpace:"nowrap"}}>{p.numero}</td>
+              <td style={{padding:"10px 14px",fontWeight:700,fontSize:13}}>{p.nombre}{p.nota&&<div style={{fontSize:10.5,color:MUTED,fontWeight:400}}>{p.nota}</div>}</td>
+              <td style={{padding:"10px 14px",fontSize:12}}>{p.empresa}</td>
+              <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:11,color:MUTED}}>{p.rfc||"—"}</td>
+              <td style={{padding:"10px 14px",fontSize:12}}>{p.directorIntranet?<><strong>{p.directorIntranet.nombre}</strong> <span style={{fontFamily:MONO,color:MUTED,fontSize:10.5}}>{p.directorIntranet.id}</span>{p.directorGeneralIntranet&&<div style={{fontSize:10.5,color:MUTED}}>Dir. general: {p.directorGeneralIntranet.nombre} {p.directorGeneralIntranet.id}</div>}</>:p.vaPorIntranet?<span style={{color:AMBER,fontWeight:700,fontSize:11}}>Por confirmar</span>:<span style={{color:MUTED}}>—</span>}</td>
+              <td style={{padding:"10px 14px"}}>{p.vaPorIntranet?<span style={{background:GREEN+"12",color:GREEN,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Sí</span>:<span style={{background:MUTED+"14",color:MUTED,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>No</span>}</td>
+              <td style={{padding:"10px 14px"}}><span style={{background:(p.origen==="nuevo"?BLUE:p.origen==="editado"?AMBER:MUTED)+"14",color:p.origen==="nuevo"?BLUE:p.origen==="editado"?AMBER:MUTED,borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:800,textTransform:"uppercase"}}>{p.origen==="nuevo"?"Creado aquí":p.origen==="editado"?"Base editado":"Base"}</span></td>
+              <td style={{padding:"10px 14px"}}><div style={{display:"flex",gap:6}}>
+                <button onClick={()=>abrirPlan(p)} className="btn" style={{color:BLUE,padding:"3px 7px",border:"1px solid "+BLUE+"20",borderRadius:6,fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:4}}><Eye size={12}/>Editar</button>
+                <button onClick={()=>bajaPlan(p)} className="btn" title="Dar de baja" style={{color:MUTED}}><Trash2 size={12}/></button>
+              </div></td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      </div>}
+
+      {planModal&&<Modal title={planEdit?"Editar plan "+planEdit.numero:"Nuevo plan del grupo"} onClose={()=>setPlanModal(false)} icon={Hash} iconColor={VIOLET} wide>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Inp label="Número de plan *" value={pf.numero} onChange={spf("numero")} placeholder="Ej: 204113" disabled={!!planEdit} style={{fontFamily:MONO,fontWeight:700}}/>
+          <Inp label="Nombre del plan *" value={pf.nombre} onChange={spf("nombre")} placeholder="Ej: Electrolit WM E RDE"/>
+          <div>
+            <Inp label="Empresa a la que se factura *" list="dmov-empresas-cat" value={pf.empresa} onChange={e=>{const v=e.target.value;const cp=CLIENTE_PLANES.find(c=>mismaEmpresa(c.empresa,v));setPf(f=>({...f,empresa:v,rfc:f.rfc||cp?.rfc||"",clienteId:f.clienteId||cp?.id||""}));}} placeholder="Razón social"/>
+            <datalist id="dmov-empresas-cat">{empresasCat.map(e=><option key={e} value={e}/>)}</datalist>
+          </div>
+          <Inp label="RFC de la empresa" value={pf.rfc} onChange={spf("rfc")} placeholder="Se llena si la empresa está en Clientes" style={{fontFamily:MONO}}/>
+          <div>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,letterSpacing:"0.07em",textTransform:"uppercase"}}>Cliente (para agrupar ventas)</div>
+            <input list="dmov-clientes-ids" value={pf.clienteId} onChange={spf("clienteId")} placeholder="Ej: canon, scj… o uno nuevo" style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:14,fontFamily:MONO}}/>
+            <datalist id="dmov-clientes-ids">{CLIENTE_PLANES.map(c=><option key={c.id} value={c.id}>{c.cliente}</option>)}</datalist>
+          </div>
+          <div style={{display:"flex",alignItems:"center"}}><Tog checked={pf.vaPorIntranet} onChange={v=>setPf(f=>({...f,vaPorIntranet:v}))} label="Va por intranet (Somos Uno)" sub={pf.vaPorIntranet?"Requiere director que autorice":"Se cobra fuera de intranet"} color={GREEN}/></div>
+          {pf.vaPorIntranet&&<>
+            <Inp label="Director que autoriza (nombre)" value={pf.dirNombre} onChange={spf("dirNombre")} placeholder="APELLIDOS NOMBRE"/>
+            <Inp label="ID del director en intranet" value={pf.dirId} onChange={spf("dirId")} placeholder="Ej: 135832" style={{fontFamily:MONO}}/>
+            <Inp label="Director general (opcional)" value={pf.dgNombre} onChange={spf("dgNombre")} placeholder="Solo si la intranet pide una segunda firma"/>
+            <Inp label="ID del director general" value={pf.dgId} onChange={spf("dgId")} style={{fontFamily:MONO}}/>
+          </>}
+          <div style={{gridColumn:"1/-1"}}><Inp label="Alias para reconocer el plan en texto libre (separados por coma)" value={pf.alias} onChange={spf("alias")} placeholder="Ej: ELECTROLIT, WM E RDE"/></div>
+          <div style={{gridColumn:"1/-1"}}><Inp label="Nota" value={pf.nota} onChange={spf("nota")} placeholder="Ej: No va por intranet: se cobra vía…"/></div>
+          <button onClick={guardarPlan} className="btn" style={{gridColumn:"1/-1",background:"linear-gradient(135deg,"+VIOLET+",#8b5cf6)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:"pointer"}}>{planEdit?"Guardar cambios":"Crear plan"}</button>
+        </div>
+      </Modal>}
+
+      {vista==="clientes"&&<>
       <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:11,padding:"9px 14px",display:"flex",alignItems:"center",gap:9,marginBottom:13}}><Search size={13} color={MUTED}/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar cliente, plan, contacto…" style={{background:"none",border:"none",fontSize:13,flex:1}}/></div>
       {load?<div style={{padding:40,textAlign:"center",color:MUTED}}>Cargando…</div>
       :<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,overflow:"hidden"}}>
         {filt.length===0?<div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin clientes. <button onClick={openNew} style={{color:A,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Agregar →</button></div>
         :<table style={{width:"100%",borderCollapse:"collapse"}}>
-          <thead><tr style={{borderBottom:"1px solid "+BORDER,background:"#f8fafd"}}>{["Empresa","Plan / No. Cuenta","Contacto","Email / Tel","RFC",""].map(h=><th key={h} style={{padding:"9px 16px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
+          <thead><tr style={{borderBottom:"1px solid "+BORDER,background:"#f8fafd"}}>{["Cliente","Razón social / RFC","Plan / No. Cuenta","Contacto","Email / Tel","Facturable",""].map(h=><th key={h} style={{padding:"9px 16px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
           <tbody>{filt.map((c,i)=>(
             <tr key={c.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
               <td style={{padding:"12px 16px",fontWeight:700,fontSize:13}}>{c.nombre}</td>
+              <td style={{padding:"12px 16px",fontSize:12}}>{c.razonSocial||<span style={{color:MUTED}}>—</span>}<div style={{fontFamily:MONO,fontSize:11,color:MUTED}}>{c.rfc||"sin RFC"}</div></td>
               <td style={{padding:"12px 16px"}}>
-                {c.plan
-                  ?<span style={{background:VIOLET+"12",color:VIOLET,borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:700,fontFamily:MONO}}>{c.plan}</span>
+                {(c.plan||c.planNumero)
+                  ?<span style={{background:VIOLET+"12",color:VIOLET,borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:700,fontFamily:MONO}}>{c.plan||c.planNumero}</span>
                   :<span style={{color:MUTED,fontSize:11}}>—</span>}
               </td>
               <td style={{padding:"12px 16px",fontSize:12,color:MUTED}}>{c.contacto||"—"}</td>
               <td style={{padding:"12px 16px",fontSize:12,color:MUTED}}>{[c.email,c.tel].filter(Boolean).join(" · ")||"—"}</td>
-              <td style={{padding:"12px 16px",fontFamily:MONO,fontSize:11,color:MUTED}}>{c.rfc||"—"}</td>
+              <td style={{padding:"12px 16px"}}>{(()=>{const cp=CLIENTE_PLANES.find(x=>x.cuentaId===c.id||x.id===c.id);return cp&&cp.empresa!=="POR DEFINIR"?<span title={"Se reconoce como "+cp.cliente+" · "+cp.empresa} style={{background:GREEN+"12",color:GREEN,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Sí</span>:<span title="Captura razón social y RFC para poder emitir su solicitud de factura" style={{background:AMBER+"14",color:AMBER,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Falta RFC</span>;})()}</td>
               <td style={{padding:"12px 16px"}}>
                 <div style={{display:"flex",gap:6}}>
                   <button onClick={()=>openEdit(c)} className="btn" style={{color:BLUE,padding:"3px 7px",border:"1px solid "+BLUE+"20",borderRadius:6,fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3}}><Eye size={11}/>Editar</button>
@@ -8025,15 +8220,27 @@ function Clientes(){
           ))}</tbody>
         </table>}
       </div>}
-      {modal&&<Modal title={editItem?"Editar cliente":"Nuevo cliente"} onClose={()=>{setModal(false);setEditItem(null);}} icon={Building2} iconColor={BLUE}>
+      </>}
+      {modal&&<Modal title={editItem?"Editar cliente":"Nuevo cliente"} onClose={()=>{setModal(false);setEditItem(null);}} icon={Building2} iconColor={BLUE} wide>
         <div style={{display:"flex",flexDirection:"column",gap:11}}>
-          <Inp label="Empresa *" value={form.nombre} onChange={e=>setForm({...form,nombre:e.target.value})} placeholder="Ej: Promotor On Demand"/>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
+            <Inp label="Cliente (nombre corto) *" value={form.nombre} onChange={e=>setForm({...form,nombre:e.target.value})} placeholder="Ej: Canon, SCJ, LP Agency"/>
+            <Inp label="Razón social (como va en la factura)" value={form.razonSocial} onChange={e=>setForm({...form,razonSocial:e.target.value})} placeholder="Ej: G-MAP OPERADORA SA DE CV"/>
+            <Inp label="RFC" value={form.rfc} onChange={e=>setForm({...form,rfc:e.target.value.toUpperCase()})} placeholder="GOP170407FV7" style={{fontFamily:MONO}}/>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,letterSpacing:"0.07em",textTransform:"uppercase"}}>Régimen fiscal</div>
+              <select value={form.regimenFiscal} onChange={e=>setForm({...form,regimenFiscal:e.target.value})} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:10,padding:"10px 13px",fontSize:13}}>
+                {[...new Set([form.regimenFiscal,...REGIMENES_FISCALES].filter(Boolean))].map(r=><option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <Inp label="Domicilio fiscal (calle, número, colonia)" value={form.domicilio1} onChange={e=>setForm({...form,domicilio1:e.target.value})} placeholder="AV. INSURGENTES SUR 1814 PISO 7, COL FLORIDA"/>
+            <Inp label="Alcaldía / ciudad / CP" value={form.domicilio2} onChange={e=>setForm({...form,domicilio2:e.target.value})} placeholder="ALVARO OBREGON, CIUDAD DE MEXICO CP. 01030"/>
             <Inp label="Contacto" value={form.contacto} onChange={e=>setForm({...form,contacto:e.target.value})} placeholder="Nombre del contacto"/>
             <Inp label="Teléfono" value={form.tel} onChange={e=>setForm({...form,tel:e.target.value})} placeholder="55 1234 5678"/>
             <Inp label="Email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} placeholder="contacto@empresa.com"/>
-            <Inp label="RFC" value={form.rfc} onChange={e=>setForm({...form,rfc:e.target.value})} placeholder="POD123456XXX"/>
+            <Inp label="Alias (cómo lo escriben en bitácora o correos, separados por coma)" value={form.aliases} onChange={e=>setForm({...form,aliases:e.target.value})} placeholder="Ej: LP AGENCY, LPAGENCY, CECI"/>
           </div>
+          <div style={{fontSize:11.5,color:MUTED,background:"#f8fafd",border:"1px solid "+BORDER,borderRadius:9,padding:"8px 12px",lineHeight:1.6}}>Con <strong style={{color:TEXT}}>razón social y RFC</strong> el cliente queda facturable: aparece en el formulario de facturas y su solicitud XLSX sale con sus datos fiscales. Los planes del grupo (número, director de intranet) se dan de alta en la pestaña <strong style={{color:TEXT}}>Planes del grupo</strong>.</div>
           <div>
             <div style={{fontSize:10,fontWeight:800,color:MUTED,marginBottom:5,letterSpacing:"0.07em",textTransform:"uppercase"}}>Plan / Número de cuenta *</div>
             <input value={form.plan} onChange={e=>setForm({...form,plan:e.target.value})}
@@ -8164,8 +8371,9 @@ function ConciliacionCierre({cierre,facts,pagos,cargando}){
   const [base,setBase]=useState("operacion");
   const [soloDif,setSoloDif]=useState(false);
   const [abierto,setAbierto]=useState("");
-  const ing=useMemo(()=>conciliarIngresos(cierre,facts,{base}),[cierre,facts,base]);
-  const cxc=useMemo(()=>conciliarCxC(cierre,facts,pagos),[cierre,facts,pagos]);
+  const catVersion=useCatalogos();
+  const ing=useMemo(()=>conciliarIngresos(cierre,facts,{base}),[cierre,facts,base,catVersion]);
+  const cxc=useMemo(()=>conciliarCxC(cierre,facts,pagos),[cierre,facts,pagos,catVersion]);
   const card={background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:22,marginBottom:16};
   const h2={fontFamily:DISP,fontWeight:700,fontSize:15,color:TEXT};
   const sub={fontSize:11,color:MUTED,marginTop:2};
@@ -8544,7 +8752,7 @@ function buildPLData(facts, viat, mesDesde, mesHasta, anio="2026"){
     const mAll   = facts.filter(f=>(f.mesOp===m||f.mes===m)&&String(f.anio||"")===String(anio));
     /* Solo facturas EMITIDAS cuentan como ingreso: se excluyen canceladas y
        las apenas solicitadas a Katia (aún no existen en contabilidad). */
-    const mFacts = mAll.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia");
+    const mFacts = mAll.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna");
     const mViat  = viat.filter(v=>v.mes===m&&String(v.anio||"")===String(anio));
     const ingresos = mFacts.reduce((a,f)=>a+(f.total||0),0);
     const subtotal = mFacts.reduce((a,f)=>a+(f.subtotal||0),0);
@@ -8638,7 +8846,7 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
   r++;
 
   // Nota al pie
-  setCell(ws1,"A"+(r+1),"* Ingresos = total CFDI c/IVA  |  Costos = registros viaticos/nomina  |  Margen = Utilidad/Ingresos",styleSubtitle);
+  setCell(ws1,"A"+(r+1),"* PROVISIONAL: ingresos registrados sin IVA; costos capturados sin conciliación completa. No acredita CFDI ni cierre mensual.",styleSubtitle);
   merges1.push({s:{r,c:0},e:{r,c:16}});
 
   ws1["!ref"]    = `A1:Q${r+1}`;
@@ -8719,7 +8927,7 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
     ["Total costos operativos",                      gC,          "",""],
     ["Utilidad bruta",                               gU,          "",""],
     ["Margen de utilidad %",                         gI>0?gU/gI:0,"≥ 15% óptimo",""],
-    ["Facturas emitidas",                            factsF.length,"",""],
+    ["Registros internos (CFDI por verificar)",                            factsF.length,"",""],
     ["Facturas cobradas (Pagadas)",                  factsF.filter(f=>f.status==="Pagada").length,"",""],
     ["% Cobro sobre facturado",                      gI>0?gCob/gI:0,"≥ 80% objetivo",""],
     ["Cartera por cobrar",                           gPend,       "",""],
@@ -8972,8 +9180,8 @@ async function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
   const idxD0=MESES_REP.indexOf(mesDesde), idxH0=MESES_REP.indexOf(mesHasta);
   const mesesR0=MESES_REP.slice(idxD0,idxH0+1);
   const factsPeriodo=facts.filter(f=>mesesR0.includes(f.mesOp||f.mes)&&String(f.anio||"")===String(anio));
-  const factsReales=factsPeriodo.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0);
-  const sinFacturarN=factsPeriodo.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia")).length;
+  const factsReales=factsPeriodo.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&(f.total||0)>0);
+  const sinFacturarN=factsPeriodo.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia"||f.status==="Solicitud interna"||f.tipoDocumento==="solicitud_interna")).length;
   const cliMap={};
   factsReales.forEach(f=>{const k=normEmpresa(f.empresa||f.cliente);if(!cliMap[k])cliMap[k]={fac:0,cob:0,pen:0,n:0};cliMap[k].fac+=f.total||0;cliMap[k].n++;if(f.status==="Pagada")cliMap[k].cob+=f.total||0;else cliMap[k].pen+=f.total||0;});
   const cliArr=Object.entries(cliMap).sort((a,b)=>b[1].fac-a[1].fac);
@@ -8982,7 +9190,7 @@ async function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
   const insights=[
     mejorMes&&mejorMes.subtotal>0?`Mejor mes del período: ${mejorMes.mesFull} con ${money(mejorMes.subtotal)} facturados (sin IVA) y utilidad de ${money(mejorMes.utilidad)}.`:null,
     cliArr[0]?`Cliente principal: ${cliArr[0][0]} concentra el ${topCliShare}% de la facturación${topCliShare>=50?" — alta dependencia, conviene diversificar":""}.`:null,
-    totalPend>0?`Por cobrar: ${money(totalPend)} en facturas emitidas sin pagar (${pctCob}% ya cobrado).`:`Cobranza al corriente: 100% del facturado está cobrado.`,
+    totalPend>0?`Por cobrar: ${money(totalPend)} en registros internos sin pagar (${pctCob}% ya cobrado).`:`Cobranza al corriente: 100% del facturado está cobrado.`,
     sinFacturarN>0?`${sinFacturarN} servicio(s) del período aún sin facturar o en solicitud — ingreso pendiente de entrar al ciclo de cobranza.`:null,
     margen<0?`El período cierra con pérdida contable de ${money(Math.abs(totalUtil))} — los costos superan lo facturado en estos meses.`:margen<0.15?`Margen de ${Math.round(margen*100)}% — por debajo del objetivo de 15%.`:`Margen sano de ${Math.round(margen*100)}% (objetivo ≥15% cumplido).`,
   ].filter(Boolean);
@@ -9397,7 +9605,7 @@ function PagosProveedores({userProfile}){
   const topProvMax=topProv[0]?topProv[0][1]:1;
   const flujoMensual=MESES_ID.map(m=>({m,v:pagos.filter(p=>p.mes===m&&p.anio===ANIO).reduce((a,p)=>a+(p.total||0),0)}));
   const flujoMax=Math.max(...flujoMensual.map(d=>d.v),1);
-  const factsEmit=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&(f.total||0)>0&&String(f.anio||"")===ANIO);
+  const factsEmit=facts.filter(f=>f.status!=="Cancelada"&&f.status!=="Solicitada a Katia"&&f.status!=="Solicitud interna"&&f.tipoDocumento!=="solicitud_interna"&&(f.total||0)>0&&String(f.anio||"")===ANIO);
   const ingVsEgr=MESES_ID.map(m=>({m,
     ing:factsEmit.filter(f=>f.mesOp===m).reduce((a,f)=>a+(f.subtotal||0),0),
     egr:pagos.filter(p=>p.mes===m&&p.anio===ANIO).reduce((a,p)=>a+(p.subtotal||0),0)}));
@@ -9893,6 +10101,9 @@ function Reportes(){
         </div>
       </div>
 
+      <div role="status" style={{padding:14,marginBottom:16,border:"1px solid "+AMBER,borderRadius:10,background:"#fffbeb",color:TEXT,fontSize:13}}>
+        <strong>Resultado provisional: cobertura de ingresos y gastos pendiente.</strong> Los meses sin gastos capturados no acreditan un margen real de 100%. Estos registros históricos pueden usar mes de captura, incluir importes sin desglose de IVA y carecer de CFDI o evidencia de cobro. Revisa período de servicio, duplicados, nómina, proveedores y gastos recurrentes antes de cerrar el mes.
+      </div>
       {/* KPI Cards */}
       <div className="g4" style={{marginBottom:20}}>
         <KpiCard icon={TrendingUp} color={GREEN} label="Ingresos (sin IVA)" value={fmtK(totalSub)} sub={pl.reduce((a,d)=>a+d.nFacts,0)+" facturas · "+fmtK(totalIng)+" c/IVA"}/>
@@ -10436,7 +10647,7 @@ function Presupuestos(){
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   const today=fechaLocalISO();
   const in15=fechaLocalISO(new Date(Date.now()+15*86400000));
-  const empty={cliente:"",contacto:"",fecha:today,vigencia:in15,conceptos:[{desc:"",cant:1,precio:0}],iva:true,status:"Borrador",notas:""};
+  const empty={...billingFields({}),empresa:"",confirmApproval:false,cliente:"",contacto:"",fecha:today,vigencia:in15,conceptos:[{desc:"",cant:1,precio:0}],iva:true,status:"Borrador",notas:""};
   const [form,setForm]=useState(empty);
   // Liga con facturación: facturas ligadas por cotizacionFolio / cotizacionId
   // (o por la conversión histórica presupuesto → factura).
@@ -10459,8 +10670,9 @@ function Presupuestos(){
   const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
   const openEdit=p=>{
     setForm({
+      ...billingFields(p),empresa:p.empresa||"",confirmApproval:false,
       cliente:p.cliente||"", contacto:p.contacto||"",
-      fecha:p.fecha||today, vigencia:p.vigencia||in15,
+      fecha:p.fecha||today, vigencia:p.vigencia??"",
       conceptos:(p.conceptos&&p.conceptos.length?p.conceptos:[{desc:"",cant:1,precio:0}]).map(c=>({desc:c.desc||"",cant:Number(c.cant)||0,precio:Number(c.precio)||0})),
       iva:p.ivaAmt>0||p.iva!==false,
       status:p.status||"Borrador",
@@ -10480,11 +10692,13 @@ function Presupuestos(){
   const save=async()=>{
     if(!form.cliente.trim()){showT("El cliente es obligatorio","err");return;}
     if(form.conceptos.filter(c=>c.desc&&c.cant>0).length===0){showT("Agrega al menos un concepto con descripción y cantidad","err");return;}
+    const {confirmApproval,confirmApprovalSnapshot,...storedForm}=form;
     const data={
-      ...form,
+      ...storedForm,
       conceptos:form.conceptos.map(c=>({desc:c.desc,cant:Number(c.cant)||0,precio:Number(c.precio)||0})),
       subtotal,ivaAmt,total,
     };
+    if(confirmApproval && confirmApprovalSnapshot===billingSnapshot(data)) data.approvalSnapshot=confirmApprovalSnapshot;
     try{
       if(editItem){
         await updateDoc(doc(db,"presupuestos",editItem.id),data);
@@ -10502,31 +10716,39 @@ function Presupuestos(){
   // Conversión 1-click a factura: crea un registro en facturas con los datos del presupuesto
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const toFactura = async(p)=>{
-    if(p.convertidoAFacturaId){
-      if(!confirm("Este presupuesto ya fue convertido a factura. ¿Crear otra factura de todas formas?")) return;
-    }
     const today = new Date();
     const venc = fechaLocalISO(new Date(Date.now()+30*86400000)); // vencimiento +30 días
     const serviciosDesc = (p.conceptos||[]).map(c=>`${c.cant}× ${c.desc}`).filter(Boolean).join(" · ")||p.folio;
     try{
-      const ref = await addDoc(collection(db,"facturas"),{
+      // Un presupuesto genera UNA factura: id determinista + verificación de vínculo previo
+      if(p.convertidoAFacturaId){showT("Este presupuesto ya tiene factura ligada ("+p.convertidoAFacturaId+"). Revísala en Facturación.","err");return;}
+      const legacy=await getDocs(query(collection(db,"facturas"),where("presupuestoOrigenId","==",p.id)));
+      if(!legacy.empty){
+        await updateDoc(doc(db,"presupuestos",p.id),{convertidoAFacturaId:legacy.docs[0].id});
+        showT("Ya existía una factura para este presupuesto; se restauró el vínculo.","err");return;
+      }
+      const ref=doc(db,"facturas","presupuesto_"+p.id);
+      await setDoc(ref,{
+        ...billingFields(p),
         mesOp: MESES[today.getMonth()],
         anio: today.getFullYear(),
-        empresa: p.cliente||"",
+        empresa: p.empresa||p.cliente||"",
         solicitante: p.contacto||"",
-        plan: "",
+        plan: p.plan||"",
+        planNumero: planDeFactura({plan:p.plan,empresa:p.empresa||p.cliente})||"",
         servicio: serviciosDesc,
         subtotal: p.subtotal||0,
         ivaAmt: p.ivaAmt||0,
         total: p.total||0,
         iva: (p.ivaAmt||0)>0,
-        status: "Pendiente",
+        status: "Solicitada a Katia",
         notas: `Generada desde presupuesto ${p.folio||""}`,
-        fechaEmision: fechaLocalISO(today),
+        fechaEmision: "",
         fechaVenc: venc,
         emailCliente: p.emailCliente||"",
         presupuestoOrigenId: p.id,
         presupuestoOrigenFolio: p.folio||"",
+        cotizacionOrigenId: p.cotizacionOrigenId||"", cotizacionOrigenFolio: p.cotizacionOrigenFolio||"",
         cotizacionFolio: p.folio||"",
         cotizacionId: p.id,
         folio: "FAC-"+uid(),
@@ -10538,7 +10760,7 @@ function Presupuestos(){
         convertidoEn: serverTimestamp(),
         status: "Aprobado",
       });
-      showT("✓ Factura creada desde presupuesto");
+      showT("✓ Factura creada desde presupuesto (queda como Solicitada a Katia hasta que se emita el CFDI)");
     }catch(e){showT(e.message,"err");}
   };
 
@@ -10650,8 +10872,8 @@ function Presupuestos(){
                 <td style={{padding:"10px 12px"}}>
                   <div style={{display:"flex",gap:5,alignItems:"center"}}>
                     <button onClick={()=>downloadPresupuestoPDF(p)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}><Download size={12}/>PDF</button>
-                    <button onClick={()=>toFactura(p)} className="btn" title="Convertir a factura" style={{color:GREEN,padding:"4px 8px",border:"1px solid "+GREEN+"30",background:GREEN+"08",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>
-                      {p.convertidoAFacturaId?<><Check size={12}/>Facturado</>:<><FileText size={12}/>→ Factura</>}
+                    <button onClick={()=>toFactura(p)} className="btn" title="Crear solicitud interna (requiere aprobación documentada)" style={{color:GREEN,padding:"4px 8px",border:"1px solid "+GREEN+"30",background:GREEN+"08",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>
+                      {p.convertidoAFacturaId?<><Check size={12}/>Solicitud creada</>:<><FileText size={12}/>→ Solicitud</>}
                     </button>
                     <button onClick={()=>openEdit(p)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
                     <button onClick={()=>del(p.id)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
@@ -14546,7 +14768,7 @@ function Usuarios(){
           <div style={{width:32,height:32,borderRadius:9,background:BLUE+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Users size={14} color={BLUE}/></div>
           <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,color:TEXT}}>Invitar usuario</div>
         </div>
-        <p style={{fontSize:13,color:MUTED,lineHeight:1.6}}>Para invitar a un nuevo usuario, pídele que acceda con su cuenta Google en <strong style={{color:TEXT}}>la URL del sistema</strong>. Al ingresar por primera vez se creará su perfil con rol <strong style={{color:VIOLET}}>"operaciones"</strong> y contraseña temporal <strong style={{color:TEXT,fontFamily:MONO}}>123456</strong>. Cámbiala desde aquí.</p>
+        <p style={{fontSize:13,color:MUTED,lineHeight:1.6}}>Para invitar a un nuevo usuario, pídele que acceda con su cuenta Google en <strong style={{color:TEXT}}>la URL del sistema</strong>. Al ingresar por primera vez se creará su perfil con rol <strong style={{color:VIOLET}}>"operaciones"</strong>, inactivo hasta que un administrador verifique su identidad y lo active. Los perfiles antiguos no transfieren permisos automáticamente por correo.</p>
       </div>
 
       {loading
@@ -14683,16 +14905,8 @@ export default function App(){
         const ref=doc(db,"dmov_usuarios",authUser.uid);
         let snap=await getDoc(ref);
         let perfil=snap.exists()?{id:snap.id,uid:authUser.uid,...snap.data()}:null;
-        if(!perfil&&authUser.email){
-          const q=await getDocs(query(collection(db,"dmov_usuarios"),where("email","==",authUser.email)));
-          const viejo=q.docs.find(d=>d.id!==authUser.uid&&!d.data().migradoA);
-          if(viejo){
-            const vd=viejo.data();
-            await setDoc(ref,{...vd,uid:authUser.uid,email:authUser.email,pin:null,migradoDe:viejo.id,createdAt:vd.createdAt||serverTimestamp()});
-            snap=await getDoc(ref);
-            perfil={id:snap.id,uid:authUser.uid,...snap.data()};
-          }
-        }
+        // A matching email on a legacy profile is not authority to claim its role.
+        // New Google UIDs enroll inactive; an existing admin verifies and activates them.
         if(!perfil){
           await setDoc(ref,{uid:authUser.uid,nombre:authUser.displayName||authUser.email||"Usuario",email:authUser.email||"",rol:"operaciones",activo:false,createdAt:serverTimestamp()});
           const s2=await getDoc(ref);
@@ -14882,3 +15096,4 @@ export default function App(){
     </>
   );
 }
+
