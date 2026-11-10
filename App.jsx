@@ -8548,7 +8548,9 @@ function EstadoConcChip({estado}){
   return <span style={{display:"inline-flex",alignItems:"center",gap:5,background:c+"12",color:c,border:"1px solid "+c+"30",borderRadius:7,padding:"2px 8px",fontSize:10.5,fontWeight:700,whiteSpace:"nowrap"}}><span style={{width:6,height:6,borderRadius:"50%",background:c}}/>{l}</span>;
 }
 function ConciliacionCierre({cierre,facts,pagos,cargando}){
-  const [base,setBase]=useState("operacion");
+  // La contabilidad reconoce el ingreso en la fecha del CFDI: esa es la base correcta para
+  // compararse con la balanza. El mes de operación queda como vista alternativa.
+  const [base,setBase]=useState("emision");
   const [soloDif,setSoloDif]=useState(false);
   const [abierto,setAbierto]=useState("");
   const catVersion=useCatalogos();
@@ -8658,7 +8660,7 @@ function ConciliacionCierre({cierre,facts,pagos,cargando}){
       <div>
         <div style={{...lbl,marginBottom:5}}>Ubicar cada factura por</div>
         <div style={{display:"flex",background:"#f5f7fc",borderRadius:11,padding:3,gap:2}}>
-          {[["operacion","Mes de operación"],["emision","Fecha de emisión (CFDI)"]].map(([k,l])=>(
+          {[["emision","Fecha de emisión (CFDI)"],["operacion","Mes de operación"]].map(([k,l])=>(
             <button key={k} onClick={()=>setBase(k)} aria-pressed={base===k} className="btn" style={{padding:"7px 13px",borderRadius:9,background:base===k?"#fff":"transparent",color:base===k?A:MUTED,fontSize:12,fontWeight:base===k?700:500,boxShadow:base===k?"0 1px 6px rgba(12,24,41,.1)":"none"}}>{l}</button>
           ))}
         </div>
