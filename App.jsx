@@ -7335,6 +7335,10 @@ function BitacoraImport({onClose,showT}){
   );
 }
 
+/* Plan CONFIRMADO de una factura: el que dice su propio texto (capturado o
+   asignado a mano). Un planNumero guardado sin texto que lo respalde es solo
+   una suposición del backfill histórico: se muestra como "por confirmar". */
+const planConfirmado=f=>normalizarPlan(f?.plan)||normalizarPlan(f?.planOverride)||null;
 /* Campos que se pueden editar aunque la factura tenga un CFDI archivado
    (cfdiArchiveLocked): seguimiento y cobranza, nada que cambie el documento
    fiscal. Debe coincidir con la regla de `facturas` en firestore.rules. */
@@ -7597,7 +7601,7 @@ function Facturas({rol="admin"}){
   const esPagadaSinFecha=f=>f.status==="Pagada"&&!f.fechaPago&&pagosDe(f).length===0;
   const nSinFechaPago=filtMes.filter(esPagadaSinFecha).length;
   // Plan por confirmar: ni plan del catálogo ni "sin plan" confirmado (falta que alguien diga cuál es)
-  const esPlanPendiente=f=>f.sinPlan!==true&&!planDeFactura(f);
+  const esPlanPendiente=f=>f.sinPlan!==true&&!planConfirmado(f);
   const nPlanPend=filtMes.filter(esPlanPendiente).length;
   const filt=(etapaF==="todas"?filtMes:filtMes.filter(f=>etapaFactura(f).etapa===etapaF)).filter(f=>(!sinFechaPago||esPagadaSinFecha(f))&&(!planPend||esPlanPendiente(f)));
   const nEtapa=filtMes.reduce((a,f)=>{const e=etapaFactura(f).etapa;a[e]=(a[e]||0)+1;return a;},{});
@@ -7768,10 +7772,10 @@ function Facturas({rol="admin"}){
                 <td style={{padding:"8px 10px",maxWidth:190}}>{(()=>{
                   const chip={borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700,display:"inline-block",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",verticalAlign:"middle"};
                   if(f.sinPlan===true) return <span title={f.plan||"Cliente sin plan de intranet"} style={{...chip,background:MUTED+"14",color:MUTED}}>Sin plan</span>;
-                  const pl=planPorNumero(planDeFactura(f));
+                  const pl=planPorNumero(planConfirmado(f));
                   // Se muestra el plan del CATÁLOGO; el texto con que se capturó queda en el tooltip
                   if(pl) return <span title={pl.numero+" · "+pl.nombre+" → "+pl.empresa+((f.plan||f.planOverride)?"\nTexto capturado: "+(f.planOverride||f.plan):"")} style={{...chip,background:VIOLET+"12",color:VIOLET}}><span style={{fontFamily:MONO,fontWeight:800}}>{pl.numero}</span> · {pl.nombre}</span>;
-                  return <span title={(f.plan?"Texto capturado: “"+f.plan+"”. ":"Sin plan capturado. ")+"Falta confirmar a qué plan corresponde; se asigna en “Normalizar planes y clientes”."} style={{...chip,background:AMBER+"10",color:AMBER,border:"1px dashed "+AMBER+"70"}}>Por confirmar{f.plan?" · "+f.plan:""}</span>;
+                  return <span title={(f.plan?"Texto capturado: “"+f.plan+"”. ":"Sin plan capturado. ")+"Falta confirmar a qué plan corresponde; se asigna en “Normalizar planes y clientes”."} style={{...chip,background:AMBER+"10",color:AMBER,border:"1px dashed "+AMBER+"70"}}>Por confirmar{(()=>{const g=planPorNumero(planDeFactura(f));return g?" · ¿"+g.numero+"?":f.plan?" · "+f.plan:"";})()}</span>;
                 })()}</td>
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.servicio||""}>{f.servicio||"—"}</td>
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11.5,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.subtotal||f.monto||0)}</td>}
