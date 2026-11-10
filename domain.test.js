@@ -331,6 +331,8 @@ describe("normalizarPlan — variantes reales del campo plan en facturas", () =>
     ["P-204113 GMAP ELECTROLIT",                "204113"],
     ["619716 Loreal",                           "619716"],
     ["142805 Rentas Logística",                 "142805"],
+    ["122215 Samsung CE Viáticos",              "122215"],
+    ["122216 MAP -> Samsung IM Viaticos",       "122216"],
   ];
   it.each(casos)("%j → %s", (texto, esperado) => {
     expect(normalizarPlan(texto)).toBe(esperado);
@@ -402,6 +404,10 @@ describe("planDeFactura / planearNormalizacionPlanes", () => {
     expect(r.cambios.map(c => [c.id, c.de, c.a])).toEqual([["a", "", "10344"], ["b", "142804", "10344"]]);
     expect(r.yaNormalizadas).toBe(1);
     expect(r.sinResolver.map(c => c.id)).toEqual(["d", "e"]);
+    expect(r.sinPlan).toBe(0);
+    // cliente externo confirmado "sin plan": ni cambio ni pendiente
+    const ext = planearNormalizacionPlanes([{ id: "x", plan: "Cliente externo · emisor DMOV plan 142804", sinPlan: true, empresa: "EXTERNO SA" }]);
+    expect(ext).toMatchObject({ cambios: [], sinResolver: [], yaNormalizadas: 0, sinPlan: 1 });
     expect(r.cambios[1].plan).toBe("142804 SCJ Promotores");
     expect(facts[1].plan).toBe("142804 SCJ Promotores"); // entrada intacta
   });

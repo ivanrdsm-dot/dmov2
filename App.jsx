@@ -1220,16 +1220,22 @@ const CLIENTE_PLANES_BASE = [
 let CLIENTE_PLANES = CLIENTE_PLANES_BASE;
 const PALETA_CLIENTES=["#dc2626","#2563eb","#059669","#7c3aed","#d97706","#0891b2","#65a30d","#a16207","#0ea5e9","#db2777","#4f46e5","#0f766e"];
 const _aliasList=v=>(Array.isArray(v)?v:String(v||"").split(",")).map(a=>String(a).trim().toUpperCase()).filter(Boolean);
+let _cuentasDocs=[];
 function aplicarCuentasACatalogo(cuentas){
-  const lista=CLIENTE_PLANES_BASE.map(c=>({...c,aliases:[...c.aliases]}));
-  (cuentas||[]).forEach(c=>{
+  _cuentasDocs=cuentas||[];
+  const lista=CLIENTE_PLANES_BASE.map(c=>({...c,aliases:[...c.aliases],cuentaIds:[]}));
+  _cuentasDocs.forEach(c=>{
     const nombre=String(c.nombre||"").trim();
     if(!nombre) return;
-    const razon=String(c.razonSocial||"").trim().toUpperCase();
-    const rfc=String(c.rfc||"").trim().toUpperCase();
+    // Si la cuenta trae un plan del catálogo, hereda de él razón social y RFC cuando no los tiene
+    const pCat=planPorNumero(normalizarPlan(c.plan||c.planNumero));
+    const razon=(String(c.razonSocial||"").trim().toUpperCase().replace(/^POR DEFINIR$/,""))||(pCat?pCat.empresa:"");
+    const rfc=String(c.rfc||"").trim().toUpperCase()||(pCat?pCat.rfc:"");
     const aliases=[...new Set([..._aliasList(c.aliases),nombre.toUpperCase()])];
-    const base=lista.find(b=>b.id===c.id)||(rfc&&lista.find(b=>b.rfc===rfc&&(!razon||mismaEmpresa(razon,b.empresa))))||null;
+    // Mismo cliente que uno base: por id, por el cliente de su plan, o (sin plan) por RFC + razón social
+    const base=lista.find(b=>b.id===c.id)||(pCat?lista.find(b=>b.id===pCat.clienteId):(rfc&&lista.find(b=>b.rfc===rfc&&(!razon||mismaEmpresa(razon,b.empresa)))))||null;
     if(base){
+      base.cuentaIds.push(c.id);
       if(razon) base.empresa=razon;
       if(rfc) base.rfc=rfc;
       if(c.domicilio1) base.domicilio1=c.domicilio1;
@@ -1241,9 +1247,9 @@ function aplicarCuentasACatalogo(cuentas){
       return;
     }
     if(!razon||!rfc) return; // sin razón social y RFC no se puede emitir la solicitud de factura
-    const plan=String(c.plan||"").trim();
-    lista.push({id:c.id,cuentaId:c.id,aliases,cliente:nombre,empresa:razon,rfc,
-      plan,planSolicitud:c.planSolicitud||(plan?"P-"+plan.replace(/^P-/i,""):""),
+    const plan=pCat?etiquetaPlan(pCat):String(c.plan||"").trim();
+    lista.push({id:c.id,cuentaId:c.id,cuentaIds:[c.id],aliases,cliente:nombre,empresa:razon,rfc,
+      plan,planSolicitud:c.planSolicitud||(pCat?"P-"+pCat.numero+" "+pCat.nombre:plan?"P-"+plan.replace(/^P-/i,""):""),
       domicilio1:c.domicilio1||"",domicilio2:c.domicilio2||"",regimenFiscal:c.regimenFiscal||"(601) GENERAL DE LEY PERSONAS MORALES",
       color:c.color||PALETA_CLIENTES[lista.length%PALETA_CLIENTES.length],desdeCuentas:true,contacto:c.contacto||"",email:c.email||""});
   });
@@ -1254,7 +1260,7 @@ function aplicarCuentasACatalogo(cuentas){
 function useCatalogos(){
   const [v,setV]=useState(0);
   useEffect(()=>{
-    const u1=onSnapshot(collection(db,"planes"),s=>{setCatalogoPlanes(fusionarCatalogoPlanes(PLANES,s.docs.map(d=>({id:d.id,...d.data()}))));setV(x=>x+1);},()=>{});
+    const u1=onSnapshot(collection(db,"planes"),s=>{setCatalogoPlanes(fusionarCatalogoPlanes(PLANES,s.docs.map(d=>({id:d.id,...d.data()}))));aplicarCuentasACatalogo(_cuentasDocs);setV(x=>x+1);},()=>{});
     const u2=onSnapshot(collection(db,"cuentas"),s=>{aplicarCuentasACatalogo(s.docs.map(d=>({id:d.id,...d.data()})));setV(x=>x+1);},()=>{});
     return()=>{u1();u2();};
   },[]);
@@ -7371,13 +7377,13 @@ function Facturas({rol="admin"}){
     if(v==="__otro"){setForm(f=>({...f,planOtro:true,plan:f.planNumero?"":f.plan,planNumero:""}));return;}
     if(!v){setForm(f=>({...f,planOtro:false,planNumero:"",plan:"",planOverride:""}));return;}
     const p=planPorNumero(v);if(!p)return;
-    setForm(f=>({...f,planOtro:false,planNumero:p.numero,plan:textoPlanCatalogo(p),planOverride:"",empresa:p.empresa,rfc:p.rfc,
+    setForm(f=>({...f,sinPlan:false,planOtro:false,planNumero:p.numero,plan:textoPlanCatalogo(p),planOverride:"",empresa:p.empresa,rfc:p.rfc,
       clienteId:p.clienteId,_clienteId:CLIENTE_PLANES.some(c=>c.id===p.clienteId)?p.clienteId:"",intranetDirector:dirSugerido(f,p)}));
   };
   // Cliente conocido (CLIENTE_PLANES) → empresa + su plan por defecto, vía catálogo
   const aplicarCliente=(cp,extra)=>setForm(f=>{
     const p=planPorNumero(normalizarPlan(cp.plan));
-    return {...f,empresa:cp.empresa,plan:cp.plan,planNumero:p?p.numero:"",planOtro:!p&&!!cp.plan,planOverride:"",rfc:cp.rfc||"",_clienteId:cp.id,
+    return {...f,sinPlan:!p&&!cp.plan,empresa:cp.empresa,plan:cp.plan,planNumero:p?p.numero:"",planOtro:!p&&!!cp.plan,planOverride:"",rfc:cp.rfc||"",_clienteId:cp.id,
       ...(p?{clienteId:p.clienteId}:{}),intranetDirector:dirSugerido(f,p),...(extra?extra(f):{})};
   });
 
@@ -7451,13 +7457,17 @@ function Facturas({rol="admin"}){
      y corrige el clienteId. No cambia la empresa de la factura. */
   const asignarPlan=async(id,numero)=>{
     const f=items.find(x=>x.id===id),p=planPorNumero(numero);
+    if(f&&numero==="__sinplan"){ // cliente externo: no lleva plan de intranet
+      try{await updateDoc(doc(db,"facturas",id),{sinPlan:true});showT("✓ "+(f.folio||"Factura")+" marcada sin plan de intranet");}catch(e){showT(e.message,"err");}
+      return;
+    }
     if(!f||!p) return;
     const emp=f.empresa||f.cliente||"";
     if(emp&&!mismaEmpresa(emp,p.empresa)&&!confirm("El plan "+p.numero+" · "+p.nombre+" se factura a "+p.empresa+", pero esta factura está a nombre de "+emp+".\n\n¿Asignar el plan de todos modos? (no cambia la empresa de la factura)")) return;
     const texto=textoPlanCatalogo(p),anterior=f.plan||f.planOverride||"";
     const cli=clienteIdCorrecto(f,p.numero),cliDe=String(f.clienteId||"");
     try{
-      await updateDoc(doc(db,"facturas",id),{planNumero:p.numero,plan:texto,planOverride:"",
+      await updateDoc(doc(db,"facturas",id),{planNumero:p.numero,plan:texto,planOverride:"",sinPlan:false,
         ...(f.planNumero&&String(f.planNumero)!==p.numero?{planNumeroAnterior:String(f.planNumero)}:{}),
         ...(anterior&&anterior!==texto&&!f.planOriginal?{planOriginal:anterior}:{}),
         ...(cli!==cliDe?{clienteId:cli,...(cliDe?{clienteIdAnterior:cliDe}:{})}:{})});
@@ -7663,7 +7673,14 @@ function Facturas({rol="admin"}){
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}><span style={{background:A+"12",color:A,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700}}>{f.mesOp||"—"} {String(f.anio||"").slice(-2)}</span></td>
                 <td style={{padding:"8px 10px",fontWeight:700,fontSize:12,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.empresa||f.cliente||""}>{f.empresa||f.cliente||"—"}</td>
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.solicitante||"—"}</td>
-                <td style={{padding:"8px 10px",maxWidth:150}}>{f.plan&&<span title={f.plan} style={{background:VIOLET+"12",color:VIOLET,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700,display:"inline-block",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",verticalAlign:"middle"}}>{f.plan}</span>}</td>
+                <td style={{padding:"8px 10px",maxWidth:190}}>{(()=>{
+                  const chip={borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700,display:"inline-block",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",verticalAlign:"middle"};
+                  if(f.sinPlan===true) return <span title={f.plan||"Cliente sin plan de intranet"} style={{...chip,background:MUTED+"14",color:MUTED}}>Sin plan</span>;
+                  const pl=planPorNumero(planDeFactura(f));
+                  // Se muestra el plan del CATÁLOGO; el texto con que se capturó queda en el tooltip
+                  if(pl) return <span title={pl.numero+" · "+pl.nombre+" → "+pl.empresa+((f.plan||f.planOverride)?"\nTexto capturado: "+(f.planOverride||f.plan):"")} style={{...chip,background:VIOLET+"12",color:VIOLET}}><span style={{fontFamily:MONO,fontWeight:800}}>{pl.numero}</span> · {pl.nombre}</span>;
+                  return f.plan?<span title={"“"+f.plan+"” no corresponde a un plan del catálogo. Asígnalo en “Normalizar planes y clientes”."} style={{...chip,background:AMBER+"10",color:AMBER,border:"1px dashed "+AMBER+"70"}}>{f.plan}</span>:null;
+                })()}</td>
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.servicio||""}>{f.servicio||"—"}</td>
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11.5,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.subtotal||f.monto||0)}</td>}
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11,color:MUTED,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.ivaAmt??(typeof f.iva==="number"?f.iva:0))}</td>}
@@ -7672,7 +7689,8 @@ function Facturas({rol="admin"}){
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}>{(()=>{
                   if(!f.intranetFolio){
                     const pl=planPorNumero(planDeFactura(f));
-                    return <span style={{fontSize:11,color:MUTED}} title={pl&&!pl.vaPorIntranet?pl.nota:""}>{pl&&!pl.vaPorIntranet?"No aplica":"—"}</span>;
+                    const na=f.sinPlan===true||(pl&&!pl.vaPorIntranet);
+                    return <span style={{fontSize:11,color:MUTED}} title={f.sinPlan===true?"Cliente sin plan de intranet":pl&&!pl.vaPorIntranet?pl.nota:""}>{na?"No aplica":"—"}</span>;
                   }
                   const sub=etapaFactura({intranetFolio:f.intranetFolio,intranetEstatus:f.intranetEstatus}).subestado;
                   const c=sub==="Tesorería"?GREEN:sub==="Director"?AMBER:BLUE;
@@ -7805,6 +7823,7 @@ function Facturas({rol="admin"}){
                   <span style={{color:MUTED,fontStyle:c.plan?"normal":"italic",maxWidth:170,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={c.plan}>{c.plan||"sin plan"}</span>
                   <select aria-label={"Plan para "+(c.folio||"la factura")} value="" onChange={e=>e.target.value&&asignarPlan(c.id,e.target.value)} style={{width:200,background:"#fff",border:"1.5px solid "+AMBER+"60",borderRadius:7,padding:"3px 6px",fontSize:11,cursor:"pointer"}}>
                     <option value="">Asignar plan…</option>
+                    <option value="__sinplan">Sin plan (cliente externo, no va por intranet)</option>
                     {sugeridos.length>0&&<optgroup label="De esta empresa">{sugeridos.map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}</optgroup>}
                     <optgroup label={sugeridos.length>0?"Otros planes":"Planes"}>{catalogoPlanes().filter(p=>!sugeridos.includes(p)).map(p=><option key={p.numero} value={p.numero}>{p.numero} · {p.nombre}</option>)}</optgroup>
                   </select>
@@ -7874,20 +7893,43 @@ function Facturas({rol="admin"}){
               {[ANIO-1,ANIO,ANIO+1].map(y=><option key={y} value={y}>{y}</option>)}
             </select>
           </div>
-          {/* Quick-pick de cliente conocido — auto-llena empresa+plan */}
+          {/* Planes del grupo por empresa — un clic llena empresa, RFC y director que autoriza */}
           <div style={{gridColumn:"1/-1",background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:11,padding:"10px 12px"}}>
-            <div style={{fontSize:10,fontWeight:800,color:MUTED,marginBottom:7,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6}}><Zap size={11} color={A}/>Cliente conocido (auto-llena empresa + plan)</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {CLIENTE_PLANES.map(cp=>{
-                const active = (form.empresa||"").toLowerCase().trim()===cp.empresa.toLowerCase().trim();
-                return(
-                  <button key={cp.id} type="button" onClick={()=>aplicarCliente(cp,f=>({solicitante:f.solicitante||cp.cliente}))} className="btn" style={{padding:"7px 12px",borderRadius:9,border:"1.5px solid "+(active?cp.color:BD2),background:active?cp.color+"14":"#fff",color:active?cp.color:TEXT,fontWeight:active?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}>
-                    <div style={{width:7,height:7,borderRadius:"50%",background:cp.color}}/>
-                    {cp.cliente}
-                  </button>
-                );
-              })}
-            </div>
+            <div style={{fontSize:10,fontWeight:800,color:MUTED,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6}}><Zap size={11} color={A}/>Plan del grupo (llena empresa, RFC y director de intranet)</div>
+            {[...new Set(catalogoPlanes().map(p=>p.empresa))].map(emp=>{
+              const col=CLIENTE_PLANES.find(c=>c.empresa===emp)?.color||VIOLET;
+              return(
+                <div key={emp} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:6}}>
+                  <div style={{width:150,flexShrink:0,fontSize:10,fontWeight:800,color:col,paddingTop:7,lineHeight:1.25}}>{emp.replace(/ S\.?A\.?P?\.?I?\.? DE C\.?V\.?$/i,"")}</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
+                    {catalogoPlanes().filter(p=>p.empresa===emp).map(p=>{
+                      const active=!form.planOtro&&form.planNumero===p.numero;
+                      return(
+                        <button key={p.numero} type="button" onClick={()=>pickPlan(p.numero)} title={p.directorIntranet?"Autoriza: "+p.directorIntranet.nombre+" ("+p.directorIntranet.id+")":p.vaPorIntranet?"Director de intranet por confirmar":(p.nota||"No va por intranet")} className="btn" style={{padding:"6px 10px",borderRadius:9,border:"1.5px solid "+(active?col:BD2),background:active?col+"14":"#fff",color:active?col:TEXT,fontWeight:active?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontFamily:MONO,fontWeight:800,color:col}}>{p.numero}</span>{p.nombre}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {(()=>{
+              // Clientes facturables que no llevan plan de intranet (externos) o cuyo plan no está en el catálogo
+              const otros=CLIENTE_PLANES.filter(cp=>!planPorNumero(normalizarPlan(cp.plan)));
+              if(!otros.length) return null;
+              return(
+                <div style={{display:"flex",gap:8,alignItems:"flex-start",marginTop:8,paddingTop:8,borderTop:"1px dashed "+BD2}}>
+                  <div style={{width:150,flexShrink:0,fontSize:10,fontWeight:800,color:MUTED,paddingTop:7}}>Clientes sin plan de intranet</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
+                    {otros.map(cp=>{
+                      const active=form._clienteId===cp.id;
+                      return <button key={cp.id} type="button" onClick={()=>aplicarCliente(cp,f=>({solicitante:f.solicitante||cp.contacto||""}))} className="btn" style={{padding:"6px 10px",borderRadius:9,border:"1.5px solid "+(active?cp.color:BD2),background:active?cp.color+"14":"#fff",color:active?cp.color:TEXT,fontWeight:active?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}><div style={{width:7,height:7,borderRadius:"50%",background:cp.color}}/>{cp.cliente}</button>;
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
             {form.empresa&&(()=>{
               const matched = (form._clienteId&&CLIENTE_PLANES.find(cp=>cp.id===form._clienteId&&cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim()))
                 || CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim());
@@ -8077,17 +8119,40 @@ function Clientes(){
     }catch(e){showT(e.message,"err");}
   };
   // Desde la semilla del código: si no existe cuenta para un cliente base, se crea con sus datos fiscales (editable después)
-  const importarBase=async()=>{
-    const faltan=CLIENTE_PLANES_BASE.filter(cp=>cp.empresa!=="POR DEFINIR"&&!items.some(c=>c.id===cp.id||(c.rfc&&String(c.rfc).toUpperCase()===cp.rfc)));
-    if(!faltan.length){showT("Todos los clientes base ya tienen su cuenta");return;}
-    if(!confirm("Se crearán "+faltan.length+" cuentas con los datos fiscales del catálogo base ("+faltan.map(c=>c.cliente).join(", ")+"). ¿Continuar?")) return;
+  /* A qué cliente del catálogo corresponde una cuenta y qué planes tiene */
+  const clienteDeCuenta=c=>CLIENTE_PLANES.find(x=>(x.cuentaIds||[]).includes(c.id)||x.id===c.id)||null;
+  const planesDeCuenta=c=>{
+    const cli=clienteDeCuenta(c),propio=planPorNumero(normalizarPlan(c.plan||c.planNumero));
+    // Una cuenta con plan propio distinto al del cliente base (ej. "G MAP · 204113") muestra solo el suyo
+    if(propio&&(!cli||cli.id!==propio.clienteId)) return [propio];
+    const ids=[c.id,cli?.id,propio?.clienteId].filter(Boolean);
+    const out=catalogoPlanes().filter(p=>ids.includes(p.clienteId));
+    return propio&&!out.includes(propio)?[propio,...out]:out;
+  };
+  /* Clientes que existen en el catálogo (código + planes) y aún no tienen cuenta */
+  const faltantes=(()=>{
+    const cubiertos=new Set(items.flatMap(c=>[c.id,clienteDeCuenta(c)?.id,planPorNumero(normalizarPlan(c.plan||c.planNumero))?.clienteId]).filter(Boolean));
+    const out=[];
+    CLIENTE_PLANES_BASE.filter(cp=>cp.empresa!=="POR DEFINIR"&&!cubiertos.has(cp.id)).forEach(cp=>out.push({id:cp.id,nombre:cp.cliente,razonSocial:cp.empresa,rfc:cp.rfc,plan:normalizarPlan(cp.plan)||"",planSolicitud:cp.planSolicitud||"",
+      domicilio1:cp.domicilio1||"",domicilio2:cp.domicilio2||"",regimenFiscal:cp.regimenFiscal||REGIMENES_FISCALES[0],aliases:cp.aliases,color:cp.color}));
+    catalogoPlanes().forEach(p=>{
+      if(!p.clienteId||cubiertos.has(p.clienteId)||out.some(o=>o.id===p.clienteId)) return;
+      const fiscal=CLIENTE_PLANES_BASE.find(cp=>cp.empresa===p.empresa);
+      out.push({id:p.clienteId,nombre:p.nombre,razonSocial:p.empresa,rfc:p.rfc,plan:p.numero,planSolicitud:"P-"+p.numero+" "+p.nombre,
+        domicilio1:fiscal?.domicilio1||"",domicilio2:fiscal?.domicilio2||"",regimenFiscal:fiscal?.regimenFiscal||REGIMENES_FISCALES[0],aliases:p.alias||[],color:fiscal?.color||""});
+    });
+    return out;
+  })();
+  const crearCuentas=async lista=>{
     try{
-      for(const cp of faltan){
-        await setDoc(doc(db,"cuentas",cp.id),{nombre:cp.cliente,razonSocial:cp.empresa,rfc:cp.rfc,plan:(normalizarPlan(cp.plan)||""),planSolicitud:cp.planSolicitud||"",domicilio1:cp.domicilio1||"",domicilio2:cp.domicilio2||"",
-          regimenFiscal:cp.regimenFiscal||REGIMENES_FISCALES[0],aliases:cp.aliases,color:cp.color,esCatalogoMaestro:true,createdAt:serverTimestamp()},{merge:true});
-      }
-      showT("✓ "+faltan.length+" cuentas creadas desde el catálogo base");
+      for(const f of lista) await setDoc(doc(db,"cuentas",f.id),{...f,esCatalogoMaestro:true,createdAt:serverTimestamp()},{merge:true});
+      showT("✓ "+lista.length+" cuenta"+(lista.length===1?"":"s")+" creada"+(lista.length===1?"":"s")+" desde el catálogo");
     }catch(e){showT(e.message,"err");}
+  };
+  const importarBase=async()=>{
+    if(!faltantes.length){showT("Todos los clientes del catálogo ya tienen su cuenta");return;}
+    if(!confirm("Se crearán "+faltantes.length+" cuentas con los datos fiscales del catálogo ("+faltantes.map(c=>c.nombre).join(", ")+"). ¿Continuar?")) return;
+    await crearCuentas(faltantes);
   };
 
   /* ── Planes del grupo ── */
@@ -8133,7 +8198,7 @@ function Clientes(){
         <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>{vista==="planes"?"Planes del grupo":"Clientes"}</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>{vista==="planes"?planes.length+" planes · número, empresa que factura y director que autoriza en intranet":items.length+" cuentas · "+CLIENTE_PLANES.filter(c=>c.empresa!=="POR DEFINIR").length+" clientes facturables"}</p></div>
         {vista==="planes"&&<button onClick={()=>abrirPlan(null)} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+VIOLET+",#8b5cf6)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+VIOLET+"30"}}><Plus size={14}/>Nuevo plan</button>}
         {vista==="clientes"&&<div style={{display:"flex",gap:8}}>
-          <button onClick={importarBase} className="btn" title="Crea las cuentas que falten con los datos fiscales del catálogo base del código" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Download size={13}/>Traer clientes base</button>
+          {faltantes.length>0&&<button onClick={importarBase} className="btn" title="Crea las cuentas que falten con los datos fiscales del catálogo" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Download size={13}/>Crear las {faltantes.length} cuentas que faltan</button>}
         <button onClick={openNew} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+A+"30"}}><Plus size={14}/>Nuevo cliente</button>
         </div>}
       </div>
@@ -8198,18 +8263,32 @@ function Clientes(){
         {filt.length===0?<div style={{padding:40,textAlign:"center",color:MUTED,fontSize:13}}>Sin clientes. <button onClick={openNew} style={{color:A,background:"none",border:"none",cursor:"pointer",fontWeight:700}}>Agregar →</button></div>
         :<table style={{width:"100%",borderCollapse:"collapse"}}>
           <thead><tr style={{borderBottom:"1px solid "+BORDER,background:"#f8fafd"}}>{["Cliente","Razón social / RFC","Plan / No. Cuenta","Contacto","Email / Tel","Facturable",""].map(h=><th key={h} style={{padding:"9px 16px",textAlign:"left",fontSize:9,color:MUTED,fontWeight:800,letterSpacing:"0.06em",textTransform:"uppercase"}}>{h}</th>)}</tr></thead>
-          <tbody>{filt.map((c,i)=>(
+          <tbody>{!q&&faltantes.map(f=>(
+            <tr key={"cat:"+f.id} style={{borderBottom:"1px solid "+BORDER,background:BLUE+"05"}}>
+              <td style={{padding:"12px 16px",fontWeight:700,fontSize:13}}>{f.nombre}<div style={{fontSize:10,fontWeight:700,color:BLUE,textTransform:"uppercase",letterSpacing:"0.05em"}}>En catálogo · sin cuenta</div></td>
+              <td style={{padding:"12px 16px",fontSize:12}}>{f.razonSocial}<div style={{fontFamily:MONO,fontSize:11,color:MUTED}}>{f.rfc}</div></td>
+              <td style={{padding:"12px 16px"}}><div style={{display:"flex",flexDirection:"column",gap:3}}>{catalogoPlanes().filter(p=>p.clienteId===f.id).map(p=><span key={p.numero} style={{background:VIOLET+"12",color:VIOLET,borderRadius:7,padding:"2px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",width:"fit-content"}}><span style={{fontFamily:MONO,fontWeight:800}}>{p.numero}</span> · {p.nombre}</span>)}</div></td>
+              <td style={{padding:"12px 16px",fontSize:12,color:MUTED}}>—</td>
+              <td style={{padding:"12px 16px",fontSize:12,color:MUTED}}>—</td>
+              <td style={{padding:"12px 16px"}}><span style={{background:GREEN+"12",color:GREEN,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Sí</span></td>
+              <td style={{padding:"12px 16px"}}><button onClick={()=>crearCuentas([f])} className="btn" style={{color:BLUE,padding:"3px 9px",border:"1px solid "+BLUE+"30",borderRadius:6,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>Crear cuenta</button></td>
+            </tr>
+          ))}{filt.map((c,i)=>(
             <tr key={c.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
               <td style={{padding:"12px 16px",fontWeight:700,fontSize:13}}>{c.nombre}</td>
-              <td style={{padding:"12px 16px",fontSize:12}}>{c.razonSocial||<span style={{color:MUTED}}>—</span>}<div style={{fontFamily:MONO,fontSize:11,color:MUTED}}>{c.rfc||"sin RFC"}</div></td>
+              <td style={{padding:"12px 16px",fontSize:12}}>{(()=>{const cp=clienteDeCuenta(c);const rz=(c.razonSocial&&c.razonSocial!=="POR DEFINIR")?c.razonSocial:cp?.empresa;const rf=c.rfc||cp?.rfc;const her=cp&&(!c.razonSocial||c.razonSocial==="POR DEFINIR"||!c.rfc);return <>{rz||<span style={{color:MUTED}}>—</span>}<div style={{fontFamily:MONO,fontSize:11,color:MUTED}}>{rf||"sin RFC"}{her&&rz?<span style={{fontFamily:SANS,marginLeft:6}} title="Tomado del plan del catálogo; puedes capturarlo en la cuenta">· del plan</span>:null}</div></>;})()}</td>
               <td style={{padding:"12px 16px"}}>
-                {(c.plan||c.planNumero)
-                  ?<span style={{background:VIOLET+"12",color:VIOLET,borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:700,fontFamily:MONO}}>{c.plan||c.planNumero}</span>
-                  :<span style={{color:MUTED,fontSize:11}}>—</span>}
+                {(()=>{
+                  const ps=planesDeCuenta(c);
+                  if(ps.length) return <div style={{display:"flex",flexDirection:"column",gap:3}}>{ps.map(p=>(
+                    <span key={p.numero} title={p.empresa+(p.directorIntranet?" · autoriza "+p.directorIntranet.nombre+" ("+p.directorIntranet.id+")":p.vaPorIntranet?" · director por confirmar":" · no va por intranet")} style={{background:VIOLET+"12",color:VIOLET,borderRadius:7,padding:"2px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",width:"fit-content"}}><span style={{fontFamily:MONO,fontWeight:800}}>{p.numero}</span> · {p.nombre}</span>
+                  ))}</div>;
+                  return (c.plan||c.planNumero)?<span title="Este texto no corresponde a un plan del catálogo" style={{background:AMBER+"10",color:AMBER,border:"1px dashed "+AMBER+"70",borderRadius:7,padding:"2px 8px",fontSize:11,fontWeight:700}}>{c.plan||c.planNumero}</span>:<span style={{color:MUTED,fontSize:11}}>Sin plan de intranet</span>;
+                })()}
               </td>
               <td style={{padding:"12px 16px",fontSize:12,color:MUTED}}>{c.contacto||"—"}</td>
               <td style={{padding:"12px 16px",fontSize:12,color:MUTED}}>{[c.email,c.tel].filter(Boolean).join(" · ")||"—"}</td>
-              <td style={{padding:"12px 16px"}}>{(()=>{const cp=CLIENTE_PLANES.find(x=>x.cuentaId===c.id||x.id===c.id);return cp&&cp.empresa!=="POR DEFINIR"?<span title={"Se reconoce como "+cp.cliente+" · "+cp.empresa} style={{background:GREEN+"12",color:GREEN,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Sí</span>:<span title="Captura razón social y RFC para poder emitir su solicitud de factura" style={{background:AMBER+"14",color:AMBER,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Falta RFC</span>;})()}</td>
+              <td style={{padding:"12px 16px"}}>{(()=>{const cp=clienteDeCuenta(c);const rfcMal=c.rfc&&!/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(String(c.rfc).trim().toUpperCase());if(rfcMal) return <span title={"El RFC “"+c.rfc+"” no tiene formato válido; corrígelo para poder facturar"} style={{background:ROSE+"12",color:ROSE,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>RFC inválido</span>;return cp&&cp.empresa!=="POR DEFINIR"?<span title={"Se reconoce como "+cp.cliente+" · "+cp.empresa} style={{background:GREEN+"12",color:GREEN,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Sí</span>:<span title="Captura razón social y RFC para poder emitir su solicitud de factura" style={{background:AMBER+"14",color:AMBER,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Falta RFC</span>;})()}</td>
               <td style={{padding:"12px 16px"}}>
                 <div style={{display:"flex",gap:6}}>
                   <button onClick={()=>openEdit(c)} className="btn" style={{color:BLUE,padding:"3px 7px",border:"1px solid "+BLUE+"20",borderRadius:6,fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3}}><Eye size={11}/>Editar</button>

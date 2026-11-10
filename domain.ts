@@ -313,6 +313,10 @@ export const PLANES: PlanCatalogo[] = [
     nota:"No va por intranet: se cobra vía Juanita Buenabad" },
   /* ── Planes heredados (existen en facturas históricas / CLIENTE_PLANES).
         Director de intranet por confirmar con la oficina. ── */
+  { numero:"122215", nombre:"Samsung CE Viáticos",  ..._MAP,  clienteId:"samsung",
+    directorIntranet:null, vaPorIntranet:true, alias:["SAMSUNG CE"], porConfirmar:true },
+  { numero:"122216", nombre:"Samsung IM Viáticos",  ..._MAP,  clienteId:"samsung",
+    directorIntranet:null, vaPorIntranet:true, alias:["SAMSUNG IM"], porConfirmar:true },
   { numero:"142805", nombre:"Rentas Logística",     ..._PAL,  clienteId:"actnow",
     directorIntranet:null, vaPorIntranet:true, alias:["RENTAS LOGISTICA","RENTA DE CAMIONETAS"], porConfirmar:true,
     nota:"Renta de camionetas (contabilidad 2026)" },
@@ -493,10 +497,12 @@ export function clienteIdCorrecto(f: FacturaLike, planNum: string | null): strin
   if(actual && empresasDelCliente.length && !empresasDelCliente.some(e => mismaEmpresa(empresa, e))) return "";
   return actual;
 }
-export function planearNormalizacionPlanes(facturas: FacturaLike[]): { cambios: CambioPlan[]; sinResolver: CambioPlan[]; yaNormalizadas: number } {
+export function planearNormalizacionPlanes(facturas: FacturaLike[]): { cambios: CambioPlan[]; sinResolver: CambioPlan[]; yaNormalizadas: number; sinPlan: number } {
   const cambios: CambioPlan[] = [], sinResolver: CambioPlan[] = [];
-  let yaNormalizadas = 0;
+  let yaNormalizadas = 0, sinPlan = 0;
   for(const f of facturas || []){
+    // Cliente externo sin plan de intranet, confirmado a mano: no hay nada que normalizar
+    if(f.sinPlan === true){ sinPlan++; continue; }
     const a = normalizarPlan(f.plan) || normalizarPlan(f.planOverride);
     const de = String(f.planNumero ?? "").trim();
     const clienteDe = String(f.clienteId ?? "").trim(), clienteA = clienteIdCorrecto(f, a);
@@ -507,7 +513,7 @@ export function planearNormalizacionPlanes(facturas: FacturaLike[]): { cambios: 
     if(cambiaPlan || cambiaCliente) cambios.push(row);
     else if(a) yaNormalizadas++;
   }
-  return { cambios, sinResolver, yaNormalizadas };
+  return { cambios, sinResolver, yaNormalizadas, sinPlan };
 }
 
 /* ── Semáforo de etapa de una factura ────────────────────────────────────────
