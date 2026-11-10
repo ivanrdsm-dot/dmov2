@@ -16,16 +16,19 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
+      # El lock se genera SIEMPRE con el npm de Node 22 (npm 10). Con npm 11 el lock
+      # omite peers opcionales (esbuild de vite 8) y `npm ci` falla aquí.
+      # Para regenerarlo: npx npm@10 install --package-lock-only
       - name: Instalar dependencias
         run: npm ci
 
       - name: Typecheck (motor de negocio domain.ts)
         run: npm run typecheck
 
-      - name: Tests (36 — política de negocio protegida)
+      - name: Tests (política de negocio protegida)
         run: npm test
 
       - uses: actions/setup-java@v4
