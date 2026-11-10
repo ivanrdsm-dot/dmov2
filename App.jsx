@@ -1196,6 +1196,24 @@ const CLIENTE_PLANES_BASE = [
     regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
     color:"#a16207",
   },
+  /* ABATUR — cliente externo al grupo: sin plan de intranet. Datos fiscales
+     tomados de los CFDI A2045 / A2046 (21-oct-2026). Se factura PUE. */
+  {
+    id:"abatur",
+    aliases:["ABATUR","ABC DEL TURISMO","EL ABC DEL TURISMO INTERNACIONAL"],
+    cliente:"Abatur",
+    empresa:"EL ABC DEL TURISMO INTERNACIONAL",
+    plan:"",
+    planSolicitud:"",
+    rfc:"ATI090429U15",
+    domicilio1:"",
+    domicilio2:"CP. 54700",
+    regimenFiscal:"(601) GENERAL DE LEY PERSONAS MORALES",
+    metodoPago:"PUE (PAGO EN UNA SOLA EXHIBICION)",
+    formaPago:"03 (TRANSFERENCIA ELECTRONICA DE FONDOS)",
+    usoCFDI:"G03 (GASTOS EN GENERAL)",
+    color:"#be185d",
+  },
   /* HENRY / WALMART — cliente nuevo (mayo 2026), datos fiscales por completar */
   {
     id:"henry_walmart",
@@ -2289,19 +2307,19 @@ function buildSolicitudWs(factura){
 
   // ROW 12 — METODO DE PAGO
   setS("A12","METODO DE PAGO:",labelStyle);
-  setS("B12",cfg.metodoPago,valStyle);
+  setS("B12",matched.metodoPago||cfg.metodoPago,valStyle);
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:11,c}),"",valStyle);
   merges.push({s:{r:11,c:1},e:{r:11,c:5}});
 
   // ROW 13 — FORMA DE PAGO
   setS("A13","FORMA DE PAGO:",labelStyle);
-  setS("B13",cfg.formaPago,valStyle);
+  setS("B13",matched.formaPago||cfg.formaPago,valStyle);
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:12,c}),"",valStyle);
   merges.push({s:{r:12,c:1},e:{r:12,c:5}});
 
   // ROW 14 — USO DE CFDI
   setS("A14","USO DE CFDI:",labelStyle);
-  setS("B14",cfg.usoCFDI,valStyle);
+  setS("B14",matched.usoCFDI||cfg.usoCFDI,valStyle);
   for(let c=2;c<=5;c++) setS(XLSX.utils.encode_cell({r:13,c}),"",valStyle);
   merges.push({s:{r:13,c:1},e:{r:13,c:5}});
 
