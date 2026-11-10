@@ -7396,6 +7396,7 @@ function Facturas({rol="admin"}){
   const [cotQ,setCotQ]=useState("");
   const [normPlan,setNormPlan]=useState(null); // ventana "Normalizar planes y clientes" abierta: {aplicando}
   const [sinFechaPago,setSinFechaPago]=useState(false); // filtro: pagadas sin fecha de pago
+  const [planPend,setPlanPend]=useState(false);         // filtro: plan por confirmar
   // Cotizaciones y presupuestos: para ligar la factura con su origen comercial
   const [cots,setCots]=useState([]);const [presups,setPresups]=useState([]);
   useEffect(()=>onSnapshot(query(collection(db,"cotizaciones"),limit(2000)),s=>setCots(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
@@ -7595,7 +7596,10 @@ function Facturas({rol="admin"}){
   // "Pagada" sin fecha de pago ni abonos: no se sabe cuándo se cobró (flujo y conciliación)
   const esPagadaSinFecha=f=>f.status==="Pagada"&&!f.fechaPago&&pagosDe(f).length===0;
   const nSinFechaPago=filtMes.filter(esPagadaSinFecha).length;
-  const filt=(etapaF==="todas"?filtMes:filtMes.filter(f=>etapaFactura(f).etapa===etapaF)).filter(f=>!sinFechaPago||esPagadaSinFecha(f));
+  // Plan por confirmar: ni plan del catálogo ni "sin plan" confirmado (falta que alguien diga cuál es)
+  const esPlanPendiente=f=>f.sinPlan!==true&&!planDeFactura(f);
+  const nPlanPend=filtMes.filter(esPlanPendiente).length;
+  const filt=(etapaF==="todas"?filtMes:filtMes.filter(f=>etapaFactura(f).etapa===etapaF)).filter(f=>(!sinFechaPago||esPagadaSinFecha(f))&&(!planPend||esPlanPendiente(f)));
   const nEtapa=filtMes.reduce((a,f)=>{const e=etapaFactura(f).etapa;a[e]=(a[e]||0)+1;return a;},{});
   const estatusIntranetVistos=[...new Set(items.map(f=>String(f.intranetEstatus||"").trim()).filter(Boolean))].sort();
   const planSel=planPorNumero(form.planNumero);
@@ -7729,9 +7733,14 @@ function Facturas({rol="admin"}){
               {e!=="todas"&&<span style={{width:7,height:7,borderRadius:"50%",background:c}}/>}{e==="todas"?"Todas":e}<span style={{fontFamily:MONO,fontSize:10,opacity:.75}}>{n}</span>
             </button>;
           })}
-          {isAdmin&&(nSinFechaPago>0||sinFechaPago)&&<button onClick={()=>setSinFechaPago(v=>!v)} className="btn" aria-pressed={sinFechaPago} title="Facturas marcadas Pagada sin fecha de cobro ni abonos. Captura la fecha en la columna Estado." style={{marginLeft:"auto",padding:"5px 11px",borderRadius:8,border:"1.5px "+(sinFechaPago?"solid ":"dashed ")+AMBER,background:sinFechaPago?AMBER+"14":"#fff",color:AMBER,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+          <div style={{marginLeft:"auto",display:"flex",gap:5,flexWrap:"wrap"}}>
+          {isAdmin&&(nPlanPend>0||planPend)&&<button onClick={()=>setPlanPend(v=>!v)} className="btn" aria-pressed={planPend} title="Facturas cuyo plan falta confirmar. Se asigna en “Normalizar planes y clientes” o abriendo la factura." style={{padding:"5px 11px",borderRadius:8,border:"1.5px "+(planPend?"solid ":"dashed ")+AMBER,background:planPend?AMBER+"14":"#fff",color:AMBER,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+            <AlertCircle size={12}/>Plan por confirmar<span style={{fontFamily:MONO,fontSize:10}}>{nPlanPend}</span>
+          </button>}
+          {isAdmin&&(nSinFechaPago>0||sinFechaPago)&&<button onClick={()=>setSinFechaPago(v=>!v)} className="btn" aria-pressed={sinFechaPago} title="Facturas marcadas Pagada sin fecha de cobro ni abonos. Captura la fecha en la columna Estado." style={{padding:"5px 11px",borderRadius:8,border:"1.5px "+(sinFechaPago?"solid ":"dashed ")+AMBER,background:sinFechaPago?AMBER+"14":"#fff",color:AMBER,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
             <AlertCircle size={12}/>Pagadas sin fecha de pago<span style={{fontFamily:MONO,fontSize:10}}>{nSinFechaPago}</span>
           </button>}
+          </div>
         </div>
         {isAdmin&&mesF!=="todos"&&totTotal>0&&<div style={{display:"flex",gap:0,marginBottom:14,background:"#fff",border:"1px solid "+BORDER,borderRadius:12,overflow:"hidden"}}>
           {[[TEXT,"Subtotal",fmt(filt.reduce((a,f)=>a+(f.subtotal||f.monto||0),0))],[MUTED,"IVA 16%",fmt(filt.reduce((a,f)=>a+(f.ivaAmt??(typeof f.iva==="number"?f.iva:0)),0))],[A,"Total c/IVA",fmt(totTotal)]].map(([c,l,v],i)=>(
@@ -7762,7 +7771,7 @@ function Facturas({rol="admin"}){
                   const pl=planPorNumero(planDeFactura(f));
                   // Se muestra el plan del CATÁLOGO; el texto con que se capturó queda en el tooltip
                   if(pl) return <span title={pl.numero+" · "+pl.nombre+" → "+pl.empresa+((f.plan||f.planOverride)?"\nTexto capturado: "+(f.planOverride||f.plan):"")} style={{...chip,background:VIOLET+"12",color:VIOLET}}><span style={{fontFamily:MONO,fontWeight:800}}>{pl.numero}</span> · {pl.nombre}</span>;
-                  return f.plan?<span title={"“"+f.plan+"” no corresponde a un plan del catálogo. Asígnalo en “Normalizar planes y clientes”."} style={{...chip,background:AMBER+"10",color:AMBER,border:"1px dashed "+AMBER+"70"}}>{f.plan}</span>:null;
+                  return <span title={(f.plan?"Texto capturado: “"+f.plan+"”. ":"Sin plan capturado. ")+"Falta confirmar a qué plan corresponde; se asigna en “Normalizar planes y clientes”."} style={{...chip,background:AMBER+"10",color:AMBER,border:"1px dashed "+AMBER+"70"}}>Por confirmar{f.plan?" · "+f.plan:""}</span>;
                 })()}</td>
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:130,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.servicio||""}>{f.servicio||"—"}</td>
                 {isAdmin&&<td style={{padding:"8px 10px",fontFamily:MONO,fontSize:11.5,whiteSpace:"nowrap",textAlign:"right"}}>{fmt(f.subtotal||f.monto||0)}</td>}
