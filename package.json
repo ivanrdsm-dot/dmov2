@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:security": "firebase emulators:exec --project demo-dmov-archive --config firebase.emulators.json --only firestore,storage \"node --test security-tests/archive.mjs\""
+    "test:security": "firebase emulators:exec --project demo-dmov-archive --config firebase.emulators.json --only firestore,storage \"node --test --test-concurrency=1 security-tests/archive.mjs security-tests/servicios.mjs\""
   },
   "dependencies": {
     "firebase": "^10.7.0",
