@@ -1239,9 +1239,14 @@ let CLIENTE_PLANES = CLIENTE_PLANES_BASE;
 const PALETA_CLIENTES=["#dc2626","#2563eb","#059669","#7c3aed","#d97706","#0891b2","#65a30d","#a16207","#0ea5e9","#db2777","#4f46e5","#0f766e"];
 const _aliasList=v=>(Array.isArray(v)?v:String(v||"").split(",")).map(a=>String(a).trim().toUpperCase()).filter(Boolean);
 let _cuentasDocs=[];
+/* Clientes REGISTRADOS (uno por cuenta del módulo Clientes + los del código que
+   aún no tienen cuenta). Es lo que Facturación ofrece para elegir: nombre,
+   empresa y RFC ya resueltos, y los planes del catálogo que le corresponden. */
+let CLIENTES_REGISTRADOS=[];
 function aplicarCuentasACatalogo(cuentas){
   _cuentasDocs=cuentas||[];
   const lista=CLIENTE_PLANES_BASE.map(c=>({...c,aliases:[...c.aliases],cuentaIds:[]}));
+  const regs=[];
   _cuentasDocs.forEach(c=>{
     const nombre=String(c.nombre||"").trim();
     if(!nombre) return;
@@ -1252,26 +1257,57 @@ function aplicarCuentasACatalogo(cuentas){
     const aliases=[...new Set([..._aliasList(c.aliases),nombre.toUpperCase()])];
     // Mismo cliente que uno base: por id, por el cliente de su plan, o (sin plan) por RFC + razón social
     const base=lista.find(b=>b.id===c.id)||(pCat?lista.find(b=>b.id===pCat.clienteId):(rfc&&lista.find(b=>b.rfc===rfc&&(!razon||mismaEmpresa(razon,b.empresa)))))||null;
+    let entry=base;
     if(base){
       base.cuentaIds.push(c.id);
-      if(razon) base.empresa=razon;
-      if(rfc) base.rfc=rfc;
-      if(c.domicilio1) base.domicilio1=c.domicilio1;
-      if(c.domicilio2) base.domicilio2=c.domicilio2;
-      if(c.regimenFiscal) base.regimenFiscal=c.regimenFiscal;
-      if(c.planSolicitud) base.planSolicitud=c.planSolicitud;
+      // Los datos fiscales del código (tomados de la CSF) mandan; la cuenta solo llena lo que falte
+      if(razon&&(!base.empresa||base.empresa==="POR DEFINIR")) base.empresa=razon;
+      if(rfc&&!base.rfc) base.rfc=rfc;
+      if(c.domicilio1&&!base.domicilio1) base.domicilio1=c.domicilio1;
+      if(c.domicilio2&&!base.domicilio2) base.domicilio2=c.domicilio2;
+      if(c.regimenFiscal&&!base.regimenFiscal) base.regimenFiscal=c.regimenFiscal;
       base.aliases=[...new Set([...base.aliases,...aliases])];
       base.cuentaId=c.id; base.contacto=c.contacto||base.contacto; base.email=c.email||base.email;
-      return;
+    }else{
+      // Toda cuenta entra al catálogo: si le falta razón social o RFC se puede registrar
+      // la factura, pero la solicitud XLSX avisa que hay que completar sus datos.
+      const plan=pCat?etiquetaPlan(pCat):String(c.plan||"").trim();
+      entry={id:c.id,cuentaId:c.id,cuentaIds:[c.id],aliases,cliente:nombre,empresa:razon||nombre.toUpperCase(),rfc,faltanFiscales:!razon||!rfc,
+        plan,planSolicitud:c.planSolicitud||(pCat?"P-"+pCat.numero+" "+pCat.nombre:plan?"P-"+plan.replace(/^P-/i,""):""),
+        domicilio1:c.domicilio1||"",domicilio2:c.domicilio2||"",regimenFiscal:c.regimenFiscal||"(601) GENERAL DE LEY PERSONAS MORALES",
+        color:c.color||PALETA_CLIENTES[lista.length%PALETA_CLIENTES.length],desdeCuentas:true,contacto:c.contacto||"",email:c.email||""};
+      lista.push(entry);
     }
-    if(!razon||!rfc) return; // sin razón social y RFC no se puede emitir la solicitud de factura
-    const plan=pCat?etiquetaPlan(pCat):String(c.plan||"").trim();
-    lista.push({id:c.id,cuentaId:c.id,cuentaIds:[c.id],aliases,cliente:nombre,empresa:razon,rfc,
-      plan,planSolicitud:c.planSolicitud||(pCat?"P-"+pCat.numero+" "+pCat.nombre:plan?"P-"+plan.replace(/^P-/i,""):""),
-      domicilio1:c.domicilio1||"",domicilio2:c.domicilio2||"",regimenFiscal:c.regimenFiscal||"(601) GENERAL DE LEY PERSONAS MORALES",
-      color:c.color||PALETA_CLIENTES[lista.length%PALETA_CLIENTES.length],desdeCuentas:true,contacto:c.contacto||"",email:c.email||""});
+    regs.push({c,entry,pCat,nombre});
   });
   CLIENTE_PLANES=lista;
+  const planesDe=(c,entry,pCat)=>{
+    // Una cuenta con plan propio distinto al del cliente base (ej. "G MAP · 204113") lleva solo el suyo
+    if(pCat&&entry.id!==pCat.clienteId) return [pCat.numero];
+    const ids=[c?.id,entry.id,pCat?.clienteId].filter(Boolean);
+    const out=catalogoPlanes().filter(p=>ids.includes(p.clienteId)).map(p=>p.numero);
+    return pCat&&!out.includes(pCat.numero)?[pCat.numero,...out]:out;
+  };
+  const out=regs.map(({c,entry,pCat,nombre})=>{
+    const empresa=entry.empresa==="POR DEFINIR"?"":entry.empresa;
+    return {id:c.id,nombre,empresa,rfc:entry.rfc||"",cpId:entry.id,planes:planesDe(c,entry,pCat),contacto:c.contacto||"",email:c.email||"",
+      faltanFiscales:!empresa||!entry.rfc||!!entry.faltanFiscales,sinCuenta:false};
+  });
+  lista.filter(b=>!b.cuentaIds.length&&b.empresa!=="POR DEFINIR").forEach(b=>{
+    out.push({id:"base:"+b.id,nombre:b.cliente,empresa:b.empresa,rfc:b.rfc||"",cpId:b.id,planes:planesDe(null,b,planPorNumero(normalizarPlan(b.plan))),contacto:"",email:"",faltanFiscales:!b.rfc,sinCuenta:true});
+  });
+  CLIENTES_REGISTRADOS=out.sort((a,b)=>a.nombre.localeCompare(b.nombre,"es",{sensitivity:"base"}));
+}
+/* Cliente registrado al que pertenece una factura: el guardado, o el que tiene su plan, o el de su empresa */
+function clienteRegistradoDeFactura(f){
+  if(!f) return null;
+  if(f.cuentaId){const c=CLIENTES_REGISTRADOS.find(x=>x.id===f.cuentaId);if(c) return c;}
+  const n=planDeFactura(f);
+  if(n){const c=CLIENTES_REGISTRADOS.find(x=>x.planes.includes(n));if(c) return c;}
+  const emp=f.empresa||f.cliente;
+  if(f._clienteId){const c=CLIENTES_REGISTRADOS.find(x=>x.cpId===f._clienteId&&!x.planes.length);if(c) return c;}
+  if(emp){const c=CLIENTES_REGISTRADOS.find(x=>!x.planes.length&&x.empresa&&mismaEmpresa(emp,x.empresa));if(c) return c;}
+  return null;
 }
 /* Suscribe los catálogos vivos (planes y cuentas) y devuelve una versión que
    cambia con cada actualización, para que el componente vuelva a pintar. */
@@ -2193,6 +2229,7 @@ function buildSolicitudWs(factura){
     || CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(factura.empresa||"").toLowerCase().trim())
     || lookupPlanForCliente(factura.empresa||factura.cliente||factura.solicitante||"");
   if(!matched) throw new Error("Cliente no identificado: la factura no tiene una empresa del catálogo ni un cliente reconocido.");
+  if(matched.faltanFiscales) throw new Error("Al cliente “"+matched.cliente+"” le falta razón social o RFC. Complétalos en Clientes para generar su solicitud de factura.");
   const cfg = SOLICITUD_FACTURA_CONFIG;
 
   // Estilos base
@@ -7353,7 +7390,7 @@ function Facturas({rol="admin"}){
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   // planOtro es solo de UI (plan fuera de catálogo → texto libre en planOverride); no se guarda.
   const empty={...billingFields({}),mesOp:MESES[new Date().getMonth()],anio:ANIO,plan:"",empresa:"",solicitante:"",servicio:"",subtotal:"",iva:true,status:"Pendiente",notas:"",fechaEmision:fechaLocalISO(),fechaVenc:"",emailCliente:"",planOverride:"",
-    planNumero:"",planOtro:false,rfc:"",cfdiFolio:"",intranetFolio:"",intranetFecha:"",intranetEstatus:"",intranetDirector:"",seguimiento:"",seguimientoFecha:"",cotizacionFolio:"",cotizacionId:"",fechaPago:""};
+    planNumero:"",planOtro:false,rfc:"",cfdiFolio:"",intranetFolio:"",intranetFecha:"",intranetEstatus:"",intranetDirector:"",seguimiento:"",seguimientoFecha:"",cotizacionFolio:"",cotizacionId:"",fechaPago:"",cuentaId:"",clienteNombre:""};
   const [form,setForm]=useState(empty);
   const [etapaF,setEtapaF]=useState("todas");
   const [cotQ,setCotQ]=useState("");
@@ -7379,7 +7416,8 @@ function Facturas({rol="admin"}){
     setForm({...billingFields(f),mesOp:f.mesOp||MESES[0],anio:f.anio||ANIO,plan:f.plan||"",empresa:f.empresa||f.cliente||"",solicitante:f.solicitante||"",servicio:f.servicio||"",subtotal:String(f.subtotal||f.monto||""),iva:f.ivaAmt>0,status:f.status||"Pendiente",notas:f.notas||"",fechaEmision:f.fechaEmision||"",fechaVenc:f.fechaVenc||"",emailCliente:f.emailCliente||"",
       planOverride:f.planOverride||"",planNumero:num||"",planOtro:!num&&!!(f.planOverride||f.plan),_clienteId:f._clienteId||"",rfc,
       cfdiFolio:String(f.cfdiFolio||""),intranetFolio:String(f.intranetFolio||""),intranetFecha:f.intranetFecha||"",intranetEstatus:f.intranetEstatus||"",intranetDirector:f.intranetDirector||"",
-      seguimiento:f.seguimiento||"",seguimientoFecha:f.seguimientoFecha||"",cotizacionFolio:f.cotizacionFolio||f.presupuestoOrigenFolio||"",cotizacionId:f.cotizacionId||f.presupuestoOrigenId||"",fechaPago:f.fechaPago||""});
+      seguimiento:f.seguimiento||"",seguimientoFecha:f.seguimientoFecha||"",cotizacionFolio:f.cotizacionFolio||f.presupuestoOrigenFolio||"",cotizacionId:f.cotizacionId||f.presupuestoOrigenId||"",fechaPago:f.fechaPago||"",
+      cuentaId:clienteRegistradoDeFactura(f)?.id||"",clienteNombre:f.clienteNombre||clienteRegistradoDeFactura(f)?.nombre||""});
     setEditItem(f);setCotQ("");setModal(true);
   };
 
@@ -7391,12 +7429,39 @@ function Facturas({rol="admin"}){
     const prev=planPorNumero(f.planNumero)?.directorIntranet?.nombre||"";
     return (!f.intranetDirector||f.intranetDirector===prev)?(p?.directorIntranet?.nombre||""):f.intranetDirector;
   };
+  // Un dato autollenado se reemplaza al cambiar de cliente; uno escrito a mano se respeta
+  const autoDato=(actual,previo,nuevo)=>(!actual||actual===(previo||""))?(nuevo||""):actual;
   const pickPlan=v=>{
     if(v==="__otro"){setForm(f=>({...f,planOtro:true,plan:f.planNumero?"":f.plan,planNumero:""}));return;}
     if(!v){setForm(f=>({...f,planOtro:false,planNumero:"",plan:"",planOverride:""}));return;}
     const p=planPorNumero(v);if(!p)return;
-    setForm(f=>({...f,sinPlan:false,planOtro:false,planNumero:p.numero,plan:textoPlanCatalogo(p),planOverride:"",empresa:p.empresa,rfc:p.rfc,
-      clienteId:p.clienteId,_clienteId:CLIENTE_PLANES.some(c=>c.id===p.clienteId)?p.clienteId:"",intranetDirector:dirSugerido(f,p)}));
+    setForm(f=>{
+      // El cliente registrado sigue al plan: se conserva si ese plan es suyo; si no, pasa al que lo tiene
+      const act=CLIENTES_REGISTRADOS.find(c=>c.id===f.cuentaId);
+      const cl=act&&act.planes.includes(p.numero)?act:(CLIENTES_REGISTRADOS.find(c=>c.planes.includes(p.numero))||null);
+      return {...f,sinPlan:false,planOtro:false,planNumero:p.numero,plan:textoPlanCatalogo(p),planOverride:"",empresa:p.empresa,rfc:p.rfc,
+        clienteId:p.clienteId,_clienteId:CLIENTE_PLANES.some(c=>c.id===p.clienteId)?p.clienteId:"",intranetDirector:dirSugerido(f,p),
+        cuentaId:cl?cl.id:"",clienteNombre:cl?cl.nombre:"",...(cl&&cl!==act?{solicitante:autoDato(f.solicitante,act?.contacto,cl.contacto),emailCliente:autoDato(f.emailCliente,act?.email,cl.email)}:{})};
+    });
+  };
+  /* Cliente registrado (módulo Clientes) → llena empresa, RFC, contacto y su plan.
+     Con un solo plan se elige solo; con varios se muestran para escoger; sin plan
+     queda como cliente externo (sin plan de intranet). */
+  const elegirCliente=id=>{
+    const cl=CLIENTES_REGISTRADOS.find(c=>c.id===id);
+    if(!cl){setForm(f=>({...f,cuentaId:"",clienteNombre:""}));return;}
+    const cp=CLIENTE_PLANES.find(c=>c.id===cl.cpId);
+    const datos=f=>{const prev=CLIENTES_REGISTRADOS.find(c=>c.id===f.cuentaId);
+      return {cuentaId:cl.id,clienteNombre:cl.nombre,solicitante:autoDato(f.solicitante,prev?.contacto,cl.contacto),emailCliente:autoDato(f.emailCliente,prev?.email,cl.email)};};
+    if(cl.planes.length===1){setForm(f=>({...f,...datos(f)}));pickPlan(cl.planes[0]);return;}
+    if(cl.planes.length>1){
+      setForm(f=>{const sigue=cl.planes.includes(f.planNumero);
+        return {...f,...datos(f),empresa:cl.empresa,rfc:cl.rfc,_clienteId:cp?cp.id:"",sinPlan:false,planOtro:false,planOverride:"",planNumero:sigue?f.planNumero:"",plan:sigue?f.plan:"",
+          intranetDirector:sigue?f.intranetDirector:dirSugerido(f,null)};});
+      return;
+    }
+    if(cp&&cp.plan){aplicarCliente(cp,datos);return;} // plan propio fuera de catálogo (texto libre)
+    setForm(f=>({...f,...datos(f),empresa:cl.empresa||cl.nombre.toUpperCase(),rfc:cl.rfc,_clienteId:cp?cp.id:"",sinPlan:true,planOtro:false,planNumero:"",plan:"",planOverride:"",intranetDirector:dirSugerido(f,null)}));
   };
   // Cliente conocido (CLIENTE_PLANES) → empresa + su plan por defecto, vía catálogo
   const aplicarCliente=(cp,extra)=>setForm(f=>{
@@ -7689,7 +7754,7 @@ function Facturas({rol="admin"}){
                 <td style={{padding:"8px 10px"}}><input type="checkbox" checked={selected.has(f.id)} onChange={()=>toggleSel(f.id)} style={{cursor:"pointer",width:14,height:14}}/></td>
                 <td style={{padding:"8px 10px",fontFamily:MONO,fontSize:10,color:MUTED,whiteSpace:"nowrap"}}>{f.folio||"—"}{f.cfdiFolio&&<div style={{color:TEXT,fontWeight:700,marginTop:1}} title="Folio CFDI">{f.cfdiFolio}</div>}</td>
                 <td style={{padding:"8px 10px",whiteSpace:"nowrap"}}><span style={{background:A+"12",color:A,borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700}}>{f.mesOp||"—"} {String(f.anio||"").slice(-2)}</span></td>
-                <td style={{padding:"8px 10px",fontWeight:700,fontSize:12,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.empresa||f.cliente||""}>{f.empresa||f.cliente||"—"}</td>
+                <td style={{padding:"8px 10px",fontWeight:700,fontSize:12,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={f.empresa||f.cliente||""}>{f.empresa||f.cliente||"—"}{(()=>{const cl=clienteRegistradoDeFactura(f);const n=f.clienteNombre||cl?.nombre;return n?<div style={{fontSize:10,fontWeight:600,color:A,overflow:"hidden",textOverflow:"ellipsis"}} title={"Cliente: "+n}>{n}</div>:null;})()}</td>
                 <td style={{padding:"8px 10px",fontSize:11,color:MUTED,maxWidth:90,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.solicitante||"—"}</td>
                 <td style={{padding:"8px 10px",maxWidth:190}}>{(()=>{
                   const chip={borderRadius:6,padding:"2px 7px",fontSize:10,fontWeight:700,display:"inline-block",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",verticalAlign:"middle"};
@@ -7911,6 +7976,27 @@ function Facturas({rol="admin"}){
               {[ANIO-1,ANIO,ANIO+1].map(y=><option key={y} value={y}>{y}</option>)}
             </select>
           </div>
+          {/* Cliente registrado (módulo Clientes): todo cliente dado de alta aparece aquí al momento */}
+          <div style={{gridColumn:"1/-1"}}>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em",display:"flex",alignItems:"center",gap:6}}><Building2 size={11} color={A}/>Cliente registrado ({CLIENTES_REGISTRADOS.length})</div>
+            <select aria-label="Cliente registrado" value={form.cuentaId||""} onChange={e=>elegirCliente(e.target.value)} style={{width:"100%",background:"#fff",border:"1.5px solid "+(form.cuentaId?A+"70":BD2),borderRadius:9,padding:"10px 12px",fontSize:13.5,fontWeight:form.cuentaId?700:400,cursor:"pointer"}}>
+              <option value="">— Elige el cliente: llena empresa, RFC, contacto y su plan —</option>
+              {CLIENTES_REGISTRADOS.map(cl=><option key={cl.id} value={cl.id}>{cl.nombre}{cl.empresa&&cl.empresa.toUpperCase()!==cl.nombre.toUpperCase()?" · "+cl.empresa.replace(/ S\.?A\.?P?\.?I?\.? DE C\.?V\.?$/i,""):""}{cl.planes.length?" · plan "+cl.planes.join(", "):" · sin plan de intranet"}{cl.faltanFiscales?" · ⚠ falta RFC":""}</option>)}
+            </select>
+            {(()=>{
+              const cl=CLIENTES_REGISTRADOS.find(c=>c.id===form.cuentaId);
+              if(!cl) return <div style={{fontSize:11,color:MUTED,marginTop:5}}>¿No está en la lista? Regístralo en <strong style={{color:TEXT}}>Clientes → Nuevo cliente</strong> y aparece aquí al momento.</div>;
+              return <>
+                {cl.faltanFiscales&&<div style={{fontSize:11.5,color:AMBER,fontWeight:600,marginTop:6}}>A {cl.nombre} le falta razón social o RFC. Puedes registrar la factura, pero para generar su solicitud XLSX complétalos en Clientes.</div>}
+                {cl.planes.length>1&&<div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginTop:7}}>
+                  <span style={{fontSize:10.5,fontWeight:800,color:A,textTransform:"uppercase",letterSpacing:"0.05em"}}>Planes de {cl.nombre}:</span>
+                  {cl.planes.map(n=>{const p=planPorNumero(n);if(!p) return null;const on=!form.planOtro&&form.planNumero===n;
+                    return <button key={n} type="button" onClick={()=>pickPlan(n)} className="btn" style={{padding:"6px 10px",borderRadius:9,border:"1.5px solid "+(on?A:BD2),background:on?A+"14":"#fff",color:on?A:TEXT,fontWeight:on?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}><span style={{fontFamily:MONO,fontWeight:800}}>{n}</span>{p.nombre}</button>;})}
+                  {!form.planNumero&&<span style={{fontSize:11,color:AMBER,fontWeight:600}}>← elige el plan</span>}
+                </div>}
+              </>;
+            })()}
+          </div>
           {/* Planes del grupo por empresa — un clic llena empresa, RFC y director que autoriza */}
           <div style={{gridColumn:"1/-1",background:"#f8fafd",border:"1.5px solid "+BORDER,borderRadius:11,padding:"10px 12px"}}>
             <div style={{fontSize:10,fontWeight:800,color:MUTED,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:6}}><Zap size={11} color={A}/>Plan del grupo (llena empresa, RFC y director de intranet)</div>
@@ -7932,22 +8018,6 @@ function Facturas({rol="admin"}){
                 </div>
               );
             })}
-            {(()=>{
-              // Clientes facturables que no llevan plan de intranet (externos) o cuyo plan no está en el catálogo
-              const otros=CLIENTE_PLANES.filter(cp=>!planPorNumero(normalizarPlan(cp.plan)));
-              if(!otros.length) return null;
-              return(
-                <div style={{display:"flex",gap:8,alignItems:"flex-start",marginTop:8,paddingTop:8,borderTop:"1px dashed "+BD2}}>
-                  <div style={{width:150,flexShrink:0,fontSize:10,fontWeight:800,color:MUTED,paddingTop:7}}>Clientes sin plan de intranet</div>
-                  <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
-                    {otros.map(cp=>{
-                      const active=form._clienteId===cp.id;
-                      return <button key={cp.id} type="button" onClick={()=>aplicarCliente(cp,f=>({solicitante:f.solicitante||cp.contacto||""}))} className="btn" style={{padding:"6px 10px",borderRadius:9,border:"1.5px solid "+(active?cp.color:BD2),background:active?cp.color+"14":"#fff",color:active?cp.color:TEXT,fontWeight:active?800:600,fontSize:11,display:"flex",alignItems:"center",gap:6}}><div style={{width:7,height:7,borderRadius:"50%",background:cp.color}}/>{cp.cliente}</button>;
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
             {form.empresa&&(()=>{
               const matched = (form._clienteId&&CLIENTE_PLANES.find(cp=>cp.id===form._clienteId&&cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim()))
                 || CLIENTE_PLANES.find(cp=>cp.empresa.toLowerCase().trim()===(form.empresa||"").toLowerCase().trim());
@@ -8132,7 +8202,7 @@ function Clientes(){
     const data={...form,rfc,razonSocial:String(form.razonSocial||"").trim().toUpperCase(),aliases:_aliasList(form.aliases)};
     try{
       if(editItem){await updateDoc(doc(db,"cuentas",editItem.id),data);showT("✓ Cliente actualizado");}
-      else{await addDoc(collection(db,"cuentas"),{...data,createdAt:serverTimestamp()});showT("✓ Cliente creado");}
+      else{await addDoc(collection(db,"cuentas"),{...data,createdAt:serverTimestamp()});showT("✓ Cliente creado · ya aparece en Facturación");}
       setModal(false);setForm(emptyForm);setEditItem(null);
     }catch(e){showT(e.message,"err");}
   };
@@ -8179,7 +8249,7 @@ function Clientes(){
   const [pf,setPf]=useState(planVacio);
   const spf=k=>e=>setPf(f=>({...f,[k]:e.target.value}));
   const planes=catalogoPlanes();
-  const empresasCat=[...new Set(CLIENTE_PLANES.filter(c=>c.empresa!=="POR DEFINIR").map(c=>c.empresa))];
+  const empresasCat=[...new Set(CLIENTE_PLANES.filter(c=>c.empresa!=="POR DEFINIR"&&!c.faltanFiscales).map(c=>c.empresa))];
   const abrirPlan=p=>{
     setPlanEdit(p||null);
     setPf(p?{numero:p.numero,nombre:p.nombre,empresa:p.empresa,rfc:p.rfc,clienteId:p.clienteId,dirNombre:p.directorIntranet?.nombre||"",dirId:p.directorIntranet?.id||"",
@@ -8213,7 +8283,7 @@ function Clientes(){
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
       {toast&&<Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)}/>}
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,gap:10,flexWrap:"wrap"}}>
-        <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>{vista==="planes"?"Planes del grupo":"Clientes"}</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>{vista==="planes"?planes.length+" planes · número, empresa que factura y director que autoriza en intranet":items.length+" cuentas · "+CLIENTE_PLANES.filter(c=>c.empresa!=="POR DEFINIR").length+" clientes facturables"}</p></div>
+        <div><h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>{vista==="planes"?"Planes del grupo":"Clientes"}</h1><p style={{color:MUTED,fontSize:13,marginTop:3}}>{vista==="planes"?planes.length+" planes · número, empresa que factura y director que autoriza en intranet":items.length+" clientes · todos disponibles en Facturación · "+CLIENTES_REGISTRADOS.filter(c=>!c.sinCuenta&&c.faltanFiscales).length+" sin datos fiscales completos"}</p></div>
         {vista==="planes"&&<button onClick={()=>abrirPlan(null)} className="btn" style={{display:"flex",alignItems:"center",gap:8,background:"linear-gradient(135deg,"+VIOLET+",#8b5cf6)",color:"#fff",borderRadius:12,padding:"10px 18px",fontFamily:SANS,fontWeight:700,fontSize:14,boxShadow:"0 4px 16px "+VIOLET+"30"}}><Plus size={14}/>Nuevo plan</button>}
         {vista==="clientes"&&<div style={{display:"flex",gap:8}}>
           {faltantes.length>0&&<button onClick={importarBase} className="btn" title="Crea las cuentas que falten con los datos fiscales del catálogo" style={{display:"flex",alignItems:"center",gap:7,background:"#fff",border:"1.5px solid "+BLUE+"40",color:BLUE,borderRadius:12,padding:"10px 16px",fontWeight:700,fontSize:13}}><Download size={13}/>Crear las {faltantes.length} cuentas que faltan</button>}
@@ -8306,7 +8376,7 @@ function Clientes(){
               </td>
               <td style={{padding:"12px 16px",fontSize:12,color:MUTED}}>{c.contacto||"—"}</td>
               <td style={{padding:"12px 16px",fontSize:12,color:MUTED}}>{[c.email,c.tel].filter(Boolean).join(" · ")||"—"}</td>
-              <td style={{padding:"12px 16px"}}>{(()=>{const cp=clienteDeCuenta(c);const rfcMal=c.rfc&&!/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(String(c.rfc).trim().toUpperCase());if(rfcMal) return <span title={"El RFC “"+c.rfc+"” no tiene formato válido; corrígelo para poder facturar"} style={{background:ROSE+"12",color:ROSE,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>RFC inválido</span>;return cp&&cp.empresa!=="POR DEFINIR"?<span title={"Se reconoce como "+cp.cliente+" · "+cp.empresa} style={{background:GREEN+"12",color:GREEN,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Sí</span>:<span title="Captura razón social y RFC para poder emitir su solicitud de factura" style={{background:AMBER+"14",color:AMBER,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Falta RFC</span>;})()}</td>
+              <td style={{padding:"12px 16px"}}>{(()=>{const cp=clienteDeCuenta(c);const rfcMal=c.rfc&&!/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(String(c.rfc).trim().toUpperCase());if(rfcMal) return <span title={"El RFC “"+c.rfc+"” no tiene formato válido; corrígelo para poder facturar"} style={{background:ROSE+"12",color:ROSE,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>RFC inválido</span>;return cp&&cp.empresa!=="POR DEFINIR"&&!cp.faltanFiscales?<span title={"Se reconoce como "+cp.cliente+" · "+cp.empresa} style={{background:GREEN+"12",color:GREEN,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Sí</span>:<span title="Captura razón social y RFC para poder emitir su solicitud de factura" style={{background:AMBER+"14",color:AMBER,borderRadius:6,padding:"2px 8px",fontSize:10.5,fontWeight:700}}>Falta RFC</span>;})()}</td>
               <td style={{padding:"12px 16px"}}>
                 <div style={{display:"flex",gap:6}}>
                   <button onClick={()=>openEdit(c)} className="btn" style={{color:BLUE,padding:"3px 7px",border:"1px solid "+BLUE+"20",borderRadius:6,fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:3}}><Eye size={11}/>Editar</button>
