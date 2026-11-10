@@ -43,8 +43,9 @@ test('operaciones registra servicios con folio consecutivo y evento de creación
 
 test('sin sesión, sesión anónima, perfil inactivo y desconocidos no leen ni registran servicios', async () => {
   for(const c of [env.unauthenticatedContext(), ctx('ops', 'anonymous'), ctx('inactive'), ctx('stranger')]){
-    await assertFails(getDoc(doc(c.firestore(), 'servicios', creado.id)));
-    await assertFails(getDocs(collection(c.firestore(), 'servicios', creado.id, 'eventos')));
+    const db = c.firestore();                      // una sola instancia por contexto
+    await assertFails(getDoc(doc(db, 'servicios', creado.id)));
+    await assertFails(getDocs(collection(db, 'servicios', creado.id, 'eventos')));
   }
   await assertFails(crearServiciosStore(ctx('inactive').firestore()).crear(usuario('inactive', 'operaciones'), datos));
 });
