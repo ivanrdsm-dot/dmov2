@@ -139,6 +139,8 @@ export default function ReportesOperacion({ solicitudesStore, cotizacionesStore,
         </div>
         <span style={etiqueta}>Por cliente</span>
         <Tabla columnas={["Cliente", "Servicios", "Ingreso", "Costo", "Margen", "%"]} filas={r.margen.porCliente.map(c => [c.nombre, c.n, dinero(c.ingreso), dinero(c.costo) || "$0", (c.margen < 0 ? "−" : "") + (dinero(Math.abs(c.margen)) || "$0"), c.margenPct === null ? "—" : c.margenPct + " %"])} vacio="Ningún servicio del periodo tiene precio aprobado y costos capturados."/>
+        <span style={{ ...etiqueta, marginTop: 14 }}>Por unidad (placas)</span>
+        <Tabla columnas={["Unidad", "Servicios", "Ingreso", "Costo", "Margen", "%"]} filas={r.margen.porUnidad.map(c => [c.nombre, c.n, dinero(c.ingreso), dinero(c.costo) || "$0", (c.margen < 0 ? "−" : "") + (dinero(Math.abs(c.margen)) || "$0"), c.margenPct === null ? "—" : c.margenPct + " %"])} vacio="Ningún servicio del periodo tiene precio aprobado y costos capturados."/>
       </Seccion>}
 
       <Seccion titulo="Descargar el detalle del periodo">

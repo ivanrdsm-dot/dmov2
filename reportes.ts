@@ -50,7 +50,8 @@ export interface Reporte {
     montoAprobado: number; sinPrecioAprobado: number; porCliente: { nombre: string; n: number; monto: number }[]; porUnidad: { nombre: string; n: number }[]; porAsignacion: { nombre: string; n: number }[]; };
   /** Solo servicios con precio aprobado Y costos capturados; el resto se cuenta aparte. */
   margen: { medidos: number; sinCostos: number; conPerdida: number; ingreso: number; costo: number; margen: number; margenPct: number | null;
-    porCliente: { nombre: string; n: number; ingreso: number; costo: number; margen: number; margenPct: number | null }[]; };
+    porCliente: { nombre: string; n: number; ingreso: number; costo: number; margen: number; margenPct: number | null }[];
+    porUnidad: { nombre: string; n: number; ingreso: number; costo: number; margen: number; margenPct: number | null }[]; };
   embudo: { etapa: string; n: number }[];
   actividad: { dia: string; solicitudes: number; cotizaciones: number; servicios: number }[];
 }
@@ -103,7 +104,7 @@ export function reporteOperacion(datos: { solicitudes?: Reg[]; cotizaciones?: Re
     }
   }
   let mIng = 0, mCos = 0, medidos = 0, sinCostos = 0, conPerdida = 0;
-  const mCli: Record<string, { n: number; ingreso: number; costo: number }> = {};
+  const mCli: Record<string, { n: number; ingreso: number; costo: number }> = {}, mUni: Record<string, { n: number; ingreso: number; costo: number }> = {};
   for(const s of srv){
     if(s.estado === "Cancelada") continue;
     const m = margenServicio(s);
@@ -113,8 +114,13 @@ export function reporteOperacion(datos: { solicitudes?: Reg[]; cotizaciones?: Re
     mIng += m.precio!; mCos += m.costo!;
     const cli = String(s.empresa ?? "").trim() || "Sin cliente";
     mCli[cli] = { n: (mCli[cli]?.n ?? 0) + 1, ingreso: (mCli[cli]?.ingreso ?? 0) + m.precio!, costo: (mCli[cli]?.costo ?? 0) + m.costo! };
+    const uni = String(s.unidadPlaca ?? "").trim() || (s.asignacionTipo === "Proveedor externo" ? "Proveedor" : "Sin unidad");
+    mUni[uni] = { n: (mUni[uni]?.n ?? 0) + 1, ingreso: (mUni[uni]?.ingreso ?? 0) + m.precio!, costo: (mUni[uni]?.costo ?? 0) + m.costo! };
   }
   const r2 = (x: number) => Math.round(x * 100) / 100, pct1 = (a: number, b: number) => b > 0 ? Math.round(a / b * 1000) / 10 : null;
+  const aFilas = (m: Record<string, { n: number; ingreso: number; costo: number }>) => Object.entries(m)
+    .map(([nombre, v]) => ({ nombre, n: v.n, ingreso: r2(v.ingreso), costo: r2(v.costo), margen: r2(v.ingreso - v.costo), margenPct: pct1(v.ingreso - v.costo, v.ingreso) }))
+    .sort((a, b) => b.margen - a.margen || a.nombre.localeCompare(b.nombre, "es"));
   const conFecha = srv.filter(s => s.estado !== "Cancelada" && Number(s.estadoTs?.Entregada) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(s.fechaServicio ?? ""))).length;
 
   const dias: Record<string, { solicitudes: number; cotizaciones: number; servicios: number }> = {};
@@ -135,8 +141,7 @@ export function reporteOperacion(datos: { solicitudes?: Reg[]; cotizaciones?: Re
       porCliente: Object.entries(clientes).map(([nombre, v]) => ({ nombre, ...v })).sort((a, b) => b.n - a.n || b.monto - a.monto || a.nombre.localeCompare(b.nombre, "es")),
       porUnidad: contar(unidades), porAsignacion: contar(asignaciones) },
     margen: { medidos, sinCostos, conPerdida, ingreso: r2(mIng), costo: r2(mCos), margen: r2(mIng - mCos), margenPct: pct1(mIng - mCos, mIng),
-      porCliente: Object.entries(mCli).map(([nombre, v]) => ({ nombre, n: v.n, ingreso: r2(v.ingreso), costo: r2(v.costo), margen: r2(v.ingreso - v.costo), margenPct: pct1(v.ingreso - v.costo, v.ingreso) }))
-        .sort((a, b) => b.margen - a.margen || a.nombre.localeCompare(b.nombre, "es")) },
+      porCliente: aFilas(mCli), porUnidad: aFilas(mUni) },
     embudo: [{ etapa: "Solicitudes recibidas", n: reales.length }, { etapa: "Cotizaciones emitidas", n: cot.length }, { etapa: "Cotizaciones aceptadas", n: aceptadas },
       { etapa: "Servicios registrados", n: srv.length - (porEstadoS.Cancelada ?? 0) }, { etapa: "Servicios entregados", n: entregados }],
     actividad: Object.entries(dias).map(([dia, v]) => ({ dia, ...v })),

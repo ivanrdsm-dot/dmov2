@@ -75,6 +75,7 @@ describe("reporte con operación", () => {
     const m = reporteOperacion({ servicios: conCostos }, P30, AHORA).margen;
     expect(m).toMatchObject({ medidos: 2, sinCostos: 0, conPerdida: 1, ingreso: 5500, costo: 4600, margen: 900, margenPct: 16.4 });
     expect(m.porCliente).toEqual([{ nombre: "Cliente A", n: 2, ingreso: 5500, costo: 4600, margen: 900, margenPct: 16.4 }]);
+    expect(m.porUnidad).toEqual([{ nombre: "AAA-1", n: 2, ingreso: 5500, costo: 4600, margen: 900, margenPct: 16.4 }]);
     expect(reporteOperacion({ servicios }, P30, AHORA).margen).toMatchObject({ medidos: 0, sinCostos: 2, margenPct: null });
     expect(csvServicios(conCostos, P30, { conMargen: true }).split("\r\n")[1]).toContain(",2100,1400,40");
     expect(csvServicios(conCostos, P30)).not.toContain("Margen");
