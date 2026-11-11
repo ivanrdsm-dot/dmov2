@@ -44,6 +44,16 @@ export function datosCotizacionCliente(c: Cotizacion, o: OpcionesPdf): Cotizacio
   ].filter(Boolean).join(" · ");
 
   const considera: string[] = [], porConfirmar: string[] = [];
+  /* Cotización hecha "por destino": quien cotizó eligió unidad y condiciones; se describen tal cual. */
+  if(e.fuente === "pro"){
+    const servicioPro = e.modo === "masivo" ? `Distribución a puntos de venta${unidad ? ` · ${unidad}` : ""}` : servicio;
+    if(unidad) considera.push(`Unidad: ${unidad}.`);
+    for(const x of (Array.isArray(e.considera) ? e.considera : [])) if(String(x).trim()) considera.push(String(x).trim());
+    const vigP = Math.floor(num(o.vigenciaDias)), precioP = cent(num(c.precioAprobado)), ivaP = cent(precioP * IVA_PCT / 100);
+    return { folio: t(c.folio), fecha: fechaMx(o.ahoraMs), vigenteHasta: vigP > 0 ? fechaMx(o.ahoraMs + vigP * 86400000) : "",
+      cliente: t(c.empresa), atencion: t(c.solicitante), contacto: t(c.contacto), servicio: servicioPro, carga: "", considera, porConfirmar,
+      precio: precioP, iva: ivaP, total: cent(precioP + ivaP), ivaPct: IVA_PCT, nota: t(o.nota).slice(0, 800), atendio: t(o.atendio) };
+  }
   if(unidad) considera.push(`Unidad: ${unidad}.`);
   if(carga) considera.push(`Carga: ${carga}.`);
   considera.push(entregas > 1 ? `${entregas} puntos de entrega.` : "Un punto de entrega.");

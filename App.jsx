@@ -34,6 +34,8 @@ import { crearDespachoStore } from "./despachoStore.js";
 const DespachoVista = lazy(()=>import("./Despacho.jsx"));
 import { crearTarifarioStore } from "./tarifarioStore.js";
 import { tablasPro, puntoAdicionalSugerido, reglasPro, descuentoPorPuntos } from "./tarifarioPro.ts";
+import { redondearDecenasArriba } from "./tarifario.ts";
+import { cotizarDistribucion } from "./distribucion.ts";
 const TarifarioVista = lazy(()=>import("./Tarifario.jsx"));
 const CotizadorAutoVista = lazy(()=>import("./CotizadorAuto.jsx"));
 import { crearCotizacionesStore } from "./cotizacionesStore.js";
@@ -631,6 +633,8 @@ const sugerirPunto = (veh,km)=>puntoAdicionalSugerido({entregaAdicionalLocal:ENT
 /* Descuento por volumen de puntos: sus tres valores se editan en Tarifario → Reglas del cotizador. */
 const descPuntos = n => descuentoPorPuntos(REGLAS,n);
 const pctUrgente = () => (REGLAS.urgente_pct||0)/100;
+/* Precio vigente de una ciudad en el tarifario (no el que se copió al agregarla ni el de una plantilla vieja). */
+const tarifaViva = (c,veh) => { const t=TAR.find(x=>normTxt(x.c)===normTxt(c?.c)); return Number(t?.[veh])||0; };
 /* Valor inicial tomado de una regla del tarifario; si el usuario lo edita en la cotización, se respeta. */
 function useValorRegla(clave,cargado){
   const [v,setV]=useState(REGLAS[clave]??0);
@@ -763,11 +767,12 @@ const CIUDAD_ESTADO = {
 const ESTADOS_LIST = ["(Todos)",...[...new Set(Object.values(CIUDAD_ESTADO))].sort()];
 
 const VEHK = [
-  {k:"eur",label:"Transporter 1T", cap:"8 m³", crew:1,icon:"🚐",alias:"Eurovan / Transporter"},
-  {k:"kra",label:"Sprinter 1.5T",  cap:"14 m³",crew:1,icon:"🚐",alias:"Krafter / Sprinter"},
-  {k:"cam",label:"Camión 3.5T",    cap:"16 m³",crew:1,icon:"🚛",alias:"Camioneta 3½ ton"},
-  {k:"rab",label:"Rabón",          cap:"40 m³",crew:2,icon:"🚚",alias:"Camión rabón"},
-  {k:"mud",label:"Mudancero",      cap:"70 m³",crew:2,icon:"🚛",alias:"Camión mudancero"},
+  /* Mismos nombres que el Tarifario; capacidades de referencia de tiposUnidad.ts. */
+  {k:"eur",label:"Eurovan (1 t)",      cap:"5.8 m³", crew:1,icon:"🚐",alias:"Eurovan / Transporter"},
+  {k:"kra",label:"Sprinter / Crafter", cap:"9–10 m³",crew:1,icon:"🚐",alias:"Sprinter / Crafter / Krafter"},
+  {k:"cam",label:"Camión 3.5 t",       cap:"16 m³",  crew:1,icon:"🚛",alias:"Camioneta 3½ ton"},
+  {k:"rab",label:"Rabón",              cap:"40 m³",  crew:2,icon:"🚚",alias:"Camión rabón"},
+  {k:"mud",label:"Mudancero",          cap:"70 m³",  crew:2,icon:"🚛",alias:"Camión mudancero"},
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3162,9 +3167,9 @@ const MENU=[
   {section:"Trabajo",items:[
     {label:"Pedidos",icon:Bell,tabs:[{id:"solicitudes",label:"Pedidos que llegan",ff:true}]},
     {label:"Cotizar",icon:DollarSign,tabs:[
-      {id:"cotizadorAuto",label:"Cotizar",ff:true},
-      {id:"cotizaciones",label:"Mis cotizaciones",ff:true},
+      {id:"cotizadorAuto",label:"Por carga",ff:true},
       {id:"cotizador",label:"Por destino",adminOnly:true},
+      {id:"cotizaciones",label:"Mis cotizaciones",ff:true},
       {id:"presupuestos",label:"Presupuestos",adminOnly:true}]},
     {label:"Servicios",icon:ClipboardList,tabs:[
       {id:"servicios",label:"Servicios",ff:true},
@@ -4413,7 +4418,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
 function S({children}){return <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:20,boxShadow:"0 1px 4px rgba(12,24,41,.04)"}}>{children}</div>;}
 function SH({children}){return <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:13}}>{children}</div>;}
 
-function Cotizador({onSaved}){
+function Cotizador({onSaved,usuario}){
   const tarPro=useTarifarioPro();   // precios en vivo del módulo Tarifario
   // ── shared
   const [modo,setModo]=useState("local");
@@ -4506,7 +4511,7 @@ function Cotizador({onSaved}){
   /* Por ciudad: tarifa base (1er punto incluido) + puntos adicionales con
      descuento por volumen (cada 20 puntos −5%, tope 20%). Precio editable. */
   const fCityRows=fCiudades.map(c=>{
-    const base=c[fVeh]||0;
+    const base=tarifaViva(c,fVeh);
     const nPts=Math.max(1,c.puntos||1);
     const nAd=nPts-1;
     const pp=c.pp!=null?c.pp:sugerirPunto(fVeh,c.km);
@@ -4547,19 +4552,22 @@ function Cotizador({onSaved}){
   const lSub=lBase+lXP+lXR;const lIva=lSub*.16;const lTot=lSub+lIva;
 
   // ── CALC MASIVO
-  const mTotPDV=mCiudades.reduce((a,c)=>a+c.pdv,0);
-  const mTotVans=mCiudades.reduce((a,c)=>a+c.vans,0);
+  /* Distribución: por camioneta y por día de trabajo (distribucion.ts). */
+  const mDist=cotizarDistribucion(mCiudades.map(c=>({c:c.c,km:c.km,tarifa:tarifaViva(c,mVeh),pdv:c.pdv,dias:c.dias})),
+    {maxPorDia:mMaxDia,precioDiaExtra:LOC[mVeh]?.renta_chofer??null,personasPorVan:mPersonas+(mAyud?1:0),comida:mComida,hotel:mHotel,urgentePct:mUrg?(REGLAS.urgente_pct||0):0});
+  const mRenglon=Object.fromEntries(mDist.renglones.map((r,i)=>[mCiudades[i].id,r]));
+  const mTotPDV=mDist.pdv;
+  const mTotVans=mDist.vans;
   const mPersonasT=mTotVans*(mPersonas+(mAyud?1:0));
-  const mBaseTotal=mCiudades.reduce((a,c)=>a+(c.tarifa||0)*c.vans,0);
-  const mXU=mUrg?mBaseTotal*pctUrgente():0;
-  const mMaxKm=mCiudades.length>0?Math.max(...mCiudades.map(c=>c.km)):0;
-  const {xC:mXC,xH:mXH,total:mXV}=useMemo(()=>mMaxKm>0?calcViaticos(mMaxKm,mPersonasT,mComida,mHotel,mTotVans):{xC:0,xH:0,total:0},[mMaxKm,mPersonasT,mComida,mHotel,mTotVans]);
-  const mSub=mBaseTotal+mXU+mXV;const mIva=mSub*.16;const mTot=mSub+mIva;
+  const mBaseTotal=mDist.transporte;
+  const mXU=mDist.urgente;
+  const mXC=mDist.comida, mXH=mDist.hotel, mXV=mXC+mXH;
+  const mSub=mDist.subtotal;const mIva=mSub*.16;const mTot=mSub+mIva;
 
   const total=modo==="foraneo"?fTot:modo==="local"?lTot:mTot;
   /* No se guarda una cotización con algo en $0 o sin tarifa: saldría al cliente un precio incompleto. */
-  const sinPrecio=modo==="foraneo"?(fCiudades.length===0?"Agrega al menos un destino":fCiudades.some(c=>!(c[fVeh]>0))?"Hay destinos sin tarifa para esta unidad":"")
-    :modo==="masivo"?(mCiudades.length===0?"Agrega al menos una ciudad":mCiudades.some(c=>!(c.tarifa>0))?"Hay ciudades sin tarifa para esta unidad":"")
+  const sinPrecio=modo==="foraneo"?(fCiudades.length===0?"Agrega al menos un destino":fCiudades.some(c=>!(tarifaViva(c,fVeh)>0))?"Hay destinos sin tarifa para esta unidad":"")
+    :modo==="masivo"?(mCiudades.length===0?"Agrega al menos una ciudad":mDist.faltantes[0]||"")
     :(!(lBase>0)?"Esta unidad no tiene tarifa local":"");
   const canSave=!sinPrecio&&total>0;
 
@@ -4597,7 +4605,8 @@ function Cotizador({onSaved}){
       totalPDV:mTotPDV,flota:{vans:mTotVans,dias:Math.max(...mCiudades.map(c=>c.dias),1),capDia:mTotVans*mMaxDia},
       stops:[{city:"CDMX"},...mCiudades.map(c=>({city:c.c,pdv:c.pdv}))],
       lines:[
-        ...mCiudades.map(c=>({label:"📍 "+c.c+" · "+c.pdv+" PDVs · "+c.vans+" van(s)",value:fmt((c.tarifa||0)*c.vans)})),
+        ...mCiudades.flatMap(c=>{const r=mRenglon[c.id]||{};return[{label:"📍 "+c.c+" · "+c.pdv+" PDVs · "+r.vans+" camioneta(s) · día 1",value:fmt(r.flete)},
+          r.diasExtra>0?{label:"   ↳ "+r.diasExtra+" día(s) extra × "+r.vans+" camioneta(s) × "+fmt(LOC[mVeh]?.renta_chofer||0),value:"+"+fmt(r.montoDiasExtra),color:BLUE}:null].filter(Boolean);}),
         mUrg&&{label:"⚡ Urgente +"+(REGLAS.urgente_pct||0)+"%",value:"+"+fmt(mXU),color:ROSE},
         mXC>0&&{label:"🍽️ Comidas personal",value:"+"+fmt(mXC),color:AMBER},
         mXH>0&&{label:"🏨 Hotel personal",value:"+"+fmt(mXH),color:BLUE},
@@ -4605,64 +4614,43 @@ function Cotizador({onSaved}){
         {label:"TOTAL CON IVA",value:fmt(mTot),bold:true,color:A},
       ].filter(Boolean)};
   };
+  /* Guardar = cotización con folio COT-AAAA-NNNN en la misma bandeja que el cotizador
+     por carga ("Mis cotizaciones"): un solo tipo de folio, el precio lo aprueba un admin
+     y el PDF para el cliente sale de ahí con un solo importe (sin desglose interno). */
+  const [guardando,setGuardando]=useState(false);
   const guardar=async()=>{
-    if(!cliente.trim()){showT("El nombre del cliente es requerido","err");return;}
+    if(!cliente.trim()){showT("Escribe el nombre del cliente","err");return;}
     if(!canSave){showT(sinPrecio||"El total está en $0","err");return;}
+    if(!usuario?.uid){showT("No se encontró tu sesión: vuelve a entrar","err");return;}
+    setGuardando(true);
     try{
       const q=buildQ();
-      const vencimiento = fechaLocalISO(new Date(Date.now()+15*86400000));
-      const cotRef = await addDoc(collection(db,"cotizaciones"),{
-        ...q,
-        recurrente: !!recurrente,
-        recurrenciaFrec: recurrente?recurrenciaFrec:"",
-        vigenciaHasta: vencimiento,
-        status: "Pendiente",
-        createdAt:serverTimestamp(),
+      const sub=modo==="foraneo"?fSub:modo==="local"?lSub:mSub;
+      const veh=modo==="foraneo"?fVeh:modo==="local"?lVeh:mVeh;
+      const vehL=VEHK.find(v=>v.k===veh)?.label||"";
+      const r2=n=>Math.round(n*100)/100;
+      const precio=redondearDecenasArriba(sub);
+      const monto=v=>Number(String(v??"").replace(/[^0-9.\-]/g,""))||0;
+      const conceptos=(q.lines||[]).filter(l=>l&&!/^(Subtotal|IVA|TOTAL|Total tarifas)/.test(l.label)&&monto(l.value)>0)
+        .map(l=>({concepto:String(l.label).replace(/^[^\wÁÉÍÓÚáéíóúÑñ]+/,"").trim(),detalle:"",monto:monto(l.value)}));
+      const plural=(n,a,b)=>n+" "+(n===1?a:b);
+      const considera=modo==="local"?[plural(Math.max(1,lNumPuntos),"punto de entrega","puntos de entrega")+".",lUrg&&"Servicio urgente.",lAyud&&"Con un ayudante para cargar y descargar.",lRes&&"Resguardo de la mercancía por un día."]
+        :modo==="foraneo"?["Destinos: "+fCityRows.map(c=>c.c+" ("+plural(c.nPts,"punto","puntos")+")").join(", ")+".","Casetas incluidas.",fUrg&&"Servicio urgente.",fMani&&"Maniobra con "+plural(fNumAyud,"ayudante","ayudantes")+".",fRes&&"Resguardo de la mercancía por un día.",(fXC+fXH)>0&&"Incluye viáticos del personal ("+plural(fDias,"día","días")+" de ruta)."]
+        :["Distribución a "+plural(mTotPDV,"punto de venta","puntos de venta")+" en "+plural(mCiudades.length,"ciudad","ciudades")+", con "+plural(mTotVans,"camioneta","camionetas")+".",...mCiudades.map(c=>c.c+": "+plural(c.pdv,"punto","puntos")+" en "+plural(c.dias,"día","días")+"."),mUrg&&"Servicio urgente.",mAyud&&"Con ayudante en cada camioneta.",(mXC+mXH)>0&&"Incluye viáticos del personal."];
+      const r=await crearCotizacionesStore(db).crear(usuario,{
+        empresa:cliente.trim(), solicitante:contacto.trim(), contacto:"", notas,
+        entrada:{fuente:"pro",modo,tipoRuta:modo==="local"?"local":"nacional",destino:modo==="local"?"":q.destino,
+          entregas:modo==="local"?Math.max(1,lNumPuntos):modo==="foraneo"?fTotPuntos:mTotPDV,diasResguardo:(modo==="local"?lRes:modo==="foraneo"?fRes:false)?1:0,
+          considera:considera.filter(Boolean),plazo},
+        resultado:{unidadClave:veh,unidadNombre:vehL,unidades:modo==="masivo"?mTotVans:1,conProveedor:false,tarimas:null,pesoKg:null,volumenM3:null,
+          maniobra:(modo==="local"?lAyud:modo==="foraneo"?fMani:mAyud)?true:false,ayudantes:modo==="foraneo"?(fMani?fNumAyud:0):((modo==="local"?lAyud:mAyud)?1:0),
+          motivoUnidad:"Unidad elegida en Cotizar por destino.",conceptos,subtotalBase:r2(sub),gananciaPct:0,precio,iva:r2(precio*.16),total:r2(precio*1.16),
+          supuestos:[],pendientes:[],lista:true},
       });
-      showT("✓ Cotización guardada — "+q.folio+(recurrente?" (recurrente "+recurrenciaFrec+")":""));
-      // F4: cerrar el silo — la cotización puede fluir a presupuesto en un clic.
-      // El presupuesto ya fluye a factura (toFactura), completando COT→PRE→FAC.
-      if(confirm("¿Crear PRESUPUESTO desde esta cotización?\n\nSe genera con folio PRE- ligado a "+q.folio+" y podrás convertirlo a factura desde el módulo Presupuestos.")){
-        const sub = Math.round((q.total/1.16)*100)/100;
-        const ivaAmt = Math.round((q.total-sub)*100)/100;
-        await addDoc(collection(db,"presupuestos"),{
-          folio:"PRE-"+uid(),
-          cliente:q.cliente, contacto:q.contacto||"",
-          fecha:fechaLocalISO(),
-          vigencia:vencimiento,
-          conceptos:[{desc:(q.modoLabel||"Servicio logístico")+" — "+(q.destino||"")+(q.vehiculoLabel?" · "+q.vehiculoLabel:""),cant:1,precio:sub}],
-          subtotal:sub, ivaAmt, total:q.total, iva:true,
-          status:"Borrador",
-          notas:"Generado desde cotización "+q.folio,
-          cotizacionOrigenId:cotRef.id, cotizacionOrigenFolio:q.folio,
-          rutaOrigenId:null,
-          createdAt:serverTimestamp(),
-        });
-        showT("✓ Presupuesto creado desde "+q.folio);
-      }
-      // F4: cotización → ruta operativa (borrador sin chofer). Los stops de la
-      // cotización tienen la forma correcta; los puntos exactos se agregan al
-      // asignar la operación. buildRutaGeofence tolera puntos vacíos (null).
-      if((q.stops||[]).length>0 && confirm("¿Crear también una RUTA en el planificador desde esta cotización?\n\nQueda como Programada sin chofer — la asignas desde Planificador de Rutas.")){
-        const stops=(q.stops||[]).map((s,i)=>({city:s.city||"",pdv:s.pdv||0,km:0,addr:s.city||"",isOrigin:i===0,puntos:[]}));
-        await addDoc(collection(db,"rutas"),{
-          nombre:"Ruta "+q.folio+" · "+(q.destino||q.cliente),
-          cliente:q.cliente, clienteTel:"", clienteEmail:"",
-          trackingId:genTrackingId(),
-          veh:"", vehiculoLabel:q.vehiculoLabel||"",
-          stops, totalPDV:q.totalPDV||0, totalKm:q.km||0,
-          vans:1, diasOp:1, capDia:0, crew:1, xViat:0, tarifaT:0,
-          sub:Math.round((q.total/1.16)*100)/100, iva:q.total-Math.round((q.total/1.16)*100)/100, total:q.total,
-          plazo:q.plazo||"", maxDia:0, mapURL:"",
-          status:"Programada", progreso:0,
-          choferId:"", choferNombre:"", choferTel:"", choferPlaca:"",
-          cotizacionOrigenId:cotRef.id, cotizacionOrigenFolio:q.folio,
-          createdAt:serverTimestamp(),
-        });
-        showT("✓ Ruta creada desde "+q.folio+" — asigna chofer en Planificador");
-      }
-      onSaved&&onSaved();
-    }catch(e){showT(e.message,"err");}
+      showT("✓ Cotización "+r.folio+" guardada: "+fmt(precio)+" + IVA. Apruébala en Mis cotizaciones para mandar el PDF.");
+      onSaved&&onSaved(r);
+    }catch(e){showT("No se pudo guardar: "+e.message,"err");}
+    finally{setGuardando(false);}
   };
 
   // Guardar config actual como plantilla
@@ -4738,8 +4726,8 @@ function Cotizador({onSaved}){
     }else if(modo==="foraneo"&&fCiudades.length>0){
       return VEHK.map(v=>{
         const k = v.k;
-        if(fCiudades.some(c=>!(c[k]>0))) return null;     // alguna ciudad sin tarifa para esa unidad
-        const baseTotal = fCiudades.reduce((a,c)=>a+(c[k]||0),0);
+        if(fCiudades.some(c=>!(tarifaViva(c,k)>0))) return null;     // alguna ciudad sin tarifa para esa unidad
+        const baseTotal = fCiudades.reduce((a,c)=>a+tarifaViva(c,k),0);
         const ptsTotal = fCiudades.reduce((a,c)=>{
           const nPts=Math.max(1,c.puntos||1);
           const pp=c.pp!=null?c.pp:sugerirPunto(k,c.km);
@@ -5103,7 +5091,7 @@ function Cotizador({onSaved}){
                 <Tog checked={mUrg} onChange={setMUrg} label={"⚡ Urgente +"+(REGLAS.urgente_pct||0)+"%"} color={ROSE}/>
               </div>
               {mCiudades.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                <InfoBox icon={Truck} color={A} title="Vans totales" value={mTotVans} sub={mCiudades.length+" ciudades"}/>
+                <InfoBox icon={Truck} color={A} title="Camionetas" value={mTotVans} sub={mCiudades.length+" ciudades"}/>
                 <InfoBox icon={Package} color={BLUE} title="PDVs totales" value={mTotPDV.toLocaleString()}/>
                 <InfoBox icon={Users} color={VIOLET} title="Personal total" value={mPersonasT}/>
               </div>}
@@ -5114,15 +5102,15 @@ function Cotizador({onSaved}){
                 <SH>Ciudades de distribución *</SH>
                 {mCiudades.length>0&&<div style={{display:"flex",gap:6}}>
                   <Tag color={A}>{mTotPDV.toLocaleString()} PDVs</Tag>
-                  <Tag color={VIOLET}>{mTotVans} vans</Tag>
+                  <Tag color={VIOLET}>{mTotVans} camionetas</Tag>
                 </div>}
               </div>
               {mCiudades.map((c,ci)=>(
                 <div key={c.id} style={{border:"1.5px solid "+A+"22",borderRadius:12,marginBottom:12,overflow:"hidden"}}>
                   <div style={{display:"flex",alignItems:"center",gap:9,padding:"11px 14px",background:A+"06",borderBottom:"1px solid "+A+"15"}}>
                     <div style={{width:22,height:22,borderRadius:"50%",background:A,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:800,color:"#fff",flexShrink:0}}>{ci+1}</div>
-                    <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13}}>{c.c}</div><div style={{fontFamily:MONO,fontSize:10,color:MUTED}}>{c.km.toLocaleString()} km · tarifa: {fmt(c.tarifa||0)}/van</div></div>
-                    <Tag color={VIOLET}>{c.vans} van(s)</Tag>
+                    <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13}}>{c.c}</div><div style={{fontFamily:MONO,fontSize:10,color:MUTED}}>{c.km.toLocaleString()} km · día 1: {tarifaViva(c,mVeh)?fmt(tarifaViva(c,mVeh)):"sin tarifa"} por camioneta{(mRenglon[c.id]?.diasExtra||0)>0?" · día extra: "+(LOC[mVeh]?.renta_chofer?fmt(LOC[mVeh].renta_chofer):"sin tarifa"):""}</div></div>
+                    <Tag color={VIOLET}>{mRenglon[c.id]?.vans??c.vans} camioneta(s) · {fmt(mRenglon[c.id]?.subtotal||0)}</Tag>
                     <button onClick={()=>rmMCiudad(c.id)} className="btn" style={{width:22,height:22,borderRadius:"50%",border:"1px solid "+ROSE+"28",background:ROSE+"08",display:"flex",alignItems:"center",justifyContent:"center",color:ROSE}}><X size={10}/></button>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,padding:"12px 14px",borderBottom:"1px solid "+BORDER}}>
@@ -5138,8 +5126,8 @@ function Cotizador({onSaved}){
                         style={{width:"100%",background:"#fff",border:"1.5px solid "+BLUE+"40",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:700,color:BLUE}}/>
                     </div>
                     <div>
-                      <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>Vans necesarias</div>
-                      <div style={{background:"#fff",border:"1.5px solid "+VIOLET+"30",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:800,color:VIOLET,textAlign:"center"}}>{c.vans}</div>
+                      <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>Camionetas necesarias</div>
+                      <div style={{background:"#fff",border:"1.5px solid "+VIOLET+"30",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:800,color:VIOLET,textAlign:"center"}}>{mRenglon[c.id]?.vans??c.vans}</div>
                     </div>
                   </div>
                   <div style={{padding:"11px 14px"}}>
@@ -5308,13 +5296,11 @@ function Cotizador({onSaved}){
               <option value="trimestral">📅 Trimestral</option>
             </select>}
           </div>
-          <button onClick={guardar} disabled={!canSave||!cliente.trim()} className="btn" style={{background:canSave&&cliente.trim()?"linear-gradient(135deg,"+A+",#fb923c)":"#e0e0e0",color:canSave&&cliente.trim()?"#fff":"#aaa",borderRadius:13,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:canSave&&cliente.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSave&&cliente.trim()?"0 6px 20px "+A+"40":"none"}}>
+          <button onClick={guardar} disabled={guardando||!canSave||!cliente.trim()} className="btn" style={{background:canSave&&cliente.trim()?"linear-gradient(135deg,"+A+",#fb923c)":"#e0e0e0",color:canSave&&cliente.trim()?"#fff":"#aaa",borderRadius:13,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:canSave&&cliente.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSave&&cliente.trim()?"0 6px 20px "+A+"40":"none"}}>
             <Send size={15}/>Guardar cotización{recurrente?" (recurrente)":""}
           </button>
           {(!canSave||!cliente.trim())&&<div style={{fontSize:11,color:AMBER,fontWeight:700,textAlign:"center",marginTop:-4}}>{!canSave?(sinPrecio||"El total está en $0"):"Escribe el cliente para guardar"}</div>}
-          <button onClick={()=>downloadCotizacionPDF(buildQ())} className="btn" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,padding:"11px 0",border:"1.5px solid "+BLUE+"30",borderRadius:13,fontSize:13,fontWeight:700,color:BLUE,background:"#fff"}}>
-            <Download size={14}/>Descargar PDF
-          </button>
+          <div style={{fontSize:11,color:MUTED,textAlign:"center",lineHeight:1.4}}>El PDF para el cliente sale en <b>Mis cotizaciones</b>, cuando apruebes el precio. Lleva un solo importe, sin desglose.</div>
         </div>
       </div>
       {/* Modal de plantillas */}
@@ -5466,7 +5452,7 @@ function ImportRutasModal({onClose,choferes,showT}){
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
           <Inp label="Cliente global (opcional)" value={clienteGlobal} onChange={e=>setClienteGlobal(e.target.value)} placeholder="Si el CSV no trae columna cliente"/>
-          <Sel label="Tipo de vehículo" value={vehGlobal} onChange={e=>setVehGlobal(e.target.value)} options={[{v:"eur",l:"Eurovan"},{v:"cam",l:"Camioneta 3.5T"},{v:"kra",l:"Krafter"}]}/>
+          <Sel label="Tipo de vehículo" value={vehGlobal} onChange={e=>setVehGlobal(e.target.value)} options={[{v:"eur",l:"Eurovan (1 t)"},{v:"kra",l:"Sprinter / Crafter"},{v:"cam",l:"Camión 3.5 t"}]}/>
         </div>
         <div>
           <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.06em"}}>Asignar chofer a todas las rutas</div>
@@ -11043,7 +11029,7 @@ function Choferes(){
           <Inp label="Licencia de conducir" value={form.licencia} onChange={e=>setForm({...form,licencia:e.target.value})} placeholder="Tipo B · Folio …"/>
           <Inp label="Licencia vence" type="date" value={form.licenciaVence||""} onChange={e=>setForm({...form,licenciaVence:e.target.value})}/>
           <Inp label="Placa asignada" value={form.placa} onChange={e=>setForm({...form,placa:e.target.value})} placeholder="ABC-123-D"/>
-          <Sel label="Vehículo" value={form.vehiculo} onChange={e=>setForm({...form,vehiculo:e.target.value})} options={[{v:"eur",l:"Eurovan"},{v:"cam",l:"Camioneta 3.5T"},{v:"kra",l:"Krafter"}]}/>
+          <Sel label="Vehículo" value={form.vehiculo} onChange={e=>setForm({...form,vehiculo:e.target.value})} options={[{v:"eur",l:"Eurovan (1 t)"},{v:"kra",l:"Sprinter / Crafter"},{v:"cam",l:"Camión 3.5 t"}]}/>
           <Inp label="Contacto de emergencia" value={form.emergencia} onChange={e=>setForm({...form,emergencia:e.target.value})} placeholder="Nombre del contacto"/>
           <Inp label="Tel. emergencia" value={form.emergenciaTel} onChange={e=>setForm({...form,emergenciaTel:e.target.value})} placeholder="55…"/>
           <Sel label="Estado" value={form.status} onChange={e=>setForm({...form,status:e.target.value})} options={statuses}/>
@@ -15025,7 +15011,7 @@ export default function App(){
     dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     ejecutivo:isAdmin?<DashboardEjecutivo facts={facts} viat={viatCombo} gastosCh={gastosCh} rutas={rutas} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     finanzas:isAdmin?<PortalFinanciero facts={facts} viat={viatCombo} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    cotizador:isAdmin?<Cotizador usuario={usuarioDe(authUser,userProfile)} onSaved={()=>setView(FF_SERVICIOS?"cotizaciones":"cotizador")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     ...(FF_SERVICIOS?{solicitudes:<SolicitudesModulo authUser={authUser} userProfile={userProfile} onCrearServicio={x=>{setCotizacionAServicio(null);setSolicitudAServicio(x);setView("servicios");}} onCotizar={x=>{setSolicitudACotizar(x);setView("cotizadorAuto");}}/>,

@@ -13,7 +13,7 @@
     "catalogos.ts",
     "costos.ts", "cotizacionAuto.ts", "cotizaciones.ts", "cotizacionCliente.ts", "reportes.ts",
     "despacho.ts",
-    "dimensionamiento.ts",
+    "distribucion.ts", "dimensionamiento.ts",
     "domain.ts",
     "hojaEntrega.ts",
     "servicios.ts",
