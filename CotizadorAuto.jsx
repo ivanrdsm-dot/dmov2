@@ -82,7 +82,7 @@ export default function CotizadorAuto({ tarifarioStore, serviciosStore, cotizaci
                 <Campo label="Ancho de la caja (cm)" inputMode="decimal" value={f.cajaAnchoCm} onChange={s("cajaAnchoCm")}/>
                 <Campo label="Alto de la caja (cm)" inputMode="decimal" value={f.cajaAltoCm} onChange={s("cajaAltoCm")}/>
                 <Campo label="Peso por caja (kg)" inputMode="decimal" value={f.cajaPesoKg} onChange={s("cajaPesoKg")}/>
-                <Campo label="Estiba máxima de la caja (niveles)" inputMode="numeric" value={f.maxNivelesCaja} onChange={s("maxNivelesCaja")} placeholder="Si viene impresa"/>
+                <Campo label="¿Cuántas cajas aguantan una encima de otra?" inputMode="numeric" value={f.maxNivelesCaja} onChange={s("maxNivelesCaja")} placeholder="Viene impreso en la caja"/>
                 <Campo label="¿Viaja en tarimas?" opciones={TRI} value={f.entarimada} onChange={s("entarimada")}/></>}
               {f.modo === "Tarimas" && <>
                 <Campo label="Número de tarimas" inputMode="numeric" value={f.tarimas} onChange={s("tarimas")}/>
@@ -91,20 +91,20 @@ export default function CotizadorAuto({ tarifarioStore, serviciosStore, cotizaci
               {f.modo === "Solo peso y volumen" && <>
                 <Campo label="Peso total (kg)" inputMode="decimal" value={f.pesoKg} onChange={s("pesoKg")}/>
                 <Campo label="Volumen total (m³)" inputMode="decimal" value={f.volumenM3} onChange={s("volumenM3")}/></>}
-              <Campo label="¿Se puede apilar una tarima sobre otra?" opciones={TRI} value={f.apilable} onChange={s("apilable")}/>
+              {f.modo !== "Solo peso y volumen" && <Campo label="¿Se puede poner una tarima encima de otra?" opciones={TRI} value={f.apilable} onChange={s("apilable")}/>}
             </div>
             <Marca checked={f.fragil} onChange={v => setF(x => ({ ...x, fragil: v }))}>Mercancía frágil</Marca>
             <Marca checked={f.voluminosa} onChange={v => setF(x => ({ ...x, voluminosa: v }))}>Piezas voluminosas: muebles, exhibidores armados</Marca>
           </Seccion>
-          <Seccion titulo="Carga y descarga">
+          <Seccion titulo="Al cargar y al entregar">
             <div style={rejilla}>
               <Campo label="¿Hay andén o montacargas en el origen?" opciones={TRI} value={f.origenAnden} onChange={s("origenAnden")}/>
               <Campo label="¿Hay andén o montacargas en el destino?" opciones={TRI} value={f.destinoAnden} onChange={s("destinoAnden")}/>
             </div>
             <Marca checked={f.pisoAlto} onChange={v => setF(x => ({ ...x, pisoAlto: v }))}>Se entrega en piso alto o por escaleras</Marca>
           </Seccion>
-          <Seccion titulo="Ganancia">
-            <Campo label="Ganancia a agregar (%)" inputMode="decimal" value={f.gananciaPct} onChange={s("gananciaPct")} placeholder="0 = precio base"/>
+          <Seccion titulo="Tu ganancia">
+            <Campo label="¿Cuánto quieres ganar encima del precio? (%)" inputMode="decimal" value={f.gananciaPct} onChange={s("gananciaPct")} placeholder="Vacío = precio de la lista"/>
           </Seccion>
           <button onClick={() => setF(VACIO)} style={boton(MUTED, false)}>Limpiar</button>
         </div>
@@ -116,7 +116,7 @@ export default function CotizadorAuto({ tarifarioStore, serviciosStore, cotizaci
               <div style={{ fontSize: 13, color: MUTED }}>{u ? `${u.cantidad} × ${u.tipo.nombre}${u.conProveedor ? " · con proveedor" : ""}` : "Sin unidad elegida"}{c.maniobra.requerida === true ? ` · con ${c.maniobra.ayudantes} ayudante(s)` : ""}</div>
             </div>
             <Lista titulo="Falta confirmar con el cliente o capturar" items={c.pendientes} color={AMBER}/>
-            <Seccion titulo="1 · Cubicaje y tarimas">
+            <Seccion titulo="1 · Cuánta carga es">
               {c.cubicaje.pasos.map(x => <div key={x} style={{ fontSize: 13, marginBottom: 4 }}>{x}</div>)}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                 {c.cubicaje.pesoKg !== null && <Chip color={BLUE}>{c.cubicaje.pesoKg.toLocaleString("es-MX")} kg</Chip>}
@@ -124,17 +124,17 @@ export default function CotizadorAuto({ tarifarioStore, serviciosStore, cotizaci
                 {c.cubicaje.tarimas !== null && <Chip color={BLUE}>{c.cubicaje.tarimas} tarima(s){c.cubicaje.tarimasCalculadas ? " calculadas" : ""}</Chip>}
               </div>
             </Seccion>
-            <Seccion titulo="2 · Estiba y unidad">
+            <Seccion titulo="2 · Qué unidad va">
               <div style={{ fontSize: 14, fontWeight: 700 }}>{c.motivoUnidad}</div>
               {u && <><div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>{u.estiba.motivo}</div>
                 {barra("Peso", u.usoPct.peso)}{barra("Volumen", u.usoPct.volumen)}{barra("Posiciones de piso", u.usoPct.piso)}</>}
               {c.alternativa && <div style={{ fontSize: 13, color: MUTED, marginTop: 10 }}>Alternativa con más holgura: {c.alternativa.tipo.nombre}.</div>}
             </Seccion>
-            <Seccion titulo="3 · Maniobra">
+            <Seccion titulo="3 · ¿Hacen falta ayudantes?">
               <Chip color={c.maniobra.requerida === true ? AMBER : c.maniobra.requerida === false ? GREEN : MUTED}>{c.maniobra.requerida === true ? `Sí requiere · ${c.maniobra.ayudantes} ayudante(s)` : c.maniobra.requerida === false ? "No requiere" : "Por definir"}</Chip>
               {c.maniobra.motivos.map(x => <div key={x} style={{ fontSize: 13, marginTop: 6 }}>{x}</div>)}
             </Seccion>
-            <Seccion titulo="4 · Precio, desglose interno">
+            <Seccion titulo="4 · Cómo se armó el precio (solo para ti)">
               {c.conceptos.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Sin conceptos del tarifario.</div> : c.conceptos.map(x => (
                 <div key={x.concepto} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, padding: "5px 0", borderBottom: "1px solid " + BORDER }}>
                   <span>{x.concepto} <span style={{ color: MUTED }}>· {x.detalle}</span></span><b style={{ fontFamily: MONO }}>{pesos(x.monto)}</b></div>))}

@@ -5088,12 +5088,11 @@ function Cotizador({onSaved,usuario}){
             <S><SH>Configuración de flota</SH>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:11,marginBottom:13}}>
                 <div>
-                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Máx entregas/van/día</div>
+                  <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Entregas por camioneta al día</div>
                   <input type="number" min="1" value={mMaxDia} onChange={e=>setMMaxDia(Math.max(1,parseInt(e.target.value)||1))}
                     style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontFamily:MONO,fontSize:18,fontWeight:700,color:A,textAlign:"center"}}/>
                 </div>
-                <Spin label="Personas/van" value={mPersonas} onChange={setMPersonas} min={1} max={5}/>
-                <Spin label="Plazo global (días)" value={plazo} onChange={setPlazo} min={1} max={90}/>
+                <Spin label="Personas por camioneta" value={mPersonas} onChange={setMPersonas} min={1} max={5}/>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:7,marginBottom:13}}>
                 {VEHK.map(v=>(
@@ -5104,13 +5103,13 @@ function Cotizador({onSaved,usuario}){
                 ))}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:13}}>
-                <Tog checked={mAyud} onChange={setMAyud} label="💪 Ayudante/van" color={VIOLET}/>
+                <Tog checked={mAyud} onChange={setMAyud} label="💪 Un ayudante por camioneta" color={VIOLET}/>
                 <Tog checked={mUrg} onChange={setMUrg} label={"⚡ Urgente +"+(REGLAS.urgente_pct||0)+"%"} color={ROSE}/>
               </div>
               {mCiudades.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                 <InfoBox icon={Truck} color={A} title="Camionetas" value={mTotVans} sub={mCiudades.length+" ciudades"}/>
-                <InfoBox icon={Package} color={BLUE} title="PDVs totales" value={mTotPDV.toLocaleString()}/>
-                <InfoBox icon={Users} color={VIOLET} title="Personal total" value={mPersonasT}/>
+                <InfoBox icon={Package} color={BLUE} title="Puntos de venta" value={mTotPDV.toLocaleString()}/>
+                <InfoBox icon={Users} color={VIOLET} title="Personas en total" value={mPersonasT}/>
               </div>}
             </S>
 
@@ -5118,7 +5117,7 @@ function Cotizador({onSaved,usuario}){
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <SH>Ciudades de distribución *</SH>
                 {mCiudades.length>0&&<div style={{display:"flex",gap:6}}>
-                  <Tag color={A}>{mTotPDV.toLocaleString()} PDVs</Tag>
+                  <Tag color={A}>{mTotPDV.toLocaleString()} puntos de venta</Tag>
                   <Tag color={VIOLET}>{mTotVans} camionetas</Tag>
                 </div>}
               </div>
@@ -5132,10 +5131,10 @@ function Cotizador({onSaved,usuario}){
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,padding:"12px 14px",borderBottom:"1px solid "+BORDER}}>
                     <div>
-                      <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>PDVs en ciudad</div>
+                      <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>Puntos de venta en la ciudad</div>
                       <input type="number" min="1" value={c.pdv} onChange={e=>updMCiudad(c.id,"pdv",Math.max(1,parseInt(e.target.value)||1))}
                         style={{width:"100%",background:"#fff",border:"1.5px solid "+A+"40",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:700,color:A}}/>
-                      <div style={{fontSize:10,color:MUTED,marginTop:3}}>≈ {Math.ceil(c.pdv/c.dias)} PDVs/día</div>
+                      <div style={{fontSize:10,color:MUTED,marginTop:3}}>≈ {Math.ceil(c.pdv/c.dias)} al día</div>
                     </div>
                     <div>
                       <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:5}}>Días de operación</div>
@@ -10259,7 +10258,7 @@ function Viaticos(){
   const maxTipo=Math.max(...Object.values(porTipo),1);
 
   // Resumen por mes
-  const porMes=MESES.map(m=>({m,total:items.filter(g=>g.mes===m).reduce((a,g)=>a+(g.monto||0),0)}));
+  const porMes=MESES.map(m=>({m,total:items.filter(g=>g.mes===m&&String(g.anio)===String(ANIO)).reduce((a,g)=>a+(g.monto||0),0)}));   // solo el año que dice el título
   const maxMes=Math.max(...porMes.map(d=>d.total),1);
 
   const tipoInfo=k=>TIPOS.find(t=>t.k===k)||{label:k,color:MUTED};
@@ -10286,7 +10285,7 @@ function Viaticos(){
       {/* KPIs */}
       <div className="g4" style={{marginBottom:20}}>
         <KpiCard icon={TrendingUp} color={ROSE} label="Total gastos" value={fmtK(items.reduce((a,g)=>a+(g.monto||0),0))} sub={items.length+" registros"+(est.n>0?" · "+est.n+" estimados ("+fmtK(est.monto)+")":"")}/>
-        <KpiCard icon={Calendar} color={AMBER} label={mesActual+" "+ANIO} value={fmtK(items.filter(g=>g.mes===mesActual&&g.anio===ANIO).reduce((a,g)=>a+(g.monto||0),0))} sub="mes actual"/>
+        <KpiCard icon={Calendar} color={AMBER} label={mesActual+" "+ANIO} value={fmtK(items.filter(g=>g.mes===mesActual&&String(g.anio)===String(ANIO)).reduce((a,g)=>a+(g.monto||0),0))} sub="mes actual"/>
         <KpiCard icon={Truck} color={BLUE} label="Gasolina+Casetas+TAG" value={fmtK(items.filter(g=>["gasolina","casetas","tag"].includes(g.tipo)).reduce((a,g)=>a+(g.monto||0),0))}/>
         <KpiCard icon={Users} color={GREEN} label="Comida+Hotel" value={fmtK(items.filter(g=>["comida","hotel"].includes(g.tipo)).reduce((a,g)=>a+(g.monto||0),0))}/>
       </div>
@@ -14320,11 +14319,12 @@ function CatalogoModulo({tipo,authUser,userProfile}){
 function ServiciosModulo({authUser,userProfile,choferes,solicitud,onSolicitudUsada,cotizacion=null,onCotizacionUsada=()=>{}}){
   useCatalogos();
   const store=useMemo(()=>crearServiciosStore(db),[]);
+  const despacho=useMemo(()=>crearDespachoStore(db,fbApp),[]);
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
   /* De una cotización aceptada: el servicio nace con el precio que ya aprobó un admin
      (las reglas del servidor lo comparan contra la cotización). */
   const prefillCot=useMemo(()=>cotizacion?{...servicioDesdeCotizacion(cotizacion),recibidaEn:fechaLocalInput(cotizacion.solicitudRecibidaEn||cotizacion.creadoEn),precio:cotizacion.precioAprobado,precioAprobadoPor:cotizacion.aprobadoPor||""}:null,[cotizacion]);
-  const prefillSol=useMemo(()=>solicitud?{canal:solicitud.canal,recibidaEn:fechaLocalInput(solicitud.recibidaEn),solicitante:solicitud.remitenteNombre||"",solicitanteContacto:solicitud.remitenteCorreo||"",notas:solicitud.asunto||"",solicitudId:solicitud.id,solicitudFolio:solicitud.folio}:null,[solicitud]);
+  const prefillSol=useMemo(()=>solicitud?{canal:solicitud.canal,recibidaEn:fechaLocalInput(solicitud.recibidaEn),solicitante:solicitud.remitenteNombre||"",solicitanteContacto:solicitud.remitenteCorreo||"",notas:[solicitud.asunto,String(solicitud.texto||"").slice(0,1500)].filter(Boolean).join("\n\n"),solicitudId:solicitud.id,solicitudFolio:solicitud.folio}:null,[solicitud]);
   const prefill=prefillCot||prefillSol;
   const onCreado=async(servicio,datos)=>{
     if(cotizacion&&datos.cotizacionId===cotizacion.id){
@@ -14337,7 +14337,7 @@ function ServiciosModulo({authUser,userProfile,choferes,solicitud,onSolicitudUsa
     if(!solicitud||datos.solicitudId!==solicitud.id) return;
     try{await crearSolicitudesStore(db).vincularServicio(usuario,solicitud,servicio);}finally{onSolicitudUsada();}
   };
-  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando servicios…</div>}><ServiciosVista store={store} usuario={usuario} clientes={CLIENTES_REGISTRADOS} choferes={choferes} prefill={prefill} onCreado={onCreado}/></Suspense>;
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando servicios…</div>}><ServiciosVista store={store} usuario={usuario} despacho={despacho} clientes={CLIENTES_REGISTRADOS} choferes={choferes} prefill={prefill} onCreado={onCreado}/></Suspense>;
 }
 class ErrorBoundary extends Component{
   constructor(p){super(p);this.state={err:null,info:null};}
