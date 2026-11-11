@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "D Movimiento Choferes",
+    "slug": "dmov-choferes",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "mx.denmovimiento.choferes",
+      "versionCode": 1,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "CAMERA",
+        "RECEIVE_BOOT_COMPLETED",
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      [
+        "react-native-background-geolocation",
+        {
+          "license": ""
+        }
+      ],
+      [
+        "expo-gradle-ext-vars",
+        {
+          "googlePlayServicesLocationVersion": "21.3.0",
+          "appCompatVersion": "1.7.0"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "La app usa la cámara para tu foto de inicio de jornada y la evidencia de cada entrega.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Operaciones necesita ver tu ruta mientras tienes un servicio en curso, aunque la app esté cerrada.",
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      "expo-build-properties"
+    ],
+    "newArchEnabled": true
+  }
+}
