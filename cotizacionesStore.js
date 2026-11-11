@@ -79,6 +79,13 @@ export function crearCotizacionesStore(db){
       lote.set(doc(collection(ref, "eventos")), { tipo: "estado", de: c.estado, a, motivo: t(motivo, 500), ...actor(usuario), ts: serverTimestamp() });
       await lote.commit();
     },
+    /* Deja rastro de cada PDF entregable que se generó (no cambia la cotización). */
+    async registrarPdf(usuario, c, datos){
+      const lote = writeBatch(db);
+      lote.set(doc(collection(db, COLECCION_COTIZACIONES, c.id, "eventos")), { tipo: "pdf_generado", ...actor(usuario), ts: serverTimestamp(),
+        precio: Number(datos.precio) || 0, vigenteHasta: t(datos.vigenteHasta, 60), conNota: !!t(datos.nota, 10) });
+      await lote.commit();
+    },
     async vincularServicio(usuario, c, servicio){
       const ref = doc(db, COLECCION_COTIZACIONES, c.id);
       const lote = writeBatch(db);

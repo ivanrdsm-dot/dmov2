@@ -4,17 +4,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { A, BLUE, GREEN, ROSE, AMBER, VIOLET, MUTED, TEXT, BORDER, DISP, MONO, etiqueta, rejilla, boton, dinero, fechaHora, Campo, Chip, Seccion, Dialogo } from "./uiBasico.jsx";
 import { ESTADOS_COTIZACION, evaluarTransicion, kpisCotizaciones, precioCliente } from "./cotizaciones.ts";
+import { bloqueoPdf } from "./cotizacionCliente.ts";
 
 const COLOR = { Propuesta: AMBER, Aprobada: BLUE, Enviada: VIOLET, Aceptada: GREEN, Rechazada: ROSE, Cancelada: MUTED };
 const dato = (k, v) => <div key={k}><span style={etiqueta}>{k}</span><div style={{ fontSize: 14 }}>{v || <span style={{ color: MUTED }}>—</span>}</div></div>;
 const TEXTO_EVENTO = e => e.tipo === "creada" ? "guardó la propuesta" : e.tipo === "precio_aprobado" ? `aprobó el precio ${dinero(e.cambios?.[0]?.despues)}`
-  : e.tipo === "servicio_creado" ? `creó el servicio ${e.servicioFolio}` : `cambió de ${e.de} a ${e.a}`;
+  : e.tipo === "servicio_creado" ? `creó el servicio ${e.servicioFolio}` : e.tipo === "pdf_generado" ? `generó el PDF para el cliente (${dinero(e.precio)}${e.vigenteHasta ? `, vigente hasta el ${e.vigenteHasta}` : ""})`
+  : `cambió de ${e.de} a ${e.a}`;
 
 function Detalle({ c, store, usuario, onClose, onCrearServicio, avisar }){
   const [eventos, setEventos] = useState([]);
   const [precio, setPrecio] = useState(c.precioPropuesto ?? "");
   const [nota, setNota] = useState("");
   const [ocupado, setOcupado] = useState(false);
+  const [vigencia, setVigencia] = useState(""), [notaCliente, setNotaCliente] = useState("");
   useEffect(() => store.suscribirEventos(c.id, setEventos, () => setEventos([])), [store, c.id]);
   const admin = usuario.rol === "admin", r = c.resultado || {};
   const correr = async (fn, ok) => { setOcupado(true); try { await fn(); avisar(ok); setNota(""); } catch(e){ avisar(e.message, true); } finally { setOcupado(false); } };
@@ -24,7 +27,12 @@ function Detalle({ c, store, usuario, onClose, onCrearServicio, avisar }){
     if(v.requiereMotivo && !nota.trim()){ avisar("Escribe el motivo en la nota", true); return; }
     correr(() => store.cambiarEstado(usuario, c, a, nota), ok);
   };
-  const final = precioCliente(c);
+  const final = precioCliente(c), bloqueo = bloqueoPdf(c);
+  const pdf = () => correr(async () => {
+    const { descargarCotizacionPdf } = await import("./cotizacionPdf.js");
+    const d = await descargarCotizacionPdf(c, { vigenciaDias: vigencia, nota: notaCliente, atendio: usuario.nombre, ahoraMs: Date.now() });
+    try { await store.registrarPdf(usuario, c, d); } catch { /* el PDF ya se descargó; la bitácora no debe bloquearlo */ }
+  }, "PDF de la cotización descargado");
   return (
     <Dialogo titulo={`${c.folio} · ${c.empresa || "Sin cliente"}`} onClose={onClose}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
@@ -60,6 +68,17 @@ function Detalle({ c, store, usuario, onClose, onCrearServicio, avisar }){
         {(r.supuestos || []).length > 0 && <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Supuestos: {r.supuestos.join(" · ")}</div>}
         {c.notas && <div style={{ fontSize: 13, marginTop: 8 }}><span style={etiqueta}>Notas</span>{c.notas}</div>}
         {c.motivo && <div style={{ fontSize: 13, marginTop: 8 }}><span style={etiqueta}>Motivo</span>{c.motivo}</div>}
+      </Seccion>
+      <Seccion titulo="PDF para el cliente">
+        {bloqueo ? <div style={{ fontSize: 13, color: MUTED }}>{bloqueo}.</div> : <>
+          <div style={rejilla}>
+            <Campo label="Vigencia (días)" inputMode="numeric" value={vigencia} onChange={e => setVigencia(e.target.value)} placeholder="Vacío = sin vigencia"/>
+            <Campo label="Nota para el cliente" value={notaCliente} onChange={e => setNotaCliente(e.target.value)} placeholder="Opcional: forma de pago, horario…"/>
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
+            <button onClick={pdf} disabled={ocupado} style={boton(BLUE)}>Descargar PDF</button>
+            <span style={{ fontSize: 12, color: MUTED }}>Lleva solo el precio aprobado con IVA. No incluye desglose, notas internas ni supuestos técnicos.</span>
+          </div></>}
       </Seccion>
       <Seccion titulo="Qué sigue">
         {["Propuesta", "Aprobada", "Enviada"].includes(c.estado) && <div style={{ marginBottom: 10 }}><Campo label="Nota o motivo" value={nota} onChange={e => setNota(e.target.value)} placeholder="Obligatorio para rechazar o cancelar"/></div>}
