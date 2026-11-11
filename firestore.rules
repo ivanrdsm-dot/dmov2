@@ -219,6 +219,18 @@ service cloud.firestore {
       allow read: if esOficina();
       allow write: if false;
     }
+    /* ── Tarifario: lo consulta la oficina; los precios solo los cambia un admin.
+       Nada se borra (se da de baja) y el historial de cambios solo se agrega. */
+    match /tarifario/{id} {
+      allow read: if esOficina();
+      allow create, update: if esAdmin();
+      allow delete: if false;
+      match /cambios/{c} {
+        allow read: if esOficina();
+        allow create: if esAdmin() && request.resource.data.actorUid == request.auth.uid && request.resource.data.ts == request.time;
+        allow update, delete: if false;
+      }
+    }
     /* Contadores de folio: solo avanzan de uno en uno. */
     match /contadores/{id} {
       allow read: if esOficina();
@@ -267,7 +279,7 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones']);
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','tarifario']);
     }
   }
 }

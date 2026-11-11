@@ -14,6 +14,7 @@
     "dimensionamiento.ts",
     "domain.ts",
     "hojaEntrega.ts",
-    "servicios.ts"
+    "servicios.ts",
+    "tarifario.ts"
   ]
 }

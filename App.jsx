@@ -32,6 +32,8 @@ import { crearCatalogoStore } from "./catalogosStore.js";
 const CatalogosVista = lazy(()=>import("./Catalogos.jsx"));
 import { crearDespachoStore } from "./despachoStore.js";
 const DespachoVista = lazy(()=>import("./Despacho.jsx"));
+import { crearTarifarioStore } from "./tarifarioStore.js";
+const TarifarioVista = lazy(()=>import("./Tarifario.jsx"));
 /* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
@@ -3504,7 +3506,7 @@ function getNavSections(rol){
       {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
     ]},
     {section:"OPERACIONES",items:[
-      ...(FF_SERVICIOS?[{id:"solicitudes", label:"Solicitudes", icon:Bell, badge:"NEW"},{id:"servicios", label:"Servicios", icon:ClipboardList, badge:"NEW"},{id:"despacho", label:"Despacho y torre", icon:Radio, badge:"NEW"}]:[]),
+      ...(FF_SERVICIOS?[{id:"solicitudes", label:"Solicitudes", icon:Bell, badge:"NEW"},{id:"servicios", label:"Servicios", icon:ClipboardList, badge:"NEW"},{id:"despacho", label:"Despacho y torre", icon:Radio, badge:"NEW"},{id:"tarifario", label:"Tarifario", icon:DollarSign, badge:"NEW"}]:[]),
       {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
       {id:"rutas",    label:"Planificador Rutas",    icon:Map},
       {id:"choferes", label:"Choferes",              icon:Users},
@@ -14583,6 +14585,11 @@ function SolicitudesModulo({authUser,userProfile,onCrearServicio}){
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
   return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando solicitudes…</div>}><SolicitudesVista store={store} usuario={usuario} onCrearServicio={onCrearServicio}/></Suspense>;
 }
+function TarifarioModulo({authUser,userProfile}){
+  const store=useMemo(()=>crearTarifarioStore(db),[]);
+  const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando tarifario…</div>}><TarifarioVista store={store} usuario={usuario}/></Suspense>;
+}
 function DespachoModulo({authUser,userProfile}){
   const store=useMemo(()=>crearDespachoStore(db,fbApp),[]);
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
@@ -15316,6 +15323,7 @@ export default function App(){
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     ...(FF_SERVICIOS?{solicitudes:<SolicitudesModulo authUser={authUser} userProfile={userProfile} onCrearServicio={x=>{setSolicitudAServicio(x);setView("servicios");}}/>,
       despacho:<DespachoModulo authUser={authUser} userProfile={userProfile}/>,
+      tarifario:<TarifarioModulo authUser={authUser} userProfile={userProfile}/>,
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,
       servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)}/>}:{}),
