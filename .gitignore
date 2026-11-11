@@ -14,3 +14,5 @@ operacion-mayo-junio-2026/_servicios.json
 serviceAccount.json
 # Claves de servicio de Firebase con su nombre original de descarga
 *firebase-adminsdk*.json
+# Secretos locales de conectores (nunca al repo)
+*.local

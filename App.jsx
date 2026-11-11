@@ -25,6 +25,8 @@ import {
 import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO, PL_ORDEN_DIRECTOS, PLANES, planPorNumero, etiquetaPlan, normalizarPlan, planDeFactura, planearNormalizacionPlanes, etapaFactura, ETAPAS_FACTURA, facturasLigadas, buscarCotizaciones, rangoPeriodo, etiquetaPeriodo, filasPorPeriodo, ingresosPorColumna, pctGuardado, kpisCierre, resumenEstimados, conciliarIngresos, conciliarCxC, coincideAlias, fechaLocalISO, mismaEmpresa, clienteIdCorrecto, catalogoPlanes, setCatalogoPlanes, fusionarCatalogoPlanes } from "./domain";
 import CfdiArchive from "./CfdiArchive.jsx";
 import { crearServiciosStore } from "./serviciosStore.js";
+import { crearSolicitudesStore } from "./solicitudesStore.js";
+const SolicitudesVista = lazy(()=>import("./Solicitudes.jsx"));
 /* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
@@ -3497,7 +3499,7 @@ function getNavSections(rol){
       {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
     ]},
     {section:"OPERACIONES",items:[
-      ...(FF_SERVICIOS?[{id:"servicios", label:"Servicios", icon:ClipboardList, badge:"NEW"}]:[]),
+      ...(FF_SERVICIOS?[{id:"solicitudes", label:"Solicitudes", icon:Bell, badge:"NEW"},{id:"servicios", label:"Servicios", icon:ClipboardList, badge:"NEW"}]:[]),
       {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
       {id:"rutas",    label:"Planificador Rutas",    icon:Map},
       {id:"choferes", label:"Choferes",              icon:Users},
@@ -14548,12 +14550,26 @@ function SOSGlobalBanner({onGo}){
 }
 
 /* ── Error boundary para capturar errores de render ── */
-/* Módulo Servicios: arma el store y el usuario y delega en Servicios.jsx. */
-function ServiciosModulo({authUser,userProfile,choferes}){
+/* Módulos Solicitudes y Servicios: arman store y usuario y delegan en sus archivos.
+   Una solicitud se convierte en servicio abriendo el formulario con lo que ya se sabe;
+   al guardar, la solicitud queda ligada al folio del servicio. */
+const usuarioDe=(authUser,userProfile)=>({uid:authUser?.uid||"",nombre:userProfile?.nombre||authUser?.displayName||"",email:authUser?.email||"",rol:userProfile?.rol||"operaciones"});
+const fechaLocalInput=ms=>{const d=new Date(ms||Date.now()),p=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;};
+function SolicitudesModulo({authUser,userProfile,onCrearServicio}){
+  const store=useMemo(()=>crearSolicitudesStore(db),[]);
+  const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando solicitudes…</div>}><SolicitudesVista store={store} usuario={usuario} onCrearServicio={onCrearServicio}/></Suspense>;
+}
+function ServiciosModulo({authUser,userProfile,choferes,solicitud,onSolicitudUsada}){
   useCatalogos();
   const store=useMemo(()=>crearServiciosStore(db),[]);
-  const usuario=useMemo(()=>({uid:authUser?.uid||"",nombre:userProfile?.nombre||authUser?.displayName||"",email:authUser?.email||"",rol:userProfile?.rol||"operaciones"}),[authUser,userProfile]);
-  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando servicios…</div>}><ServiciosVista store={store} usuario={usuario} clientes={CLIENTES_REGISTRADOS} choferes={choferes}/></Suspense>;
+  const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
+  const prefill=useMemo(()=>solicitud?{canal:solicitud.canal,recibidaEn:fechaLocalInput(solicitud.recibidaEn),solicitante:solicitud.remitenteNombre||"",solicitanteContacto:solicitud.remitenteCorreo||"",notas:solicitud.asunto||"",solicitudId:solicitud.id,solicitudFolio:solicitud.folio}:null,[solicitud]);
+  const onCreado=async(servicio,datos)=>{
+    if(!solicitud||datos.solicitudId!==solicitud.id) return;
+    try{await crearSolicitudesStore(db).vincularServicio(usuario,solicitud,servicio);}finally{onSolicitudUsada();}
+  };
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando servicios…</div>}><ServiciosVista store={store} usuario={usuario} clientes={CLIENTES_REGISTRADOS} choferes={choferes} prefill={prefill} onCreado={onCreado}/></Suspense>;
 }
 class ErrorBoundary extends Component{
   constructor(p){super(p);this.state={err:null,info:null};}
@@ -15092,6 +15108,7 @@ export default function App(){
   const [prospectos,setProspectos]=useState([]);
   const [choferes,setChoferes]=useState([]);
   const [fbOk,setFbOk]=useState(false);
+  const [solicitudAServicio,setSolicitudAServicio]=useState(null); // solicitud que se está convirtiendo en servicio
   const [sidebarOpen,setSidebarOpen]=useState(()=>typeof window!=="undefined"?window.innerWidth>=768:true);
   const [searchOpen,setSearchOpen]=useState(false);
   const [installPrompt,setInstallPrompt]=useState(null);
@@ -15264,7 +15281,8 @@ export default function App(){
     cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    ...(FF_SERVICIOS?{servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes}/>}:{}),
+    ...(FF_SERVICIOS?{solicitudes:<SolicitudesModulo authUser={authUser} userProfile={userProfile} onCrearServicio={x=>{setSolicitudAServicio(x);setView("servicios");}}/>,
+      servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)}/>}:{}),
     choferes:<Choferes/>,
     unidades:<Unidades/>,
     tracking:<LiveTracking/>,
