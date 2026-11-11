@@ -2,7 +2,7 @@
    directo: recibe este store, así se puede probar con uno en memoria.
    Cada escritura va en la MISMA transacción/lote que su evento de bitácora. */
 import {
-  collection, doc, onSnapshot, query, orderBy, limit, runTransaction, writeBatch, serverTimestamp,
+  collection, doc, onSnapshot, query, orderBy, limit, runTransaction, writeBatch, serverTimestamp, getDocs,
 } from "firebase/firestore";
 import { folioServicio, diffServicio } from "./servicios.ts";
 
@@ -34,6 +34,11 @@ export function crearServiciosStore(db){
     suscribirEventos(id, cb, onErr){
       return onSnapshot(query(collection(db, "servicios", id, "eventos"), orderBy("ts", "asc"), limit(200)),
         s => cb(s.docs.map(d => { const e = d.data({ serverTimestamps: "estimate" }); return { id: d.id, ...e, ts: aMs(e.ts) }; })), onErr);
+    },
+    /* Paradas de la ruta (las escribe el servidor): para el detalle y la hoja de entrega. */
+    async leerParadas(id){
+      const s = await getDocs(query(collection(db, "servicios", id, "paradas"), orderBy("orden")));
+      return s.docs.map(d => ({ id: d.id, ...d.data(), cerradaEn: aMs(d.data().cerradaEn) }));
     },
     suscribirCatalogo(nombre, cb){
       return onSnapshot(query(collection(db, nombre), limit(500)), s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => cb([]));

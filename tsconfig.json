@@ -13,6 +13,7 @@
     "despacho.ts",
     "dimensionamiento.ts",
     "domain.ts",
+    "hojaEntrega.ts",
     "servicios.ts"
   ]
 }
