@@ -30,6 +30,7 @@ export type Parametros = typeof PARAMETROS;
 export interface TipoUnidad {
   clave: string; nombre: string; tarifa: UnidadTarifa | null;      // null = el tarifario no tiene precio para este tipo
   capacidadKg: number; capacidadM3: number; tarimasPiso: number; altoInteriorM: number;
+  puertaAltoM?: number;          // alto libre de la puerta por donde entra la tarima, si se conoce
   cajasSueltasMax?: number;      // regla de la casa: tope práctico de cajas a granel
   enFlota: number;               // cuántas hay normalmente en la flota propia (0 = solo con proveedor)
   fuente: string; confirmada: boolean;
@@ -144,7 +145,11 @@ export function evaluarManiobra(s: SolicitudCotizacion, cub: Cubicaje, P: Parame
 }
 
 export interface UnidadElegida { tipo: TipoUnidad; cantidad: number; estiba: Estiba; usoPct: { peso: number | null; volumen: number | null; piso: number | null }; conProveedor: boolean; }
+/** Alto libre para meter una tarima armada: lo que mida menos entre el interior y la puerta. */
+export const altoLibre = (t: Pick<TipoUnidad, "altoInteriorM" | "puertaAltoM">): number => Math.min(t.altoInteriorM > 0 ? t.altoInteriorM : Infinity, t.puertaAltoM && t.puertaAltoM > 0 ? t.puertaAltoM : Infinity);
+const tarimaMuyAlta = (t: TipoUnidad, cub: Cubicaje): boolean => !!cub.tarimas && !!cub.altoTarimaM && cub.altoTarimaM > altoLibre(t) + 1e-9;
 const cabe = (t: TipoUnidad, cub: Cubicaje, e: Estiba, c: CargaSolicitada, P: Parametros, unidades = 1): boolean => {
+  if(tarimaMuyAlta(t, cub)) return false;                    // una tarima armada que no pasa por la puerta no se sube entera
   if(cub.pesoKg && cub.pesoKg > t.capacidadKg * unidades) return false;
   if(e.posicionesPiso !== null){ if(e.posicionesPiso > t.tarimasPiso * unidades) return false; }
   else {
@@ -162,15 +167,17 @@ export function elegirUnidad(cub: Cubicaje, c: CargaSolicitada, tipos: TipoUnida
       volumen: cub.volumenM3 ? Math.round(cub.volumenM3 / (t.capacidadM3 * cantidad) * 100) : null,
       piso: e.posicionesPiso !== null ? Math.round(e.posicionesPiso / (t.tarimasPiso * cantidad) * 100) : null } }; };
   const solas = orden.filter(t => cabe(t, cub, estibar(cub, c, t, P), c, P));
+  const altas = orden.filter(t => tarimaMuyAlta(t, cub)).map(t => t.nombre);
+  const notaAltura = altas.length ? ` La tarima de ${f(cub.altoTarimaM ?? 0)} m no entra armada en: ${altas.join(", ")}.` : "";
   const propia = solas.find(t => t.enFlota > 0);
   if(propia){ const sig = solas.find(t => t !== propia && t.enFlota > 0) ?? null;
-    return { eleccion: armar(propia, 1), alternativa: sig ? armar(sig, 1) : null, motivo: `${propia.nombre} es la unidad propia más chica en la que cabe todo.` }; }
+    return { eleccion: armar(propia, 1), alternativa: sig ? armar(sig, 1) : null, motivo: `${propia.nombre} es la unidad propia más chica en la que cabe todo.${notaAltura}` }; }
   /* No cabe en una unidad propia: varias propias del mismo tipo, de la más grande a la más chica */
   for(const t of [...orden].reverse().filter(x => x.enFlota > 1)){
     for(let k = 2; k <= t.enFlota; k++) if(cabe(t, cub, estibar(cub, c, t, P), c, P, k))
-      return { eleccion: armar(t, k), alternativa: solas[0] ? armar(solas[0], 1) : null, motivo: `No cabe en una sola unidad propia: se necesitan ${k} ${t.nombre}.` };
+      return { eleccion: armar(t, k), alternativa: solas[0] ? armar(solas[0], 1) : null, motivo: `No cabe en una sola unidad propia: se necesitan ${k} ${t.nombre}.${notaAltura}` };
   }
-  if(solas[0]) return { eleccion: armar(solas[0], 1), alternativa: null, motivo: `Cabe en ${solas[0].nombre}, que no es de la flota propia: va con proveedor.` };
+  if(solas[0]) return { eleccion: armar(solas[0], 1), alternativa: null, motivo: `Cabe en ${solas[0].nombre}, que no es de la flota propia: va con proveedor.${notaAltura}` };
   return { eleccion: null, alternativa: null, motivo: "No cabe en ningún tipo de unidad del catálogo: hay que dividir el servicio o cotizar tráiler con proveedor." };
 }
 
