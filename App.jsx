@@ -11287,10 +11287,12 @@ const normalizarAlerta=(id,d)=>{
 /* Lectura de alertas que no pierde las recientes: TODAS las sin atender + las últimas N
    con hora (un límite sin orden devolvía las primeras por id y podía esconder un SOS nuevo). */
 function suscribirAlertas(cb,{historial=200}={}){
-  const m={sin:[],rec:[]}, emitir=()=>{const map={};[...m.sin,...m.rec].forEach(a=>{map[a.id]=a;});cb(Object.values(map).sort((a,b)=>(b.ts?.seconds||0)-(a.ts?.seconds||0)));};
+  const m={sin:[],rec:[],viejas:[]}, emitir=()=>{const map={};[...m.viejas,...m.sin,...m.rec].forEach(a=>{map[a.id]=a;});cb(Object.values(map).sort((a,b)=>(b.ts?.seconds||0)-(a.ts?.seconds||0)));};
   const u1=onSnapshot(query(collection(db,"alertas"),where("atendida","==",false),limit(500)),x=>{m.sin=x.docs.map(d=>normalizarAlerta(d.id,d.data()));emitir();},()=>{});
   const u2=historial>0?onSnapshot(query(collection(db,"alertas"),orderBy("ts","desc"),limit(historial)),x=>{m.rec=x.docs.map(d=>normalizarAlerta(d.id,d.data()));emitir();},()=>{}):()=>{};
-  return()=>{u1();u2();};
+  /* Las alertas de la app vieja solo tienen createdAt (sin ts): se leen aparte para que el historial no las pierda. */
+  const u3=historial>0?onSnapshot(query(collection(db,"alertas"),orderBy("createdAt","desc"),limit(historial)),x=>{m.viejas=x.docs.map(d=>normalizarAlerta(d.id,d.data()));emitir();},()=>{}):()=>{};
+  return()=>{u1();u2();u3();};
 }
 /* Jornadas desde una fecha: la app nueva guarda `fecha` y la vieja `fechaStr` (ambas AAAA-MM-DD). */
 function suscribirJornadasDesde(desde,cb){
