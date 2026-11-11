@@ -76,3 +76,13 @@ test('el link de seguimiento y la encuesta solo los escribe el servidor', async 
   await assertFails(updateDoc(doc(dbAdmin, 'servicios', srv.id), { encuestaCalificacion: 5 }));
   await assertFails(setDoc(doc(dbOps, 'servicios', srv.id, 'encuesta', 'respuesta'), { calificacion: 5 }));
 });
+
+test('un servicio entregado pide su factura una sola vez y queda ligado', async () => {
+  await env.withSecurityRulesDisabled(async c => updateDoc(doc(c.firestore(), 'servicios', srv.id), { estado: 'Entregada', precio: 3500, precioAprobadoPor: 'admin' }));
+  const actual = { id: srv.id, ...(await getDoc(doc(dbOps, 'servicios', srv.id))).data() };
+  const r = await assertSucceeds(sOps.pedirFactura(OPS, actual));
+  const f = (await getDoc(doc(dbOps, 'facturas', 'servicio_' + srv.id))).data();
+  assert.equal(f.status, 'Solicitada a Katia'); assert.equal(f.subtotal, 3500); assert.equal(f.total, 4060); assert.equal(f.servicioOrigenFolio, actual.folio);
+  assert.equal((await getDoc(doc(dbOps, 'servicios', srv.id))).data().facturaFolio, r.folio);
+  await assert.rejects(sOps.pedirFactura(OPS, actual), /ya tiene su factura/);
+});

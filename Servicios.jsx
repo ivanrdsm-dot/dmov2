@@ -241,6 +241,20 @@ function LinkCliente({ s, despacho, avisar }){
     </Seccion>);
 }
 
+/* Factura: cuando el servicio se entregó, un botón pide la factura en Facturación. */
+function FacturaServicio({ s, store, usuario, avisar }){
+  const [ocupado, setOcupado] = useState(false);
+  if(!store.pedirFactura || !["Entregada", "Cerrada", "Conciliada", "Facturada", "Cobrada"].includes(s.estado)) return null;
+  return (
+    <Seccion titulo="Factura">
+      {s.facturaId ? <div style={{ fontSize: 14 }}>Factura pedida: <b style={{ fontFamily: MONO }}>{s.facturaFolio || s.facturaId}</b>. Se sigue en Facturación.</div>
+        : !(Number(s.precio) > 0) ? <div style={{ fontSize: 13, color: AMBER, fontWeight: 700 }}>Para pedir la factura, primero un administrador aprueba el precio.</div>
+        : <><button onClick={async () => { setOcupado(true); try { const r = await store.pedirFactura(usuario, s); avisar("Factura pedida: " + r.folio + ". Ya aparece en Facturación."); } catch(e){ avisar("No se pudo: " + e.message, true); } finally { setOcupado(false); } }}
+            disabled={ocupado} style={boton(A)}>{ocupado ? "Pidiendo…" : `Pedir factura por ${dinero(s.precio)} + IVA`}</button>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Se crea en Facturación como "Solicitada a Katia", con el precio aprobado y ligada a este servicio.</div></>}
+    </Seccion>);
+}
+
 function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = null, onEditar, onClose, avisar }){
   const esAdmin = usuario.rol === "admin";
   const [eventos, setEventos] = useState([]);
@@ -297,6 +311,7 @@ function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = nul
       </Seccion>
       <ChoferYRuta s={s} store={store} usuario={usuario} unidades={unidades} choferesApp={choferesApp} despacho={despacho} avisar={avisar}/>
       <LinkCliente s={s} despacho={despacho} avisar={avisar}/>
+      <FacturaServicio s={s} store={store} usuario={usuario} avisar={avisar}/>
       <CostosServicio s={s} store={store} usuario={usuario} avisar={avisar}/>
       <Seccion titulo="Cambiar estado">
         {opciones.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Este servicio ya no cambia de estado.</div> : <>
@@ -312,7 +327,7 @@ function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = nul
         {eventos.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Sin eventos.</div> : eventos.map(e => (
           <div key={e.id} style={{ fontSize: 13, padding: "7px 0", borderBottom: "1px solid " + BORDER }}>
             <span style={{ fontFamily: MONO, fontSize: 11, color: MUTED }}>{fechaHora(e.ts)}</span> · <b>{e.actorNombre || e.actorUid}</b>{" "}
-            {e.tipo === "creado" ? "registró el servicio" : e.tipo === "link_seguimiento_creado" ? "creó el link para el cliente" : e.tipo === "link_seguimiento_cambiado" ? "cambió el link para el cliente" : e.tipo === "encuesta" ? `recibió la calificación del cliente: ${e.calificacion} de 5` : e.tipo === "costo" ? `agregó un costo: ${e.datos?.concepto} ${dinero(e.datos?.monto)}` : e.tipo === "costo_anulado" ? `anuló un costo (${e.datos?.concepto} ${dinero(e.datos?.monto)})` : e.tipo === "estado" ? `cambió de ${e.de} a ${e.a}` : e.tipo === "precio_aprobado" ? `aprobó el precio ${dinero(e.cambios?.[0]?.despues)}` : `editó ${(e.cambios || []).map(c => c.campo).join(", ")}`}
+            {e.tipo === "creado" ? "registró el servicio" : e.tipo === "link_seguimiento_creado" ? "creó el link para el cliente" : e.tipo === "link_seguimiento_cambiado" ? "cambió el link para el cliente" : e.tipo === "encuesta" ? `recibió la calificación del cliente: ${e.calificacion} de 5` : e.tipo === "factura_pedida" ? `pidió la factura ${e.datos?.facturaFolio || ""}` : e.tipo === "costo" ? `agregó un costo: ${e.datos?.concepto} ${dinero(e.datos?.monto)}` : e.tipo === "costo_anulado" ? `anuló un costo (${e.datos?.concepto} ${dinero(e.datos?.monto)})` : e.tipo === "estado" ? `cambió de ${e.de} a ${e.a}` : e.tipo === "precio_aprobado" ? `aprobó el precio ${dinero(e.cambios?.[0]?.despues)}` : `editó ${(e.cambios || []).map(c => c.campo).join(", ")}`}
             {e.excepcion && <span style={{ color: ROSE }}> · sin {e.faltantes.join(", ")}</span>}{e.motivo && <span style={{ color: MUTED }}> · Motivo: {e.motivo}</span>}
           </div>))}
       </Seccion>
