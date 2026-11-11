@@ -9,7 +9,8 @@ const COLOR_DOC = { vigente: GREEN, "por vencer": AMBER, vencido: ROSE, "sin reg
 const Marca = ({ checked, onChange, children }) => <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14, cursor: "pointer", minHeight: 42 }}>
   <input type="checkbox" checked={!!checked} onChange={e => onChange(e.target.checked)} style={{ width: 20, height: 20 }}/>{children}</label>;
 
-function FormPunto({ inicial, onGuardar, onClose, guardando }){
+function FormPunto({ inicial, onGuardar, onClose, guardando, SelectorMapa = null }){
+  const [mapa, setMapa] = useState(false);
   const c0 = coordenadaDe(inicial || {});
   const [f, setF] = useState({ nombre: "", direccion: "", radioM: "", horario: "", contacto: "", telefono: "", notasAcceso: "", pinConfirmado: false, activo: true, ...inicial, coordenada: c0 ? `${c0.lat}, ${c0.lng}` : "" });
   const [intento, setIntento] = useState(false);
@@ -30,9 +31,12 @@ function FormPunto({ inicial, onGuardar, onClose, guardando }){
       <Seccion titulo="Ubicación exacta">
         <div style={rejilla}>
           <Campo label="Coordenada (latitud, longitud)" value={f.coordenada} onChange={e => setF(x => ({ ...x, coordenada: e.target.value, pinConfirmado: false }))} placeholder="19.432608, -99.133209"/>
-          <Campo label={`Radio de geocerca en metros (normal: ${RADIO_GEOCERCA_DEFAULT_M})`} inputMode="numeric" value={f.radioM} onChange={s("radioM")} placeholder={String(RADIO_GEOCERCA_DEFAULT_M)}/>
+          <Campo label={`¿A cuántos metros puede cerrar la entrega el chofer? (normal ${RADIO_GEOCERCA_DEFAULT_M})`} inputMode="numeric" value={f.radioM} onChange={s("radioM")} placeholder={String(RADIO_GEOCERCA_DEFAULT_M)}/>
         </div>
-        <p style={{ fontSize: 12, color: MUTED, margin: "8px 0" }}>En Google Maps, deja presionado sobre la puerta de recepción y copia los dos números que aparecen.</p>
+        {SelectorMapa && <button type="button" onClick={() => setMapa(true)} style={{ ...boton(A), marginTop: 10 }}>📍 Buscar el lugar en el mapa</button>}
+        <p style={{ fontSize: 12, color: MUTED, margin: "8px 0" }}>{SelectorMapa ? "Busca la dirección y toca el lugar exacto de la recepción. También puedes pegar la coordenada de Google Maps." : "En Google Maps, deja presionado sobre la puerta de recepción y copia los dos números que aparecen."}</p>
+        {mapa && SelectorMapa && <SelectorMapa title="Ubica el lugar" initialQuery={[f.nombre, f.direccion].filter(Boolean).join(", ")} onClose={() => setMapa(false)}
+          onSelect={p => { setF(x => ({ ...x, coordenada: `${Number(p.lat).toFixed(6)}, ${Number(p.lng).toFixed(6)}`, direccion: x.direccion || p.address || "", nombre: x.nombre || p.name || "", pinConfirmado: false })); setMapa(false); }}/>}
         {c && <a href={`https://www.google.com/maps?q=${c.lat},${c.lng}`} target="_blank" rel="noreferrer" style={{ ...boton(BLUE, false), display: "inline-block", textDecoration: "none", lineHeight: "20px" }}>Ver el pin en el mapa</a>}
         {c && <Marca checked={f.pinConfirmado} onChange={x => setF(y => ({ ...y, pinConfirmado: x }))}>Abrí el mapa y el pin cae en el lugar correcto</Marca>}
         {v.avisos.map(a => <div key={a} style={{ color: AMBER, fontSize: 13, fontWeight: 700 }}>{a}</div>)}
@@ -85,7 +89,7 @@ const Botones = ({ onClose, guardando }) => <div style={{ display: "flex", gap: 
   <button type="submit" disabled={guardando} style={{ ...boton(A), opacity: guardando ? .6 : 1 }}>{guardando ? "Guardando…" : "Guardar"}</button></div>;
 
 const CONFIG = {
-  puntos: { titulo: "Puntos de entrega", sub: "Tiendas, CEDIS y bodegas con su ubicación exacta. Un punto no se usa en ruta hasta confirmar su pin.", nuevo: "+ Agregar punto", Form: FormPunto,
+  puntos: { titulo: "Lugares de carga y entrega", sub: "Tiendas, CEDIS y bodegas con su ubicación exacta. Un lugar se usa en una ruta cuando confirmas su pin.", nuevo: "+ Agregar lugar", Form: FormPunto,
     columnas: ["Punto", "Dirección", "Coordenada", "Recepción", "Estado"],
     fila: p => { const c = coordenadaDe(p), v = validarPunto(p); return [
       <b>{p.nombre}</b>, p.direccion, c ? <span style={{ fontFamily: MONO, fontSize: 12 }}>{c.lat.toFixed(5)}, {c.lng.toFixed(5)}<div style={{ color: MUTED }}>radio {radioDe(p)} m</div></span> : <span style={{ color: AMBER, fontWeight: 700 }}>PENDIENTE</span>,
@@ -104,7 +108,7 @@ const CONFIG = {
     texto: p => [p.nombre, p.contacto, p.unidades].join(" ") },
 };
 
-export default function Catalogos({ tipo, store, usuario }){
+export default function Catalogos({ tipo, store, usuario, SelectorMapa = null }){
   const cfg = CONFIG[tipo];
   const [lista, setLista] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -147,7 +151,7 @@ export default function Catalogos({ tipo, store, usuario }){
           </tbody>
         </table>
       </div>
-      {form && <Dialogo titulo={form.id ? "Editar " + (form.nombre || "") : cfg.nuevo.replace("+ ", "")} onClose={() => setForm(null)}><Form inicial={form} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/></Dialogo>}
+      {form && <Dialogo titulo={form.id ? "Editar " + (form.nombre || "") : cfg.nuevo.replace("+ ", "")} onClose={() => setForm(null)}><Form inicial={form} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando} SelectorMapa={SelectorMapa}/></Dialogo>}
       {aviso && <div role="status" style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: aviso.mal ? ROSE : TEXT, color: "#fff", borderRadius: 12, padding: "12px 18px", fontSize: 13, fontWeight: 600, zIndex: 700, maxWidth: "90vw" }}>{aviso.msg}</div>}
     </div>
   );

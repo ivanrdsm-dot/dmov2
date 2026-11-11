@@ -4074,7 +4074,7 @@ function QueFaltaHoy({setView,alertasAbiertas=0}){
   const hoySrv=(d.srv||[]).filter(x=>x.estado!=="Cancelada"), sinChofer=hoySrv.filter(x=>["Solicitud","Cotizada","Confirmada"].includes(x.estado)).length;
   const tarjetas=[
     {n:sinResp,t:sinResp===1?"pedido por contestar":"pedidos por contestar",v:"solicitudes",c:sinResp?ROSE:GREEN},
-    {n:porAprobar+porEnviar,t:"cotizaciones por "+(porAprobar?"aprobar":"enviar"),sub:[porAprobar&&porAprobar+" por aprobar",porEnviar&&porEnviar+" por enviar",esperando&&esperando+" esperando al cliente"].filter(Boolean).join(" · "),v:"cotizaciones",c:porAprobar+porEnviar?AMBER:GREEN},
+    {n:porAprobar+porEnviar,t:porAprobar?"cotizaciones por aprobar":porEnviar?"cotizaciones por enviar":"cotizaciones por aprobar",sub:[porAprobar&&porAprobar+" por aprobar",porEnviar&&porEnviar+" por enviar",esperando&&esperando+" esperando al cliente"].filter(Boolean).join(" · "),v:"cotizaciones",c:porAprobar+porEnviar?AMBER:GREEN},
     {n:hoySrv.length,t:hoySrv.length===1?"servicio para hoy":"servicios para hoy",sub:sinChofer?sinChofer+" todavía sin chofer":"",v:"servicios",c:sinChofer?ROSE:hoySrv.length?BLUE:GREEN},
     {n:alertasAbiertas,t:alertasAbiertas===1?"alerta sin atender":"alertas sin atender",v:"alertas",c:alertasAbiertas?ROSE:GREEN},
   ];
@@ -4264,7 +4264,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
       {isAdmin&&(
         <div className="g4 au2" style={{marginBottom:16}}>
           <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" registros internos sin pagar"} onClick={()=>setView("facturas")}/>
-          <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":sinVenc.length>0?sinVenc.length+" sin fecha de vencimiento ("+fmtK(montoSinVenc)+")":"al corriente ✓"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:sinVenc.length?AMBER:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:sinVenc.length?AMBER:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":sinVenc.length>0?sinVenc.length+" sin fecha de vencimiento ("+fmtK(montoSinVenc)+")":"al corriente ✓"} onClick={()=>setView("facturas")}/>
           <KpiCard icon={FileText} color={VIOLET} accent={sinFacturar.length>0} label="Sin facturar" value={sinFacturar.length} valueColor={VIOLET} sub="servicios por solicitar a Katia" onClick={()=>setView("facturas")}/>
           <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"} onClick={()=>setView("facturas")}/>
         </div>
@@ -7784,8 +7784,13 @@ function Facturas({rol="admin"}){
             <input type="date" value={form.fechaEmision||""} onChange={sf("fechaEmision")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}/>
           </div>
           <div>
-            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>Vencimiento (cartera)</div>
-            <input type="date" value={form.fechaVenc||""} onChange={sf("fechaVenc")} style={{width:"100%",background:"#fff",border:"1.5px solid "+BD2,borderRadius:9,padding:"9px 12px",fontSize:13}}/>
+            <div style={{fontSize:10,fontWeight:700,color:MUTED,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.05em"}}>¿Cuándo vence? (para cobrar)</div>
+            <input type="date" value={form.fechaVenc||""} onChange={sf("fechaVenc")} style={{width:"100%",background:"#fff",border:"1.5px solid "+(form.fechaVenc||form.status==="Pagada"?BD2:AMBER),borderRadius:9,padding:"9px 12px",fontSize:13}}/>
+            {/* Atajos: sin fecha de vencimiento no se sabe si una factura ya está atrasada. */}
+            {!form.fechaVenc&&form.status!=="Pagada"&&<div style={{display:"flex",gap:6,marginTop:5,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:10,color:AMBER,fontWeight:700}}>Sin fecha no sabremos si se atrasa:</span>
+              {[15,30,45].map(d=><button key={d} type="button" onClick={()=>{const base=form.fechaEmision?new Date(form.fechaEmision+"T12:00:00"):new Date();base.setDate(base.getDate()+d);setForm(x=>({...x,fechaVenc:fechaLocalISO(base)}));}} className="btn" style={{fontSize:10,fontWeight:700,color:BLUE,border:"1px solid "+BLUE+"40",borderRadius:7,padding:"2px 8px",background:"#fff"}}>+{d} días</button>)}
+            </div>}
           </div>
           <Inp label="Email cliente (para envío)" value={form.emailCliente||""} onChange={sf("emailCliente")} type="email" placeholder="contacto@cliente.com"/>
           {form.status==="Pagada"&&<div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,alignItems:"end"}}>
@@ -14314,7 +14319,7 @@ function DespachoModulo({authUser,userProfile}){
 function CatalogoModulo({tipo,authUser,userProfile}){
   const store=useMemo(()=>crearCatalogoStore(db,tipo==="puntos"?"puntos_entrega":"proveedores"),[tipo]);
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
-  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><CatalogosVista key={tipo} tipo={tipo} store={store} usuario={usuario}/></Suspense>;
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><CatalogosVista key={tipo} tipo={tipo} store={store} usuario={usuario} SelectorMapa={LocationPicker}/></Suspense>;
 }
 function ServiciosModulo({authUser,userProfile,choferes,solicitud,onSolicitudUsada,cotizacion=null,onCotizacionUsada=()=>{}}){
   useCatalogos();
