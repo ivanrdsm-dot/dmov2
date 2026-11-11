@@ -7,6 +7,8 @@ import {
   ESTADOS_SERVICIO, CANALES_SOLICITUD, TIPOS_ASIGNACION,
   validarServicio, evaluarCambioEstado, kpisServicios, resumenRuta, minutosACotizacion,
 } from "./servicios.ts";
+import { recomendarUnidades } from "./dimensionamiento.ts";
+import { proveedorHabilitado, puntoListoParaRuta } from "./catalogos.ts";
 
 const COLOR_ESTADO = { Solicitud: AMBER, Cotizada: BLUE, Confirmada: VIOLET, Asignada: VIOLET, "En ruta": A, Entregada: GREEN,
   Cerrada: GREEN, Conciliada: GREEN, Facturada: MUTED, Cobrada: MUTED, Cancelada: ROSE };
@@ -20,13 +22,32 @@ const VACIO = () => ({
   receptor: "", notas: "",
 });
 
-function Puntos({ titulo, puntos, onChange }){
+/* Unidad sugerida: compara la carga contra las capacidades capturadas en Flota. */
+function UnidadSugerida({ carga, unidades, onElegir }){
+  const r = useMemo(() => recomendarUnidades(carga, unidades), [carga.pesoKg, carga.volumenM3, carga.tarimas, carga.cajas, unidades]);
+  const color = r.estado === "ok" ? GREEN : r.estado === "no_cabe" ? ROSE : AMBER;
+  return (
+    <div style={{ border: "1px solid " + color + "50", background: color + "0d", borderRadius: 12, padding: "12px 14px", fontSize: 13 }}>
+      <div style={{ fontWeight: 800, color, marginBottom: 6 }}>{r.estado === "ok" ? "Unidad sugerida: " + r.unidades.map(u => u.placa + (u.tipo ? " · " + u.tipo : "")).join(" + ")
+        : r.estado === "no_cabe" ? "No cabe en la flota con capacidad capturada" : r.estado === "sin_datos_carga" ? "Sin datos para dimensionar" : "Falta capturar capacidades en Flota"}</div>
+      {r.justificacion.map((j, i) => <div key={i} style={{ color: TEXT, lineHeight: 1.5 }}>{j}</div>)}
+      {r.unidadesSinCapacidad.length > 0 && <div style={{ color: MUTED, marginTop: 6 }}>No se consideraron por falta de capacidad capturada: {r.unidadesSinCapacidad.join(", ")}.</div>}
+      {onElegir && r.estado === "ok" && r.unidades.length === 1 && <button type="button" onClick={() => onElegir(r.unidades[0].placa)} style={{ ...boton(GREEN, false), marginTop: 10, minHeight: 36, padding: "6px 12px" }}>Usar {r.unidades[0].placa}</button>}
+    </div>
+  );
+}
+
+function Puntos({ titulo, puntos, onChange, catalogo = [] }){
   const set = (i, k, v) => onChange(puntos.map((p, j) => j === i ? { ...p, [k]: v } : p));
+  /* Al elegir un punto del catálogo se llenan dirección y contacto; queda ligado por id. */
+  const elegir = (i, nombre) => { const c = catalogo.find(x => x.activo !== false && x.nombre === nombre);
+    onChange(puntos.map((p, j) => j !== i ? p : c ? { ...p, nombre, puntoId: c.id, direccion: c.direccion || p.direccion, contacto: c.contacto || p.contacto, telefono: c.telefono || p.telefono, pinListo: puntoListoParaRuta(c) } : { ...p, nombre, puntoId: "", pinListo: false })); };
   return (
     <Seccion titulo={titulo}>
       {puntos.map((p, i) => (
         <div key={i} style={{ ...rejilla, marginBottom: 10, paddingBottom: 10, borderBottom: i < puntos.length - 1 ? "1px dashed " + BD2 : "none" }}>
-          <Campo label="Nombre del lugar" name={titulo + i} value={p.nombre || ""} onChange={e => set(i, "nombre", e.target.value)} placeholder="Bodega, tienda, CEDIS"/>
+          <div><Campo label="Nombre del lugar" name={titulo + i} lista={catalogo.filter(x => x.activo !== false).map(x => x.nombre).filter(Boolean)} value={p.nombre || ""} onChange={e => elegir(i, e.target.value)} placeholder="Bodega, tienda, CEDIS"/>
+            {p.puntoId && <div style={{ fontSize: 11, fontWeight: 700, marginTop: 3, color: p.pinListo ? GREEN : AMBER }}>{p.pinListo ? "Punto del catálogo, pin confirmado" : "Punto del catálogo, pin sin confirmar"}</div>}</div>
           <Campo label="Dirección *" name={titulo + i} value={p.direccion || ""} onChange={e => set(i, "direccion", e.target.value)}/>
           <Campo label="Quién entrega o recibe" name={titulo + i} value={p.contacto || ""} onChange={e => set(i, "contacto", e.target.value)}/>
           <Campo label="Teléfono" name={titulo + i} value={p.telefono || ""} onChange={e => set(i, "telefono", e.target.value)} inputMode="tel"/>
@@ -38,7 +59,7 @@ function Puntos({ titulo, puntos, onChange }){
   );
 }
 
-function Formulario({ inicial, clientes, choferes, unidades, onGuardar, onClose, guardando }){
+function Formulario({ inicial, clientes, choferes, unidades, puntos = [], proveedores = [], onGuardar, onClose, guardando }){
   const [f, setF] = useState(() => ({ ...VACIO(), ...inicial }));
   const [intento, setIntento] = useState(false);
   const s = k => e => setF(x => ({ ...x, [k]: e.target.value }));
@@ -59,8 +80,8 @@ function Formulario({ inicial, clientes, choferes, unidades, onGuardar, onClose,
           <Campo label="Correo o teléfono de quien solicita" value={f.solicitanteContacto} onChange={s("solicitanteContacto")}/>
         </div>
       </Seccion>
-      <Puntos titulo="Orígenes · dónde se carga" puntos={f.origenes} onChange={x => setF(y => ({ ...y, origenes: x }))}/>
-      <Puntos titulo="Destinos · dónde se entrega" puntos={f.destinos} onChange={x => setF(y => ({ ...y, destinos: x }))}/>
+      <Puntos titulo="Orígenes · dónde se carga" puntos={f.origenes} catalogo={puntos} onChange={x => setF(y => ({ ...y, origenes: x }))}/>
+      <Puntos titulo="Destinos · dónde se entrega" puntos={f.destinos} catalogo={puntos} onChange={x => setF(y => ({ ...y, destinos: x }))}/>
       <Seccion titulo="Fecha y carga">
         <div style={rejilla}>
           <Campo label="Fecha del servicio" type="date" value={f.fechaServicio} onChange={s("fechaServicio")}/>
@@ -74,6 +95,7 @@ function Formulario({ inicial, clientes, choferes, unidades, onGuardar, onClose,
           <Campo label="Valor declarado (MXN)" inputMode="decimal" value={f.valorDeclarado} onChange={s("valorDeclarado")}/>
         </div>
         <div style={{ marginTop: 12 }}><Campo label="Requisitos especiales" area value={f.requisitos} onChange={s("requisitos")} placeholder="Cita en CEDIS, EPP, horario de acceso"/></div>
+        <div style={{ marginTop: 12 }}><UnidadSugerida carga={f} unidades={unidades} onElegir={placa => setF(x => ({ ...x, unidadPlaca: placa, asignacionTipo: x.asignacionTipo || "Flota propia" }))}/></div>
       </Seccion>
       <Seccion titulo="Cotización y asignación">
         <div style={rejilla}>
@@ -81,7 +103,9 @@ function Formulario({ inicial, clientes, choferes, unidades, onGuardar, onClose,
           <Campo label="Precio propuesto sin IVA" inputMode="decimal" value={f.precioPropuesto} onChange={s("precioPropuesto")}/>
           <Campo label="Quién confirmó por el cliente" value={f.confirmadoPor} onChange={s("confirmadoPor")}/>
           <Campo label="Tipo de asignación" opciones={["", ...TIPOS_ASIGNACION]} value={f.asignacionTipo} onChange={s("asignacionTipo")}/>
-          {f.asignacionTipo === "Proveedor externo" && <Campo label="Proveedor" value={f.proveedor} onChange={s("proveedor")}/>}
+          {f.asignacionTipo === "Proveedor externo" && <div><Campo label="Proveedor" lista={proveedores.filter(x => x.activo !== false).map(x => x.nombre).filter(Boolean)} value={f.proveedor} onChange={s("proveedor")}/>
+            {(() => { const pr = proveedores.find(x => x.nombre === f.proveedor); if(!f.proveedor) return null; if(!pr) return <div style={{ fontSize: 11, fontWeight: 700, color: AMBER, marginTop: 3 }}>No está en el catálogo de proveedores</div>;
+              const h = proveedorHabilitado(pr, ahoraLocal().slice(0, 10)); return <div style={{ fontSize: 11, fontWeight: 700, color: h.habilitado ? GREEN : ROSE, marginTop: 3 }}>{h.habilitado ? "Proveedor habilitado" : "No habilitado: " + h.motivos[0]}</div>; })()}</div>}
           <Campo label="Placas de la unidad" lista={unidades.map(u => u.placa).filter(Boolean)} value={f.unidadPlaca} onChange={s("unidadPlaca")}/>
           <Campo label="Chofer" lista={choferes.map(c => c.nombre).filter(Boolean)} value={f.choferNombre} onChange={s("choferNombre")}/>
           <Campo label="Quién recibió" value={f.receptor} onChange={s("receptor")}/>
@@ -101,7 +125,7 @@ function Formulario({ inicial, clientes, choferes, unidades, onGuardar, onClose,
   );
 }
 
-function Detalle({ s, store, usuario, onEditar, onClose, avisar }){
+function Detalle({ s, store, usuario, unidades, onEditar, onClose, avisar }){
   const esAdmin = usuario.rol === "admin";
   const [eventos, setEventos] = useState([]);
   const [destino, setDestino] = useState("");
@@ -144,6 +168,7 @@ function Detalle({ s, store, usuario, onEditar, onClose, avisar }){
         <div style={{ marginTop: 8 }}><span style={etiqueta}>Destinos</span>{(s.destinos || []).filter(p => p.direccion).map(punto)}</div>
         {(s.maniobras || s.requisitos || s.notas) && <div style={{ fontSize: 13, color: MUTED, marginTop: 8 }}>{[s.maniobras, s.requisitos, s.notas].filter(Boolean).join(" · ")}</div>}
       </Seccion>
+      <Seccion titulo="Qué unidad necesita"><UnidadSugerida carga={s} unidades={unidades}/></Seccion>
       <Seccion titulo="Cotización y asignación">
         <div style={rejilla}>{dato("Folio de cotización", s.cotizacionFolio)}{dato("Precio propuesto", s.precioPropuesto ? dinero(s.precioPropuesto) : "")}
           {dato("Precio aprobado", s.precio ? `${dinero(s.precio)} · ${s.precioAprobadoPor || ""}` : "")}{dato("Confirmó el cliente", s.confirmadoPor)}
@@ -179,6 +204,8 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [unidades, setUnidades] = useState([]);
+  const [puntos, setPuntos] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
   const [filtro, setFiltro] = useState("Activos");
   const [q, setQ] = useState("");
   const [form, setForm] = useState(null);       // null | {} nuevo | servicio a editar
@@ -187,6 +214,8 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
   const [aviso, setAviso] = useState(null);
   useEffect(() => store.suscribir(x => { setLista(x); setCargando(false); setError(""); }, e => { setError(e.message); setCargando(false); }), [store]);
   useEffect(() => store.suscribirCatalogo("unidades", setUnidades), [store]);
+  useEffect(() => store.suscribirCatalogo("puntos_entrega", setPuntos), [store]);
+  useEffect(() => store.suscribirCatalogo("proveedores", setProveedores), [store]);
   /* Viene de la bandeja de Solicitudes: abre el formulario con lo que ya se sabe. */
   useEffect(() => { if(prefill) setForm({ ...prefill }); }, [prefill]);
   useEffect(() => { if(!aviso) return; const t = setTimeout(() => setAviso(null), 4500); return () => clearTimeout(t); }, [aviso]);
@@ -257,8 +286,8 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
         </table>
       </div>
       {form && <Dialogo titulo={form.id ? "Editar " + form.folio : form.solicitudFolio ? "Registrar servicio de " + form.solicitudFolio : "Registrar servicio"} onClose={() => setForm(null)}>
-        <Formulario inicial={form} clientes={clientes} choferes={choferes} unidades={unidades} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/></Dialogo>}
-      {detalle && !form && <Detalle s={detalle} store={store} usuario={usuario} avisar={avisar} onClose={() => setDetalleId(null)} onEditar={() => setForm(detalle)}/>}
+        <Formulario inicial={form} clientes={clientes} choferes={choferes} unidades={unidades} puntos={puntos} proveedores={proveedores} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/></Dialogo>}
+      {detalle && !form && <Detalle s={detalle} store={store} usuario={usuario} unidades={unidades} avisar={avisar} onClose={() => setDetalleId(null)} onEditar={() => setForm(detalle)}/>}
       {aviso && <div role="status" style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: aviso.mal ? ROSE : TEXT, color: "#fff", borderRadius: 12, padding: "12px 18px", fontSize: 13, fontWeight: 600, zIndex: 700, maxWidth: "90vw" }}>{aviso.msg}</div>}
     </div>
   );

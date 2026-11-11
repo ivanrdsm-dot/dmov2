@@ -170,6 +170,27 @@ service cloud.firestore {
       allow read: if esOficina();
       allow write: if false;
     }
+    /* ── Catálogos operativos: puntos de entrega y proveedores ───────────────
+       Oficina los mantiene; nadie borra (se dan de baja). Cada guardado deja
+       su registro en `cambios`, que solo se agrega. */
+    match /puntos_entrega/{id} {
+      allow read, create, update: if esOficina();
+      allow delete: if false;
+      match /cambios/{c} {
+        allow read: if esOficina();
+        allow create: if esOficina() && request.resource.data.actorUid == request.auth.uid && request.resource.data.ts == request.time;
+        allow update, delete: if false;
+      }
+    }
+    match /proveedores/{id} {
+      allow read, create, update: if esOficina();
+      allow delete: if false;
+      match /cambios/{c} {
+        allow read: if esOficina();
+        allow create: if esOficina() && request.resource.data.actorUid == request.auth.uid && request.resource.data.ts == request.time;
+        allow update, delete: if false;
+      }
+    }
     /* Contadores de folio: solo avanzan de uno en uno. */
     match /contadores/{id} {
       allow read: if esOficina();
@@ -218,7 +239,7 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema']);
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores']);
     }
   }
 }
