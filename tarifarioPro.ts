@@ -69,3 +69,39 @@ export function tablasPro(tarifas: Tarifa[]): TablasPro {
 export function puntoAdicionalSugerido(t: Pick<TablasPro, "entregaAdicionalLocal">, km: number | null | undefined): number | null {
   return !km || km <= 0 ? t.entregaAdicionalLocal : null;
 }
+
+/* ─── Reglas del Cotizador Pro que no son precios por destino ───────────────────
+   Antes estaban escritas en el código; ahora viven en el Tarifario (tipo "regla")
+   y el dueño las cambia ahí. `valorInicial` es el valor que tenía el código: solo
+   lo usa la migración que da de alta cada regla una vez. */
+export interface ReglaPro { clave: ClaveRegla; nombre: string; unidad: "%" | "$" | "puntos"; descripcion: string; valorInicial: number; }
+export type ClaveRegla = "urgente_pct" | "descuento_puntos_pct" | "descuento_puntos_tramo" | "descuento_puntos_tope" | "ayudante_foraneo" | "hotel_noche" | "comida_dia";
+export const REGLAS_PRO: ReglaPro[] = [
+  { clave: "urgente_pct", nombre: "Recargo por viaje urgente (foráneo y distribución)", unidad: "%", valorInicial: 35, descripcion: "Se suma al flete y a los puntos adicionales cuando el viaje foráneo o la distribución es urgente." },
+  { clave: "descuento_puntos_pct", nombre: "Descuento por volumen: % por tramo", unidad: "%", valorInicial: 5, descripcion: "Descuento sobre los puntos adicionales por cada tramo completo de puntos." },
+  { clave: "descuento_puntos_tramo", nombre: "Descuento por volumen: puntos por tramo", unidad: "puntos", valorInicial: 20, descripcion: "Cada cuántos puntos de entrega se gana un tramo de descuento." },
+  { clave: "descuento_puntos_tope", nombre: "Descuento por volumen: tope", unidad: "%", valorInicial: 20, descripcion: "Descuento máximo sobre los puntos adicionales." },
+  { clave: "ayudante_foraneo", nombre: "Ayudante o maniobra en viaje foráneo", unidad: "$", valorInicial: 2800, descripcion: "Precio por ayudante en un viaje foráneo." },
+  { clave: "hotel_noche", nombre: "Hotel por unidad por noche", unidad: "$", valorInicial: 1100, descripcion: "Viáticos: una habitación por unidad, por noche." },
+  { clave: "comida_dia", nombre: "Comida por persona por día", unidad: "$", valorInicial: 700, descripcion: "Viáticos: comida de cada persona en ruta, por día." },
+];
+export const idRegla = (clave: string): string => `regla_${clave}`;
+
+/** Valores vigentes de las reglas. Una regla que no está (o está dada de baja) no se inventa: falta. */
+export function reglasPro(tarifas: Tarifa[]): { valores: Partial<Record<ClaveRegla, number>>; faltantes: string[] } {
+  const valores: Partial<Record<ClaveRegla, number>> = {}, faltantes: string[] = [];
+  for(const r of REGLAS_PRO){
+    const t = (tarifas ?? []).find(x => x && x.tipo === "regla" && x.clave === r.clave && x.activo !== false);
+    const v = Number(t?.valor);
+    if(t && t.valor !== null && t.valor !== undefined && Number.isFinite(v) && v >= 0) valores[r.clave] = v;
+    else faltantes.push(`Regla "${r.nombre}"`);
+  }
+  return { valores, faltantes };
+}
+
+/** Descuento por volumen de puntos con las reglas vigentes (0 si alguna falta). */
+export function descuentoPorPuntos(valores: Partial<Record<ClaveRegla, number>>, puntos: number): number {
+  const pct = valores.descuento_puntos_pct, tramo = valores.descuento_puntos_tramo, tope = valores.descuento_puntos_tope;
+  if(!(pct! > 0) || !(tramo! >= 1) || tope === undefined) return 0;
+  return Math.min(tope / 100, Math.floor((Number(puntos) || 0) / tramo!) * pct! / 100);
+}

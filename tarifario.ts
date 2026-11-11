@@ -18,7 +18,9 @@ export type Bloque = "base" | "cliente";
 export const IVA_PCT = 16;
 
 export interface Tarifa {
-  id?: string; tipo: "nacional" | "local"; nombre: string; km?: number | null;
+  id?: string; tipo: "nacional" | "local" | "regla"; nombre: string; km?: number | null;
+  /* Reglas del cotizador (tipo "regla"): un solo valor editable, en % o en pesos. */
+  clave?: string; unidad?: "%" | "$" | "puntos"; valor?: number | null; descripcion?: string;
   base?: Partial<Record<UnidadTarifa, number>>; cliente?: Partial<Record<UnidadTarifa, number>>;
   valorUnico?: number | null;       // conceptos con un solo precio (p. ej. entrega adicional en ruta local)
   activo?: boolean; [k: string]: unknown;
@@ -76,6 +78,15 @@ export function factorCliente(t: Tarifa): number | null {
 
 export function validarTarifa(t: Tarifa): { ok: boolean; errores: string[]; avisos: string[] } {
   const errores: string[] = [], avisos: string[] = [];
+  if(t.tipo === "regla"){
+    const v = num(t.valor);
+    if(!String(t.nombre ?? "").trim()) errores.push("Nombre");
+    if(String(t.valor ?? "").trim() === "" || !Number.isFinite(v) || v < 0) errores.push("Valor: debe ser cero o mayor");
+    else if(t.unidad === "%" && v > 100) errores.push("Valor: un porcentaje no puede pasar de 100");
+    else if(t.unidad === "puntos" && !(v >= 1 && Number.isInteger(v))) errores.push("Valor: debe ser un número entero de puntos");
+    if(Number.isFinite(v) && v === 0) avisos.push("Con valor 0 la regla no se aplica");
+    return { ok: errores.length === 0, errores, avisos };
+  }
   if(!String(t.nombre ?? "").trim()) errores.push("Nombre");
   if(t.tipo !== "nacional" && t.tipo !== "local") errores.push("Tipo");
   let algun = false;
@@ -104,6 +115,11 @@ export function diffTarifa(antes: Tarifa | null, despues: Tarifa): CambioPrecio[
   }
   const a = val(antes?.valorUnico), d = val(despues.valorUnico);
   if(a !== d) out.push({ campo: "valorUnico", antes: a, despues: d });
+  if(despues.tipo === "regla" || antes?.tipo === "regla"){
+    const r = (v: unknown) => { const n = num(v); return Number.isFinite(n) && String(v ?? "").trim() !== "" ? Math.round(n * 100) / 100 : null; };
+    const ra = r(antes?.valor), rd = r(despues.valor);
+    if(ra !== rd) out.push({ campo: "valor", antes: ra, despues: rd });
+  }
   const ka = val(antes?.km), kd = val(despues.km);
   if(ka !== kd) out.push({ campo: "km", antes: ka, despues: kd });
   return out;

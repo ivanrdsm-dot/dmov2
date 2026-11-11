@@ -29,6 +29,32 @@ function Calculadora({ tarifas }){
     </Seccion>);
 }
 
+const valorRegla = r => r.valor === null || r.valor === undefined ? "—" : r.unidad === "%" ? `${r.valor} %` : r.unidad === "puntos" ? `${r.valor} puntos` : pesos(r.valor);
+function EditarRegla({ inicial, store, onGuardar, onClose, guardando }){
+  const [valor, setValor] = useState(inicial.valor ?? ""), [cambios, setCambios] = useState([]), [intento, setIntento] = useState(false);
+  useEffect(() => store.suscribirCambios(inicial.id, setCambios), [inicial.id, store]);
+  const v = validarTarifa({ ...inicial, valor });
+  const fmt = x => x === null || x === undefined ? "—" : valorRegla({ ...inicial, valor: x });
+  return (
+    <form onSubmit={e => { e.preventDefault(); setIntento(true); if(v.ok) onGuardar({ ...inicial, valor }); }}>
+      <div style={{ fontSize: 13, color: MUTED, marginBottom: 12 }}>{inicial.descripcion}</div>
+      <div style={{ maxWidth: 260 }}><Campo label={`Valor (${inicial.unidad === "%" ? "porcentaje" : inicial.unidad === "puntos" ? "número de puntos" : "pesos, sin IVA"})`} inputMode="decimal" value={valor} onChange={e => setValor(e.target.value)}/></div>
+      {intento && !v.ok && <div role="alert" style={{ color: ROSE, fontSize: 13, margin: "8px 0" }}><b>Falta:</b> {v.errores.join(" · ")}</div>}
+      {v.avisos.map(a => <div key={a} style={{ color: AMBER, fontSize: 13, fontWeight: 700, marginTop: 6 }}>{a}</div>)}
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap", margin: "12px 0" }}>
+        <button type="button" onClick={onClose} style={boton(MUTED, false)}>Cancelar</button>
+        <button type="submit" disabled={guardando} style={{ ...boton(A), opacity: guardando ? .6 : 1 }}>{guardando ? "Guardando…" : "Guardar regla"}</button>
+      </div>
+      <Seccion titulo="Historial de cambios">
+        {cambios.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Sin cambios registrados.</div> : cambios.map(c => (
+          <div key={c.id} style={{ fontSize: 13, padding: "6px 0", borderBottom: "1px solid " + BORDER }}>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: MUTED }}>{fechaHora(c.ts)}</span> · <b>{c.actorNombre}</b> · {c.tipo === "importado" ? "la pasó del código al tarifario" : "cambió el valor"}
+            {(c.cambios || []).map(x => <div key={x.campo} style={{ color: MUTED, marginLeft: 12 }}>{fmt(x.antes)} → {fmt(x.despues)}</div>)}
+          </div>))}
+      </Seccion>
+    </form>);
+}
+
 function Editar({ inicial, store, usuario, onGuardar, onClose, guardando }){
   const nuevo = !inicial.id;
   const [f, setF] = useState({ tipo: "nacional", nombre: "", km: "", valorUnico: "", activo: true, ...inicial, base: { ...(inicial.base || {}) }, cliente: { ...(inicial.cliente || {}) } });
@@ -85,14 +111,28 @@ export default function Tarifario({ store, usuario }){
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div style={{ flex: 1, minWidth: 220 }}><h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 24, margin: 0 }}>Tarifario</h1>
           <div style={{ fontSize: 13, color: MUTED }}>La tabla de precios del sistema. Cada cambio queda en el historial. Precios sin IVA.</div></div>
-        {esAdmin && <button onClick={() => setForm({ tipo: tab })} style={boton(A)}>+ Agregar tarifa</button>}
+        {esAdmin && tab !== "regla" && <button onClick={() => setForm({ tipo: tab })} style={boton(A)}>+ Agregar tarifa</button>}
       </div>
       <Calculadora tarifas={tarifas}/>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-        {[["nacional", "Nacional"], ["local", "Local ZMCM"]].map(([k, l]) => <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k} style={{ border: "1.5px solid " + (tab === k ? A : BD2), background: tab === k ? A + "14" : "#fff", color: tab === k ? A : MUTED, borderRadius: 999, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l} · {tarifas.filter(t => t.tipo === k).length}</button>)}
+        {[["nacional", "Nacional"], ["local", "Local ZMCM"], ["regla", "Reglas del cotizador"]].map(([k, l]) => <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k} style={{ border: "1.5px solid " + (tab === k ? A : BD2), background: tab === k ? A + "14" : "#fff", color: tab === k ? A : MUTED, borderRadius: 999, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l} · {tarifas.filter(t => t.tipo === k).length}</button>)}
         <input value={q} onChange={e => setQ(e.target.value)} aria-label="Buscar tarifa" placeholder="Buscar…" style={{ ...caja, maxWidth: 280, marginLeft: "auto" }}/>
       </div>
       {error && <div role="alert" style={{ color: ROSE, fontSize: 13, marginBottom: 10 }}>No se pudo leer el tarifario: {error}</div>}
+      {tab === "regla" ? <div style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 640 }}>
+          <thead><tr>{["Regla", "Valor", "Para qué sirve", ""].map(h => <th key={h} style={{ textAlign: "left", padding: "11px 10px", fontSize: 10, color: MUTED, letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid " + BORDER }}>{h}</th>)}</tr></thead>
+          <tbody>
+            {visibles.map(t => <tr key={t.id} style={{ borderBottom: "1px solid " + BORDER, verticalAlign: "top" }}>
+              <td style={{ padding: "9px 10px" }}><b>{t.nombre}</b></td>
+              <td style={{ padding: "9px 10px", fontFamily: MONO, fontWeight: 700, whiteSpace: "nowrap" }}>{valorRegla(t)}</td>
+              <td style={{ padding: "9px 10px", color: MUTED }}>{t.descripcion}</td>
+              <td style={{ padding: "9px 10px", textAlign: "right" }}><button onClick={() => setForm(t)} style={{ ...boton(BLUE, false), padding: "6px 12px", minHeight: 34 }}>{esAdmin ? "Editar" : "Ver"}</button></td></tr>)}
+            {!cargando && visibles.length === 0 && <tr><td colSpan={4} style={{ padding: 28, textAlign: "center", color: MUTED }}>Todavía no hay reglas cargadas.</td></tr>}
+            {cargando && <tr><td colSpan={4} style={{ padding: 28, textAlign: "center", color: MUTED }}>Cargando…</td></tr>}
+          </tbody>
+        </table>
+      </div> : <>
       <div style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
           <thead><tr>{[tab === "nacional" ? "Destino" : "Concepto", ...(tab === "nacional" ? ["Km"] : []), ...UNIDADES_TARIFA.map(u => u.nombre), ""].map(h => <th key={h} style={{ textAlign: "left", padding: "11px 10px", fontSize: 10, color: MUTED, letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid " + BORDER }}>{h}</th>)}</tr></thead>
@@ -106,10 +146,13 @@ export default function Tarifario({ store, usuario }){
             {cargando && <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", color: MUTED }}>Cargando…</td></tr>}
           </tbody>
         </table>
-      </div>
+      </div></>}
+      {tab === "regla" && <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Estas reglas las usan el Cotizador Pro y el Planificador de rutas. Al guardar un cambio se aplica de inmediato y queda en el historial.</div>}
       {tab === "nacional" && <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Arriba el precio base, que es el que se cotiza. Abajo en azul, la referencia con ganancia que traía el Excel. La ganancia de cada cotización se decide en la consulta de arriba.</div>}
       {form && <Dialogo titulo={form.id ? form.nombre : "Agregar tarifa"} onClose={() => setForm(null)}>
-        {esAdmin ? <Editar inicial={form} store={store} usuario={usuario} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/>
+        {form.tipo === "regla" ? (esAdmin ? <EditarRegla inicial={form} store={store} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/>
+            : <fieldset disabled style={{ border: "none", padding: 0, margin: 0 }}><EditarRegla inicial={form} store={store} onGuardar={() => {}} onClose={() => setForm(null)} guardando={false}/></fieldset>)
+          : esAdmin ? <Editar inicial={form} store={store} usuario={usuario} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/>
           : <fieldset disabled style={{ border: "none", padding: 0, margin: 0 }}><Editar inicial={form} store={store} usuario={usuario} onGuardar={() => {}} onClose={() => setForm(null)} guardando={false}/></fieldset>}
       </Dialogo>}
       {aviso && <div role="status" style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: aviso.mal ? ROSE : TEXT, color: "#fff", borderRadius: 12, padding: "12px 18px", fontSize: 13, fontWeight: 600, zIndex: 700, maxWidth: "90vw" }}>{aviso.msg}</div>}
