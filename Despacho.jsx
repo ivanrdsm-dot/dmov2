@@ -1,6 +1,6 @@
 /* DESPACHO Y TORRE DE CONTROL · quién va a dónde, quién está transmitiendo y qué alertas hay.
    Asignar, armar ruta, ligar cuentas y autorizar excepciones lo ejecuta el servidor. */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, etiqueta, caja, boton, Campo, Chip, Seccion, Dialogo } from "./uiBasico.jsx";
 import { estadoSenal, faltantesChoferApp, avanceRuta, semaforoViaje } from "./despacho.ts";
 
@@ -63,7 +63,45 @@ function Viaje({ s, ubicacion, choferes, store, ahora, avisar }){
     </div>);
 }
 
-export default function Despacho({ store, usuario }){
+/* Mapa de choferes en ruta: un punto por chofer con su última ubicación (verde = señal
+   reciente, ámbar = vieja, rojo = sin señal). Mapbox se carga solo al abrir esta pantalla. */
+function MapaChoferes({ cargarMapa, puntos }){
+  const cont = useRef(null), mapa = useRef(null), marcas = useRef([]);
+  const [listo, setListo] = useState(false), [error, setError] = useState("");
+  useEffect(() => {
+    let vivo = true;
+    cargarMapa().then(mb => {
+      if(!vivo || !cont.current || mapa.current) return;
+      mapa.current = new mb.Map({ container: cont.current, style: "mapbox://styles/mapbox/streets-v12", center: [-99.1332, 19.4326], zoom: 9 });
+      mapa.current.addControl(new mb.NavigationControl({ showCompass: false }), "top-right");
+      mapa.current.on("load", () => vivo && setListo(true));
+      mapa.current.__mb = mb;
+    }).catch(() => vivo && setError("No se pudo cargar el mapa."));
+    return () => { vivo = false; marcas.current.forEach(m => m.remove()); mapa.current?.remove(); mapa.current = null; };
+  }, [cargarMapa]);
+  useEffect(() => {
+    const m = mapa.current, mb = m?.__mb;
+    if(!listo || !mb) return;
+    marcas.current.forEach(x => x.remove()); marcas.current = [];
+    const conPos = puntos.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+    for(const p of conPos){
+      const el = document.createElement("div");
+      el.style.cssText = `width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 2px ${p.color};background:${p.color}`;
+      el.title = p.titulo;
+      marcas.current.push(new mb.Marker({ element: el }).setLngLat([p.lng, p.lat]).setPopup(new mb.Popup({ offset: 12 }).setText(p.titulo)).addTo(m));
+    }
+    if(conPos.length === 1) m.flyTo({ center: [conPos[0].lng, conPos[0].lat], zoom: 12 });
+    else if(conPos.length > 1){ const b = new mb.LngLatBounds(); conPos.forEach(p => b.extend([p.lng, p.lat])); m.fitBounds(b, { padding: 60, maxZoom: 13 }); }
+  }, [listo, puntos]);
+  return (
+    <div style={{ position: "relative", height: 340, borderRadius: 14, overflow: "hidden", border: "1px solid " + BORDER, background: "#eef2f7" }}>
+      <div ref={cont} style={{ position: "absolute", inset: 0 }}/>
+      {(error || (listo && puntos.every(p => !Number.isFinite(p.lat)))) && <div style={{ position: "absolute", left: 12, bottom: 12, right: 12, background: "#fff", borderRadius: 10, padding: "8px 12px", fontSize: 13, color: MUTED, boxShadow: "0 4px 16px rgba(0,0,0,.08)" }}>
+        {error || "Todavía ningún chofer está mandando ubicación. Aparecerán aquí cuando usen la app."}</div>}
+    </div>);
+}
+
+export default function Despacho({ store, usuario, cargarMapa = null }){
   const [choferes, setChoferes] = useState([]), [ubicaciones, setUbicaciones] = useState({}), [servicios, setServicios] = useState([]), [alertas, setAlertas] = useState([]);
   const [ahora, setAhora] = useState(Date.now());
   const [ligar, setLigar] = useState(null), [correo, setCorreo] = useState(""), [enlace, setEnlace] = useState("");
@@ -79,6 +117,9 @@ export default function Despacho({ store, usuario }){
   const enRuta = servicios.filter(s => s.estado === "En ruta"), porSalir = servicios.filter(s => s.estado === "Asignada");
   const activos = useMemo(() => choferes.filter(c => c.status !== "Inactivo" && c.activo !== false).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), "es")), [choferes]);
   const criticas = alertas.filter(a => !a.atendida && ["sos", "ubicacion_simulada", "cierre_fuera_de_punto", "velocidad_imposible"].includes(a.type));
+  const puntosMapa = useMemo(() => activos.map(c => { const u = ubicaciones[c.id], sn = estadoSenal(u, ahora);
+    return { id: c.id, lat: Number(u?.lat), lng: Number(u?.lng), titulo: `${c.nombre || "Chofer"} · ${sn.senal}${sn.minutos !== null ? " (" + sn.minutos + " min)" : ""}`,
+      color: COLOR_SENAL[sn.senal] || AMBER }; }), [activos, ubicaciones, ahora]);
   const correr = async (fn) => { setOcupado(true); try { await fn(); } catch(e){ avisar(mensajeError(e), true); } finally { setOcupado(false); } };
   const tarjeta = (l, v, color) => <div style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, padding: "14px 16px" }}><div style={{ ...etiqueta, marginBottom: 6 }}>{l}</div><div style={{ fontFamily: DISP, fontWeight: 800, fontSize: 26, color }}>{v}</div></div>;
   return (
@@ -90,6 +131,7 @@ export default function Despacho({ store, usuario }){
         {tarjeta("Sin señal", enRuta.filter(s => estadoSenal(ubicaciones[s.choferId], ahora).senal === "sin señal").length, ROSE)}
         {tarjeta("Alertas críticas sin atender", criticas.length, criticas.length ? ROSE : GREEN)}
       </div>
+      {cargarMapa && <Seccion titulo="Mapa"><MapaChoferes cargarMapa={cargarMapa} puntos={puntosMapa}/></Seccion>}
       <Seccion titulo="Viajes">
         {servicios.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Nadie está en ruta ahora. Un servicio aparece aquí cuando le asignas chofer.</div>
           : <div style={{ display: "grid", gap: 10 }}>{[...enRuta, ...porSalir].map(s => <Viaje key={s.id} s={s} ubicacion={ubicaciones[s.choferId]} choferes={activos} store={store} ahora={ahora} avisar={avisar}/>)}</div>}

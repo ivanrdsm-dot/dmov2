@@ -108,7 +108,7 @@ export const conectorSolicitudes = onRequest(
 
 /* Fase 1 · chofer rastreado y verificado */
 export {
-  choferRegistrarDispositivo, choferCheckIn, choferIniciarRuta, choferSubirPosiciones, choferCerrarParada, choferSOS,
+  choferRegistrarDispositivo, choferCheckIn, choferIniciarRuta, choferSubirPosiciones, choferCerrarParada, choferSOS, choferTerminarJornada,
   oficinaVincularChofer, oficinaLiberarDispositivo, oficinaPrepararRuta, oficinaAutorizarExcepcion,
 } from "./chofer.js";
 
