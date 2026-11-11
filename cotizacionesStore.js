@@ -64,7 +64,7 @@ export function crearCotizacionesStore(db){
       const ref = doc(db, COLECCION_COTIZACIONES, c.id);
       const lote = writeBatch(db);
       lote.update(ref, { estado: "Aprobada", "estadoTs.Aprobada": serverTimestamp(), precioAprobado: n,
-        aprobadoPor: usuario.nombre || usuario.email || usuario.uid, aprobadoEn: serverTimestamp(), actualizadoEn: serverTimestamp() });
+        aprobadoPor: usuario.nombre || usuario.email || usuario.uid, aprobadoPorUid: usuario.uid, aprobadoEn: serverTimestamp(), actualizadoEn: serverTimestamp() });
       lote.set(doc(collection(ref, "eventos")), { tipo: "precio_aprobado", de: c.estado, a: "Aprobada", ...actor(usuario), ts: serverTimestamp(),
         nota: t(nota, 500), cambios: [{ campo: "precioAprobado", antes: c.precioPropuesto ?? "", despues: n }] });
       await lote.commit();

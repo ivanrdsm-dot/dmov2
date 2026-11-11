@@ -24,7 +24,7 @@ export interface Cotizacion {
   solicitudId?: string; solicitudFolio?: string; solicitudCanal?: string; solicitudRecibidaEn?: number | null;
   servicioId?: string; servicioFolio?: string;
   entrada?: Record<string, unknown>; resultado?: ResumenCalculo;
-  precioPropuesto?: number | null; precioAprobado?: number; aprobadoPor?: string; aprobadoEn?: number | null;
+  precioPropuesto?: number | null; precioAprobado?: number; aprobadoPor?: string; aprobadoPorUid?: string; aprobadoEn?: number | null;
   motivo?: string; sustituyeA?: string;
   creadoEn?: number | null; creadoPorNombre?: string; estadoTs?: Record<string, number>;
   [k: string]: unknown;
