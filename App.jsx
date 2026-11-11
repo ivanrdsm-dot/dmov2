@@ -34,6 +34,7 @@ import { crearDespachoStore } from "./despachoStore.js";
 const DespachoVista = lazy(()=>import("./Despacho.jsx"));
 import { crearTarifarioStore } from "./tarifarioStore.js";
 import { porPagarPorTipo, tipoDeuda } from "./deudas.ts";
+import { facturaEmitida, facturaPorCobrar, facturaVencida, facturaSinFechaVenc, diasDeAtraso } from "./cobranza.ts";
 import { tablasPro, puntoAdicionalSugerido, reglasPro, descuentoPorPuntos } from "./tarifarioPro.ts";
 import { redondearDecenasArriba } from "./tarifario.ts";
 import { cotizarDistribucion } from "./distribucion.ts";
@@ -3350,29 +3351,27 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
     return out.sort((a,b)=>(a.nivel==="vencido"?0:1)-(b.nivel==="vencido"?0:1));
   },[unidadesEx,choferesEx]);
   const kpi=useMemo(()=>{
-    const fAnio=facts.filter(f=>Number(f.anio)===ANIO); // Number(): anio llega como string en docs viejos
+    const fAnio=facts.filter(f=>Number(f.anio)===ANIO&&facturaEmitida(f)); // sin canceladas ni solo solicitadas (igual que Inicio)
     // Ingresos por mes (subtotal sin IVA)
     const ingMes=MESES.map(m=>fAnio.filter(f=>f.mesOp===m).reduce((a,f)=>a+(Number(f.subtotal||f.monto)||0),0));
     // Costos por mes: viáticos + gastos chofer aprobados
-    const gasChNorm=gastosCh.filter(g=>g.estado==="reembolsado"||g.estado==="aprobado").map(g=>{
-      const d=g.fechaTs?.seconds?new Date(g.fechaTs.seconds*1000):(g.createdAt?.seconds?new Date(g.createdAt.seconds*1000):null);
-      return d?{mes:MESES[d.getMonth()],anio:d.getFullYear(),monto:Number(g.monto)||0,tipo:g.tipo||"otro",operador:g.choferNombre||"",unidad:""}:null;
-    }).filter(Boolean);
-    const gastosTodos=[...viat.map(v=>({mes:v.mes,anio:v.anio,monto:Number(v.monto)||0,tipo:v.tipo||"otro",operador:v.operador||"",unidad:v.unidad||""})),...gasChNorm].filter(g=>Number(g.anio)===ANIO);
+    /* Mismos costos que Inicio (viáticos + pagos a proveedores). Los gastos de chofer
+       reembolsados ya llegan por la contabilidad: sumarlos aquí los contaba dos veces. */
+    const gastosTodos=viat.map(v=>({mes:v.mes,anio:v.anio,monto:Number(v.monto)||0,tipo:v.tipo||"otro",operador:v.operador||"",unidad:v.unidad||""})).filter(g=>Number(g.anio)===ANIO);
     const gasMes=MESES.map(m=>gastosTodos.filter(g=>g.mes===m).reduce((a,g)=>a+g.monto,0));
     const utilMes=MESES.map((_,i)=>ingMes[i]-gasMes[i]);
     // Este mes vs anterior
     const ingActual=ingMes[MES_IDX], ingPrev=MES_IDX>0?ingMes[MES_IDX-1]:0;
     const crecimiento=ingPrev>0?((ingActual-ingPrev)/ingPrev*100):0;
     // Cartera
-    const abiertas=facts.filter(f=>(f.status==="Pendiente"||f.status==="Vencida")&&(Number(f.total)||0)>0);
+    const abiertas=facts.filter(facturaPorCobrar);
     const cxc=abiertas.reduce((a,f)=>a+(Number(f.total)||0),0);
-    const vencidas=abiertas.filter(f=>f.status==="Vencida");
+    const vencidas=abiertas.filter(f=>facturaVencida(f,HOY.getTime()));
     const cxcVencida=vencidas.reduce((a,f)=>a+(Number(f.total)||0),0);
     // Aging de vencidas
     const aging={a30:0,a60:0,a90:0};
     vencidas.forEach(f=>{
-      const dias=f.fechaVenc?Math.floor((HOY-new Date(f.fechaVenc))/86400000):0;
+      const dias=diasDeAtraso(f,HOY.getTime());
       const t=Number(f.total)||0;
       if(dias<=30)aging.a30+=t; else if(dias<=60)aging.a60+=t; else aging.a90+=t;
     });
@@ -3838,7 +3837,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     const topOperadores=mkTop(opMap),topUnidades=mkTop(uniMap);
 
     // Cartera y captura (global, no filtrada por cliente)
-    const carteraVencida=facts.filter(f=>f.status==="Vencida").reduce((a,f)=>a+(Number(f.total)||0),0);
+    const carteraVencida=facts.filter(f=>facturaVencida(f,Date.now())).reduce((a,f)=>a+(Number(f.total)||0),0);
     const sinCaptura=factsBase.filter(f=>(Number(f.total)||0)===0).length;
     const ventasMesProm=ingTotales/Math.max(1,nMeses);
 
@@ -4121,14 +4120,10 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const sinFacturar=facts.filter(f=>f.status!=="Cancelada"&&((f.total||0)<=0||f.status==="Solicitada a Katia"||f.status==="Solicitud interna"||f.tipoDocumento==="solicitud_interna"));
   // Cartera vencida — facturas emitidas con fechaVenc < hoy sin pagar
   const hoyTs = Date.now();
-  const cartera = factsEmitidas.filter(f=>{
-    if(f.status==="Pagada") return false;
-    if(!f.fechaVenc) return f.status==="Vencida";
-    return new Date(f.fechaVenc).getTime() < hoyTs;
-  });
+  const cartera = factsEmitidas.filter(f=>facturaVencida(f,hoyTs));   // regla única (cobranza.ts)
   const carteraVencida = cartera.reduce((a,f)=>a+(f.total||0),0);
   /* Sin fecha de vencimiento no se puede saber si ya venció: se avisa, no se da por "al corriente". */
-  const sinVenc = factsEmitidas.filter(f=>f.status!=="Pagada"&&!f.fechaVenc&&f.status!=="Vencida");
+  const sinVenc = factsEmitidas.filter(facturaSinFechaVenc);
   const montoSinVenc = sinVenc.reduce((a,f)=>a+(f.total||0),0);
   const pctCob=totalFac>0?Math.round(cobrado/totalFac*100):0;
   const totalGastos=viat.reduce((a,g)=>a+(g.monto||0),0);
@@ -7291,7 +7286,7 @@ function Facturas({rol="admin"}){
   const totTotal=filt.reduce((a,f)=>a+(f.total||0),0);
   const cobrado=filt.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const pendiente=filt.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
-  const vencido=filt.filter(f=>f.status==="Vencida").reduce((a,f)=>a+(f.total||0),0);
+  const vencido=filt.filter(f=>facturaVencida(f,Date.now())).reduce((a,f)=>a+(f.total||0),0);
   const porMes=MESES.map(m=>{const its=items.filter(f=>f.mesOp===m);return{m,fac:its.reduce((a,f)=>a+(f.total||0),0),cob:its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0),n:its.length};});
   const maxV=Math.max(...porMes.map(m=>m.fac),1);
   const proyAnual=porMes.reduce((a,m)=>a+m.fac,0);
@@ -7346,8 +7341,8 @@ function Facturas({rol="admin"}){
 
       {tab==="cartera"&&(()=>{
         const hoyMs = Date.now();
-        const cart = items.filter(f=>(f.status==="Pendiente"||f.status==="Vencida")&&f.fechaVenc&&new Date(f.fechaVenc).getTime()<hoyMs)
-          .map(f=>({...f,diasVencido:Math.floor((hoyMs-new Date(f.fechaVenc).getTime())/86400000)}))
+        const cart = items.filter(f=>facturaVencida(f,hoyMs))
+          .map(f=>({...f,diasVencido:diasDeAtraso(f,hoyMs)}))
           .sort((a,b)=>b.diasVencido-a.diasVencido);
         const buckets = {"1-15":0,"16-30":0,"31-60":0,"60+":0};
         cart.forEach(f=>{
