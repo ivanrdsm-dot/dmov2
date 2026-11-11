@@ -157,7 +157,9 @@ function Detalle({ s, store, usuario, unidades, onEditar, onClose, avisar }){
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
         <Chip color={COLOR_ESTADO[s.estado] || MUTED}>{s.estado}</Chip>
         <span style={{ fontSize: 12, color: MUTED }}>Recibida por {s.canal} el {s.recibidaEn?.replace("T", " ")}{min !== null ? ` · cotizada en ${min} min` : ""}</span>
-        <button onClick={onEditar} style={{ ...boton(BLUE, false), marginLeft: "auto" }}>Editar datos</button>
+        <button onClick={() => correr(async () => { const { descargarHojaEntrega } = await import("./hojaEntregaPdf.js"); const h = await descargarHojaEntrega(s, await store.leerParadas(s.id)); if(!h.completa) avisar("Hoja generada como documento parcial: " + h.pendientes.join(" · "), true); }, "Hoja de entrega descargada")}
+          disabled={ocupado} style={{ ...boton(GREEN, false), marginLeft: "auto" }}>Hoja de entrega (PDF)</button>
+        <button onClick={onEditar} style={boton(BLUE, false)}>Editar datos</button>
       </div>
       {v.pendientes.length > 0 && <div style={{ background: AMBER + "10", border: "1px solid " + AMBER + "50", color: "#92400e", borderRadius: 12, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}><b>PENDIENTE:</b> {v.pendientes.join(" · ")}</div>}
       <Seccion titulo="Solicitud">
