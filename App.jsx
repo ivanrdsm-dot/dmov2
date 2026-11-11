@@ -2695,7 +2695,7 @@ function CitySearch({value,onChange,onSelect,veh,exclude=[],estadoFilter="(Todos
           {excludedMatches.length>0&&<div style={{padding:"10px 14px",background:AMBER+"08",borderTop:filt.length>0?"1px solid "+AMBER+"30":"none"}}>
             <div style={{fontSize:10,fontWeight:700,color:AMBER,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>⚠ Ya agregada en esta lista</div>
             {excludedMatches.slice(0,3).map(t=>(
-              <div key={t.c} style={{fontSize:12,color:MUTED,padding:"3px 0"}}>📍 {t.c} <span style={{color:AMBER,fontSize:10,fontWeight:600}}>· Búscala en la otra sección (destino/origen) para agregarla ahí también</span></div>
+              <div key={t.c} style={{fontSize:12,color:MUTED,padding:"3px 0"}}>📍 {t.c} <span style={{color:AMBER,fontSize:10,fontWeight:600}}>· Ya está en la lista. Para cambiarla, edítala ahí abajo (én</span></div>
             ))}
           </div>}
         </div>
@@ -3193,7 +3193,7 @@ function getNavSections(rol){
     items:s.items.filter(item=>isAdmin||!item.adminOnly)
   })).filter(s=>s.items.length>0);
 }
-function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout}){
+function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout,onBuscar}){
   const isMobile = typeof window!=="undefined"&&window.innerWidth<768;
   const w = isMobile?260:(open?220:64);
   const showFull = open||isMobile;
@@ -3205,7 +3205,7 @@ function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout}){
         {showFull&&<div style={{flex:1,minWidth:0}}><div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:"#fff",letterSpacing:"-0.02em",whiteSpace:"nowrap"}}>DMvimiento</div><div style={{fontSize:9,color:"#ffffff60",fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",whiteSpace:"nowrap"}}>LOGISTICS OS v2.2</div></div>}
         {showFull&&isMobile&&<button onClick={()=>setOpen(false)} className="btn" style={{width:32,height:32,borderRadius:8,background:"rgba(255,255,255,.08)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X size={16}/></button>}
       </div>
-      {showFull&&<button onClick={()=>!isMobile&&setOpen(false)} className="btn" style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:"1px solid #ffffff14",marginBottom:10,color:"#ffffff60",fontSize:11,whiteSpace:"nowrap"}}><Search size={12}/><span style={{flex:1,textAlign:"left"}}>Buscar… ⌘K</span></button>}
+      {showFull&&<button onClick={()=>onBuscar?onBuscar():(!isMobile&&setOpen(false))} className="btn" style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:"1px solid #ffffff14",marginBottom:10,color:"#ffffff60",fontSize:11,whiteSpace:"nowrap"}}><Search size={12}/><span style={{flex:1,textAlign:"left"}}>Buscar… ⌘K</span></button>}
       <nav style={{flex:1,overflowY:"auto"}}>
         {getNavSections(rol||"admin").map(({section,items})=>(
           <div key={section} style={{marginBottom:8}}>
@@ -4018,14 +4018,14 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   useEffect(()=>{
     const u1=onSnapshot(collection(db,"gastosChofer"),s=>setGastosChofer(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(collection(db,"jornadas"),s=>setJornadas(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u3=onSnapshot(collection(db,"alertas"),s=>setAlertas(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u3=onSnapshot(query(collection(db,"alertas"),limit(500)),s=>setAlertas(s.docs.map(d=>normalizarAlerta(d.id,d.data()))));
     return()=>{u1();u2();u3();};
   },[]);
   const gastosPendientes = gastosChofer.filter(g=>g.estado==="pendiente").reduce((a,g)=>a+(g.monto||0),0);
   const gastosHoy = gastosChofer.filter(g=>{const ts=g.fechaTs?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).reduce((a,g)=>a+(g.monto||0),0);
   const jornadasActivas = jornadas.filter(j=>!j.outTs).length;
   const sosSinAtender = alertasItems.filter(a=>a.type==="sos"&&!a.atendida).length;
-  const alertasCriticas = alertasItems.filter(a=>(a.type==="sos"||a.type==="geofence")&&!a.atendida).length;
+  const alertasCriticas = alertasItems.filter(a=>ALERTAS_CRITICAS.includes(a.type)&&!a.atendida).length;
 
   /* Registros contables heredados con monto; emisión de CFDI aún no verificada.
      Se excluyen canceladas, solicitudes a Katia y los stubs de bitácora en $0. */
@@ -4045,15 +4045,25 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
     return new Date(f.fechaVenc).getTime() < hoyTs;
   });
   const carteraVencida = cartera.reduce((a,f)=>a+(f.total||0),0);
+  /* Sin fecha de vencimiento no se puede saber si ya venció: se avisa, no se da por "al corriente". */
+  const sinVenc = factsEmitidas.filter(f=>f.status!=="Pagada"&&!f.fechaVenc&&f.status!=="Vencida");
+  const montoSinVenc = sinVenc.reduce((a,f)=>a+(f.total||0),0);
   const pctCob=totalFac>0?Math.round(cobrado/totalFac*100):0;
   const totalGastos=viat.reduce((a,g)=>a+(g.monto||0),0);
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const mesActual=MESES[new Date().getMonth()];
   /* P&L contable real (mismo motor que Reportes): ingresos sin IVA − costos,
      cuadra con las balanzas de comprobación conciliadas. */
-  const plYtd=useMemo(()=>buildPLData(facts,viat,"Ene",mesActual,"2026"),[facts,viat,mesActual]);
-  const ingYtd=plYtd.reduce((a,d)=>a+d.subtotal,0);
-  const cosYtd=plYtd.reduce((a,d)=>a+d.totalCostos,0);
+  const anioActual=String(new Date().getFullYear());
+  const plYtd=useMemo(()=>buildPLData(facts,viat,"Ene",mesActual,anioActual),[facts,viat,mesActual,anioActual]);
+  /* El resultado del año solo junta meses que ya tienen costos registrados (cierre del
+     contador o captura): si no, los ingresos de meses sin costos inflan la utilidad. */
+  const iUltCosto=plYtd.reduce((k,d,i)=>d.totalCostos>0?i:k,-1);
+  const plCerrado=iUltCosto>=0?plYtd.slice(0,iUltCosto+1):[];
+  const mesCierre=iUltCosto>=0?plYtd[iUltCosto].mes:null;
+  const ingPorCerrar=plYtd.slice(iUltCosto+1).reduce((a,d)=>a+d.subtotal,0);
+  const ingYtd=plCerrado.reduce((a,d)=>a+d.subtotal,0);
+  const cosYtd=plCerrado.reduce((a,d)=>a+d.totalCostos,0);
   const utilYtd=ingYtd-cosYtd;
   const margYtd=ingYtd>0?utilYtd/ingYtd:null;
   const plMes=plYtd[plYtd.length-1]||{subtotal:0,totalCostos:0,utilidad:0};
@@ -4145,7 +4155,8 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:"linear-gradient(90deg,"+A+",#fb923c,"+GREEN+")"}}/>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18,flexWrap:"wrap",gap:8}}>
             <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.1em",textTransform:"uppercase",color:"#fdba74"}}>
-              📊 Resultado provisional 2026 · Ene – {mesActual} · conciliación pendiente
+              📊 Resultado {anioActual} · {mesCierre?"Ene – "+mesCierre:"sin costos registrados"} · meses con costos
+              {ingPorCerrar>0&&<div style={{fontSize:10,fontWeight:600,letterSpacing:0,textTransform:"none",color:"rgba(255,255,255,.65)",marginTop:4}}>Después de {mesCierre||"enero"} hay {fmtK(ingPorCerrar)} de ingresos que todavía no tienen sus costos: no entran en este resultado.</div>}
             </div>
             <button onClick={()=>setView("reportes")} className="btn" style={{fontSize:11,fontWeight:700,color:"#fff",background:"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.18)",borderRadius:9,padding:"5px 12px"}}>Ver reportes →</button>
           </div>
@@ -4169,10 +4180,10 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
               <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>margen sobre ingresos sin IVA</div>
             </div>
             <div style={{borderLeft:"1px solid rgba(255,255,255,.12)",paddingLeft:18}}>
-              <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{plMes.mesFull||mesActual} (mes en curso)</div>
+              <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>{plMes.mesFull||mesActual} (va en curso)</div>
               <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
                 <div style={{fontFamily:MONO,fontSize:26,fontWeight:900,color:"#fff",lineHeight:1}}>{fmtK(plMes.subtotal)}</div>
-                {deltaMes!==null&&<span style={{fontSize:11,fontWeight:800,color:deltaMes>=0?"#4ade80":"#fb7185"}}>{deltaMes>=0?"▲ +":"▼ "}{deltaMes}% vs mes ant.</span>}
+                {/* No se compara contra el mes anterior: el mes en curso apenas va empezando y siempre "cae". */}
               </div>
               <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>
                 costos {fmtK(plMes.totalCostos)} · utilidad <span style={{color:plMes.utilidad>=0?"#4ade80":"#fb7185",fontWeight:700}}>{fmtK(plMes.utilidad)}</span>
@@ -4186,7 +4197,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
       {isAdmin&&(
         <div className="g4 au2" style={{marginBottom:16}}>
           <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" registros internos sin pagar"} onClick={()=>setView("facturas")}/>
-          <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":"al corriente ✓"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":sinVenc.length>0?sinVenc.length+" sin fecha de vencimiento ("+fmtK(montoSinVenc)+")":"al corriente ✓"} onClick={()=>setView("facturas")}/>
           <KpiCard icon={FileText} color={VIOLET} accent={sinFacturar.length>0} label="Sin facturar" value={sinFacturar.length} valueColor={VIOLET} sub="servicios por solicitar a Katia" onClick={()=>setView("facturas")}/>
           <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"} onClick={()=>setView("facturas")}/>
         </div>
@@ -4221,7 +4232,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
         <KpiCard icon={DollarSign} color={AMBER} label="Gastos chofer pendientes" value={fmtK(gastosPendientes)} sub={gastosChofer.filter(g=>g.estado==="pendiente").length+" reembolsos"} onClick={()=>setView("gastosAdmin")}/>
         <KpiCard icon={Clock} color={GREEN} label="Jornadas activas" value={jornadasActivas} sub={jornadas.filter(j=>{const ts=j.inTs?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).length+" jornadas hoy"} onClick={()=>setView("jornadas")}/>
         {isAdmin
-          ?<KpiCard icon={AlertCircle} color={ROSE} label="Cartera vencida" value={fmtK(carteraVencida)} sub={cartera.length+" facturas"} onClick={()=>setView("facturas")}/>
+          ?<KpiCard icon={AlertCircle} color={sinVenc.length?AMBER:GREEN} label="Facturas sin fecha de vencimiento" value={sinVenc.length} sub={sinVenc.length?fmtK(montoSinVenc)+" sin pagar: ponles fecha":"todas tienen fecha"} onClick={()=>setView("facturas")}/>
           :<KpiCard icon={Package} color={VIOLET} label="Entregas hoy" value={entregas.filter(e=>{const ts=e.createdAt?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).length} sub="registradas hoy" onClick={()=>setView("entregas")}/>
         }
       </div>
@@ -4329,78 +4340,8 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
         </div>
       </div>
 
-      {/* Analytics Predictivo */}
-      {facts.length>=2&&(()=>{
-        // Calcula predicción basado en los últimos 3 meses
-        const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-        const mesIdx = new Date().getMonth();
-        const mesActual = MESES[mesIdx];
-        const mesAnterior = MESES[mesIdx>0?mesIdx-1:11];
-        const mesSiguiente = MESES[mesIdx<11?mesIdx+1:0];
-        const totalMesActual = facts.filter(f=>f.mesOp===mesActual).reduce((a,f)=>a+(f.total||0),0);
-        const totalMesAnterior = facts.filter(f=>f.mesOp===mesAnterior).reduce((a,f)=>a+(f.total||0),0);
-        // Promedio de los 3 meses anteriores
-        const ultimos3 = [];
-        for(let i=1;i<=3;i++){
-          const m = MESES[(mesIdx-i+12)%12];
-          const tot = facts.filter(f=>f.mesOp===m).reduce((a,f)=>a+(f.total||0),0);
-          if(tot>0) ultimos3.push(tot);
-        }
-        const promedio3m = ultimos3.length>0?ultimos3.reduce((a,b)=>a+b,0)/ultimos3.length:0;
-        const crecimiento = totalMesAnterior>0?((totalMesActual-totalMesAnterior)/totalMesAnterior*100):0;
-        const proyNextMes = Math.round(promedio3m*(1+crecimiento/100));
-        // Capacidad de choferes
-        const rutasHistoricas = rutas.length;
-        const rutasPromPorMes = rutasHistoricas>0&&ultimos3.length>0?Math.round(rutasHistoricas/Math.max(ultimos3.length,1)):0;
-        const capDiariaChofer = 20;
-        const choferesActuales = clientes.length>0?clientes.length:0; // fallback
-        const choferesNecesarios = Math.ceil(rutasPromPorMes/22); // ~22 días laborables
-        return(
-          <div style={{background:"linear-gradient(135deg,#fff,"+VIOLET+"06)",border:"1.5px solid "+VIOLET+"20",borderRadius:16,padding:22,marginTop:16}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <div style={{width:40,height:40,borderRadius:12,background:VIOLET+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Zap size={18} color={VIOLET}/></div>
-                <div>
-                  <div style={{fontFamily:DISP,fontWeight:700,fontSize:15}}>Analytics Predictivo</div>
-                  <div style={{fontSize:11,color:MUTED,marginTop:2}}>Proyecciones basadas en tu histórico de facturación y rutas</div>
-                </div>
-              </div>
-              <Tag color={VIOLET}>IA</Tag>
-            </div>
-            <div className="g4">
-              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
-                <div style={{fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>Proyección {mesSiguiente}</div>
-                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:VIOLET,marginTop:4}}>{fmtK(proyNextMes)}</div>
-                <div style={{fontSize:10,color:MUTED,marginTop:2}}>basado en promedio 3m</div>
-              </div>
-              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
-                <div style={{fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>Crecimiento MoM</div>
-                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:crecimiento>=0?GREEN:ROSE,marginTop:4}}>{crecimiento>=0?"+":""}{crecimiento.toFixed(1)}%</div>
-                <div style={{fontSize:10,color:MUTED,marginTop:2}}>{mesAnterior} → {mesActual}</div>
-              </div>
-              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
-                <div style={{fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>Rutas estimadas</div>
-                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:A,marginTop:4}}>{rutasPromPorMes}</div>
-                <div style={{fontSize:10,color:MUTED,marginTop:2}}>promedio mensual</div>
-              </div>
-              <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}>
-                <div style={{fontSize:9,fontWeight:700,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em"}}>Choferes ideales</div>
-                <div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:BLUE,marginTop:4}}>{choferesNecesarios}</div>
-                <div style={{fontSize:10,color:MUTED,marginTop:2}}>para ese volumen</div>
-              </div>
-            </div>
-            {/* Recomendaciones */}
-            <div style={{marginTop:14,padding:"12px 14px",background:"#fff",borderRadius:11,border:"1px solid "+BORDER}}>
-              <div style={{fontSize:10,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>🎯 Recomendaciones IA</div>
-              {crecimiento>20&&<div style={{fontSize:12,color:GREEN,marginBottom:5,display:"flex",alignItems:"center",gap:6}}>📈 <strong>Crecimiento fuerte ({crecimiento.toFixed(0)}%)</strong> — Considera expandir flota o subir tarifas.</div>}
-              {crecimiento<-20&&<div style={{fontSize:12,color:ROSE,marginBottom:5,display:"flex",alignItems:"center",gap:6}}>📉 <strong>Caída ({crecimiento.toFixed(0)}%)</strong> — Revisa cuentas perdidas, contacta prospectos.</div>}
-              {crecimiento>=-20&&crecimiento<=20&&<div style={{fontSize:12,color:BLUE,marginBottom:5,display:"flex",alignItems:"center",gap:6}}>📊 Facturación estable. Mantén foco en retención y upsell.</div>}
-              {proyNextMes>totalMesActual*1.5&&<div style={{fontSize:12,color:AMBER,marginBottom:5,display:"flex",alignItems:"center",gap:6}}>⚠️ Proyección {fmtK(proyNextMes)} vs {fmtK(totalMesActual)} actual — Prepara capacidad extra.</div>}
-              {prospectos.filter(p=>p.status==="En negociación").length>0&&<div style={{fontSize:12,color:VIOLET,display:"flex",alignItems:"center",gap:6}}>🎯 {prospectos.filter(p=>p.status==="En negociación").length} prospecto(s) en negociación — valor ponderado: {fmtK(prospectos.filter(p=>p.status!=="Perdido"&&p.status!=="Ganado").reduce((a,p)=>a+((p.total||0)*(p.probabilidad||0)/100),0))}</div>}
-            </div>
-          </div>
-        );
-      })()}
+      {/* "Analytics Predictivo" se quitó: comparaba el mes en curso (recién empezado) contra el mes completo anterior,
+         mezclaba años y estimaba choferes con el número de clientes. Daba alarmas falsas ("caída de 100 %"). */}
 
       {/* Prospección */}
       {prospectos.length>0&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:22,marginTop:16}}>
@@ -4587,7 +4528,11 @@ function Cotizador({onSaved}){
   const mSub=mBaseTotal+mXU+mXV;const mIva=mSub*.16;const mTot=mSub+mIva;
 
   const total=modo==="foraneo"?fTot:modo==="local"?lTot:mTot;
-  const canSave=modo==="foraneo"?fCiudades.length>0:modo==="masivo"?mCiudades.length>0:true;
+  /* No se guarda una cotización con algo en $0 o sin tarifa: saldría al cliente un precio incompleto. */
+  const sinPrecio=modo==="foraneo"?(fCiudades.length===0?"Agrega al menos un destino":fCiudades.some(c=>!(c[fVeh]>0))?"Hay destinos sin tarifa para esta unidad":"")
+    :modo==="masivo"?(mCiudades.length===0?"Agrega al menos una ciudad":mCiudades.some(c=>!(c.tarifa>0))?"Hay ciudades sin tarifa para esta unidad":"")
+    :(!(lBase>0)?"Esta unidad no tiene tarifa local":"");
+  const canSave=!sinPrecio&&total>0;
 
   const buildQ=()=>{
     const folio="COT-"+uid();
@@ -4633,7 +4578,7 @@ function Cotizador({onSaved}){
   };
   const guardar=async()=>{
     if(!cliente.trim()){showT("El nombre del cliente es requerido","err");return;}
-    if(!canSave){showT("Agrega al menos un destino","err");return;}
+    if(!canSave){showT(sinPrecio||"El total está en $0","err");return;}
     try{
       const q=buildQ();
       const vencimiento = fechaLocalISO(new Date(Date.now()+15*86400000));
@@ -4922,7 +4867,7 @@ function Cotizador({onSaved}){
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   {fCiudades.length>0&&<Tag color={A}>{fCiudades.length} ciudad(es) · {fmt(fBaseTotal)}</Tag>}
                   {fCiudades.length>0&&<button onClick={()=>setShowComparador(v=>!v)} className="btn" style={{fontSize:10,fontWeight:700,color:showComparador?VIOLET:"#fff",background:showComparador?VIOLET+"15":"linear-gradient(135deg,"+VIOLET+","+VIOLET+"cc)",border:"1.5px solid "+VIOLET+(showComparador?"":"00"),borderRadius:8,padding:"4px 9px",cursor:"pointer"}}>⚖️ Comparar</button>}
-                  {fCiudades.length>0&&<button onClick={()=>{const f=fechaLocalISO();exportCotizadorXLSX({modo,cliente,notas,ciudades:fCiudades,veh:fVeh,total:fTotal,vehLabel:fVD?.label||"",fecha:f});saveToHistorial({modo,cliente,notas,ciudades:fCiudades.map(c=>c.c),veh:fVeh,total:fTotal,fecha:f});showT("✓ Excel descargado");}} className="btn" style={{fontSize:10,fontWeight:700,color:"#fff",background:"linear-gradient(135deg,"+GREEN+","+GREEN+"cc)",border:"none",borderRadius:8,padding:"4px 9px",cursor:"pointer"}}>📥 Excel</button>}
+                  {fCiudades.length>0&&<button onClick={()=>{const f=fechaLocalISO();exportCotizadorXLSX({modo,cliente,notas,ciudades:fCiudades,veh:fVeh,total:fTot,vehLabel:fVD?.label||"",fecha:f});saveToHistorial({modo,cliente,notas,ciudades:fCiudades.map(c=>c.c),veh:fVeh,total:fTot,fecha:f});showT("✓ Excel descargado");}} className="btn" style={{fontSize:10,fontWeight:700,color:"#fff",background:"linear-gradient(135deg,"+GREEN+","+GREEN+"cc)",border:"none",borderRadius:8,padding:"4px 9px",cursor:"pointer"}}>📥 Excel</button>}
                 </div>
               </div>
               {/* Comparador de vehículos */}
@@ -5022,7 +4967,7 @@ function Cotizador({onSaved}){
                       <span style={{fontFamily:MONO,fontWeight:700,color:BLUE}}>+{fmt(c.xPts)}</span>
                     </>}
                     {c.nAd===0&&<span style={{fontSize:10,color:MUTED,fontStyle:"italic"}}>Entrega única — sin puntos adicionales</span>}
-                    {c.nPts>=10&&c.d===0&&<span style={{fontSize:10,color:AMBER,fontWeight:600}}>💡 con 20+ puntos aplica −5%</span>}
+                    {c.nPts>=10&&c.d===0&&<span style={{fontSize:10,color:AMBER,fontWeight:600}}>{REGLAS.descuento_puntos_pct>0?`💡 con ${REGLAS.descuento_puntos_tramo}+ puntos aplica −${REGLAS.descuento_puntos_pct}%`:""}</span>}
                   </div>
                 </div>
               );})}
@@ -5337,6 +5282,7 @@ function Cotizador({onSaved}){
           <button onClick={guardar} disabled={!canSave||!cliente.trim()} className="btn" style={{background:canSave&&cliente.trim()?"linear-gradient(135deg,"+A+",#fb923c)":"#e0e0e0",color:canSave&&cliente.trim()?"#fff":"#aaa",borderRadius:13,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:canSave&&cliente.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSave&&cliente.trim()?"0 6px 20px "+A+"40":"none"}}>
             <Send size={15}/>Guardar cotización{recurrente?" (recurrente)":""}
           </button>
+          {(!canSave||!cliente.trim())&&<div style={{fontSize:11,color:AMBER,fontWeight:700,textAlign:"center",marginTop:-4}}>{!canSave?(sinPrecio||"El total está en $0"):"Escribe el cliente para guardar"}</div>}
           <button onClick={()=>downloadCotizacionPDF(buildQ())} className="btn" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:7,padding:"11px 0",border:"1.5px solid "+BLUE+"30",borderRadius:13,fontSize:13,fontWeight:700,color:BLUE,background:"#fff"}}>
             <Download size={14}/>Descargar PDF
           </button>
@@ -9301,7 +9247,7 @@ async function exportPagosPDF(rows,label,filtrosDesc){
 
 function PagosProveedores({userProfile}){
   const usuario=userProfile?.nombre||"admin";
-  const ANIO="2026";
+  const ANIO=String(new Date().getFullYear());
   const hoyISO=fechaLocalISO();
   const mesActual=MESES_ID[new Date().getMonth()];
   const [pagos,setPagos]=useState([]);
@@ -9851,7 +9797,7 @@ function PagosProveedores({userProfile}){
 }
 
 function Reportes(){
-  const ANIO = "2026";
+  const ANIO = String(new Date().getFullYear());
   const mesActual = MESES_REP[new Date().getMonth()];
   const [facts, setFacts]       = useState([]);
   const [viat,  setViat]        = useState([]);
@@ -11278,6 +11224,16 @@ function Prospeccion(){
    IMPORTANTE: colección canónica = "alertas" (español). El Centro de Alertas,
    el Dashboard y el SOSGlobalBanner leen "alertas"; antes esto escribía en
    "alerts" (inglés) y los SOS nunca llegaban al panel. Unificado F0. */
+/* Lector único de alertas: la app vieja, la app nueva del chofer y el vigilante
+   escriben con nombres distintos (msg/message/mensaje, lat/lng sueltos o en data,
+   ts/createdAt). Todas las pantallas leen con esta función. */
+const ALERTAS_CRITICAS=["sos","geofence","cierre_fuera_de_punto","ubicacion_simulada","velocidad_imposible","dispositivo_no_autorizado"];
+const normalizarAlerta=(id,d)=>{
+  const lat=d.data?.lat??d.lat, lng=d.data?.lng??d.lng;
+  return {id,...d,message:d.message||d.msg||d.mensaje||"",
+    data:(lat!=null&&lng!=null&&Number.isFinite(Number(lat))&&Number.isFinite(Number(lng)))?{...(d.data||{}),lat:Number(lat),lng:Number(lng)}:d.data,
+    ts:d.ts||d.createdAt||null};
+};
 async function postAlert(rutaId, choferId, choferNombre, type, msg, extra={}){
   try{
     // El Centro de Alertas lee `message` y ordena por `ts`: se escriben ambos (y se conservan msg/createdAt por compatibilidad).
@@ -13953,8 +13909,8 @@ function AlertasCentro({setView}){
   const [items,setItems]=useState([]);
   const [load,setLoad]=useState(true);
   const [filtro,setFiltro]=useState("todas");
-  useEffect(()=>onSnapshot(collection(db,"alertas"),s=>{
-    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.ts?.seconds||0)-(a.ts?.seconds||0)));
+  useEffect(()=>onSnapshot(query(collection(db,"alertas"),limit(500)),s=>{
+    setItems(s.docs.map(d=>normalizarAlerta(d.id,d.data())).sort((a,b)=>(b.ts?.seconds||0)-(a.ts?.seconds||0)));
     setLoad(false);
   }),[]);
 
@@ -13967,6 +13923,12 @@ function AlertasCentro({setView}){
     start:    {color:VIOLET,icon:"▶️",label:"Ruta iniciada",priority:6},
     complete: {color:GREEN,icon:"🏁",label:"Ruta completada",priority:6},
     /* Vigilante (servidor, cada 5 min): se resuelven solas cuando la situación se atiende. */
+    cierre_fuera_de_punto:{color:ROSE,icon:"📍",label:"Entrega cerrada lejos del punto",priority:2},
+    ubicacion_simulada:{color:ROSE,icon:"🛰️",label:"Ubicación falsa en el teléfono",priority:2},
+    velocidad_imposible:{color:ROSE,icon:"⚡",label:"Velocidad imposible",priority:2},
+    dispositivo_no_autorizado:{color:ROSE,icon:"📱",label:"Teléfono no autorizado",priority:2},
+    reloj_adelantado:{color:AMBER,icon:"🕒",label:"Hora del teléfono mal",priority:4},
+    incidencia:{color:AMBER,icon:"⚠️",label:"Problema en la entrega",priority:3},
     solicitud_sin_respuesta:{color:ROSE,icon:"⏱️",label:"Solicitud sin responder",priority:2},
     cotizacion_por_aprobar: {color:AMBER,icon:"💲",label:"Cotización por aprobar",priority:3},
     cotizacion_sin_enviar:  {color:AMBER,icon:"📤",label:"Cotización aprobada sin enviar",priority:3},
@@ -13977,13 +13939,13 @@ function AlertasCentro({setView}){
 
   const filtered = items.filter(a=>{
     if(filtro==="todas") return true;
-    if(filtro==="criticas") return a.type==="sos"||a.type==="geofence"||a.type==="issue";
+    if(filtro==="criticas") return ALERTAS_CRITICAS.includes(a.type)||a.type==="issue";
     if(filtro==="operacion") return a.origen==="vigilante";
     return a.type===filtro;
   });
 
   const sosActivas = items.filter(a=>a.type==="sos"&&!a.atendida);
-  const criticas = items.filter(a=>(a.type==="sos"||a.type==="geofence")&&!a.atendida).length;
+  const criticas = items.filter(a=>ALERTAS_CRITICAS.includes(a.type)&&!a.atendida).length;
 
   const marcarAtendida = async(id)=>{
     await updateDoc(doc(db,"alertas",id),{atendida:true,atendidaEn:serverTimestamp()}).catch(()=>{});
@@ -15071,7 +15033,11 @@ export default function App(){
         <SOSGlobalBanner onGo={()=>setView("alertas")}/>
         <div style={{display:"flex",minHeight:"100vh",background:"#f1f4fb",color:TEXT,fontFamily:SANS}}>
           {sidebarOpen&&<div className="mobile-backdrop" onClick={()=>setSidebarOpen(false)}/>}
-          <Sidebar view={view} setView={v=>{setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen} userProfile={userProfile} rol={rol} onLogout={async()=>{await fbSignOut(auth).catch(()=>{});setUserProfile(null);setPinPending(null);setPendingProfile(null);setView("dashboard");}}/>
+          <Sidebar onBuscar={()=>setSearchOpen(true)} view={view} setView={v=>{
+            /* Al elegir algo en el menú se suelta lo que venía de otra pantalla (una solicitud
+               a cotizar o una cotización a convertir), para no ligarlo por error a otra cosa. */
+            setSolicitudACotizar(null);setSolicitudAServicio(null);setCotizacionAServicio(null);
+            setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen} userProfile={userProfile} rol={rol} onLogout={async()=>{await fbSignOut(auth).catch(()=>{});setUserProfile(null);setPinPending(null);setPendingProfile(null);setView("dashboard");}}/>
           <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
             <TopBar view={view} setView={setView} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} setSearchOpen={setSearchOpen}/>
             <main style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
