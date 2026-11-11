@@ -129,6 +129,18 @@ export default function ReportesOperacion({ solicitudesStore, cotizacionesStore,
         </div>
       </Seccion>
 
+      <Seccion titulo="Servicio ↔ factura (todo lo pendiente)">
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+          <Dato valor={r.conciliacion.sinFactura.length} nombre="Entregados sin pedir factura" nota={esAdmin && r.conciliacion.montoSinFactura ? dinero(r.conciliacion.montoSinFactura) + " sin IVA" : ""}/>
+          <Dato valor={r.conciliacion.porEmitir.length} nombre="Facturas pedidas sin emitir" nota={esAdmin && r.conciliacion.montoPorEmitir ? dinero(r.conciliacion.montoPorEmitir) + " sin IVA" : ""}/>
+        </div>
+        <span style={etiqueta}>Entregados sin pedir factura</span>
+        <Tabla columnas={["Servicio", "Cliente", "Entregado", ...(esAdmin ? ["Precio"] : [])]} filas={r.conciliacion.sinFactura.slice(0, 30).map(x => [x.folio, x.empresa, x.entregado ? fechaHora(x.entregado) : "—", ...(esAdmin ? [dinero(x.precio)] : [])])} vacio="Todo lo entregado ya tiene su factura pedida."/>
+        {r.conciliacion.porEmitir.length > 0 && <><span style={{ ...etiqueta, marginTop: 14 }}>Facturas pedidas sin emitir</span>
+          <Tabla columnas={["Servicio", "Cliente", "Factura"]} filas={r.conciliacion.porEmitir.slice(0, 30).map(x => [x.folio, x.empresa, x.facturaFolio || "—"])} vacio=""/></>}
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>La factura se pide desde el servicio con "Pedir factura".</div>
+      </Seccion>
+
       {esAdmin && <Seccion titulo="Margen (solo administradores)">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
           <Dato valor={r.margen.medidos ? dinero(r.margen.ingreso) : "sin datos"} nombre="Ingreso aprobado medido" nota={`${r.margen.medidos} servicio(s) con precio y costos`}/>

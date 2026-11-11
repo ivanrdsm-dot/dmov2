@@ -40,6 +40,7 @@ const contar = (xs: string[]): { nombre: string; n: number }[] => {
 };
 
 type Reg = Record<string, any>;
+export interface FilaConc { folio: string; empresa: string; entregado: number | null; precio: number; facturaFolio: string; }
 export interface Reporte {
   periodo: Periodo;
   solicitudes: { recibidas: number; porCanal: { nombre: string; n: number }[]; respondidas: number; sinResponder: number; descartadas: number;
@@ -53,6 +54,8 @@ export interface Reporte {
     porCliente: { nombre: string; n: number; ingreso: number; costo: number; margen: number; margenPct: number | null }[];
     porUnidad: { nombre: string; n: number; ingreso: number; costo: number; margen: number; margenPct: number | null }[]; };
   embudo: { etapa: string; n: number }[];
+  /** Conciliación (todo lo pendiente, sin importar el periodo): servicio ↔ factura. */
+  conciliacion: { sinFactura: FilaConc[]; porEmitir: FilaConc[]; montoSinFactura: number; montoPorEmitir: number };
   actividad: { dia: string; solicitudes: number; cotizaciones: number; servicios: number }[];
 }
 
@@ -142,10 +145,23 @@ export function reporteOperacion(datos: { solicitudes?: Reg[]; cotizaciones?: Re
       porUnidad: contar(unidades), porAsignacion: contar(asignaciones) },
     margen: { medidos, sinCostos, conPerdida, ingreso: r2(mIng), costo: r2(mCos), margen: r2(mIng - mCos), margenPct: pct1(mIng - mCos, mIng),
       porCliente: aFilas(mCli), porUnidad: aFilas(mUni) },
+    conciliacion: conciliar(datos.servicios ?? []),
     embudo: [{ etapa: "Solicitudes recibidas", n: reales.length }, { etapa: "Cotizaciones emitidas", n: cot.length }, { etapa: "Cotizaciones aceptadas", n: aceptadas },
       { etapa: "Servicios registrados", n: srv.length - (porEstadoS.Cancelada ?? 0) }, { etapa: "Servicios entregados", n: entregados }],
     actividad: Object.entries(dias).map(([dia, v]) => ({ dia, ...v })),
   };
+}
+
+/** Servicios entregados sin factura pedida, y facturas pedidas que aún no se emiten. */
+export function conciliar(servicios: Reg[]){
+  const ENTREGADO = ["Entregada", "Cerrada", "Conciliada", "Facturada", "Cobrada"];
+  const fila = (s: Reg): FilaConc => ({ folio: String(s.folio ?? ""), empresa: String(s.empresa ?? ""), entregado: Number(s.estadoTs?.Entregada) || null,
+    precio: n(s.precio), facturaFolio: String(s.facturaFolio ?? "") });
+  const vivos = servicios.filter(s => ENTREGADO.includes(String(s.estado)));
+  const sinFactura = vivos.filter(s => !s.facturaId).map(fila).sort((a, b) => (a.entregado ?? 0) - (b.entregado ?? 0));
+  const porEmitir = vivos.filter(s => s.facturaId && (!s.facturaEstado || s.facturaEstado === "Solicitada a Katia")).map(fila);
+  const suma = (xs: FilaConc[]) => Math.round(xs.reduce((a, x) => a + x.precio, 0) * 100) / 100;
+  return { sinFactura, porEmitir, montoSinFactura: suma(sinFactura), montoPorEmitir: suma(porEmitir) };
 }
 
 /** CSV con BOM para que Excel respete acentos. Las celdas que empiezan con = + - @ se

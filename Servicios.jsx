@@ -183,7 +183,7 @@ function Formulario({ inicial, clientes, choferes, unidades, puntos = [], provee
    catálogo y el servicio pasa a "Asignada". Antes había que escribir el chofer aquí
    y volver a elegirlo en Despacho. */
 function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisar }){
-  const [placa, setPlaca] = useState(s.unidadPlaca || ""), [choferId, setChoferId] = useState(s.choferId || ""), [ocupado, setOcupado] = useState(false);
+  const [placa, setPlaca] = useState(s.unidadPlaca || ""), [choferId, setChoferId] = useState(s.choferId || ""), [ocupado, setOcupado] = useState(false), [ordenar, setOrdenar] = useState(true);
   if(!despacho || !["Confirmada", "Asignada"].includes(s.estado) || s.rutaArmadaEn) return null;
   const listos = choferesApp.filter(c => !!c.authUid && c.status !== "Inactivo");   // tiene cuenta de la app
   const chofer = listos.find(c => c.id === choferId);
@@ -192,9 +192,9 @@ function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisa
     setOcupado(true);
     try {
       await store.actualizar(usuario, s, { ...s, unidadPlaca: placa, choferNombre: chofer.nombre || "", asignacionTipo: s.asignacionTipo || "Flota propia" });
-      await despacho.prepararRuta(s.id, chofer.id);
+      const r = await despacho.prepararRuta(s.id, chofer.id, ordenar);
       if(s.estado === "Confirmada") await store.cambiarEstado(usuario, { ...s, unidadPlaca: placa, choferNombre: chofer.nombre || "" }, "Asignada", {});
-      avisar("Listo: " + (chofer.nombre || "el chofer") + " ya tiene la ruta en su app");
+      avisar("Listo: " + (chofer.nombre || "el chofer") + " ya tiene la ruta en su app" + (r?.ordenada && r.kmDespues !== null && r.kmDespues < r.kmAntes ? ` (ordenada por cercanía: ${r.kmAntes} → ${r.kmDespues} km en línea recta)` : ""));
     } catch(e){
       const m = String(e?.message || e);
       avisar(/pin confirmado/.test(m) ? m + ". Ve a Lugares y confirma el pin de esos puntos." : "No se pudo: " + m, true);
@@ -208,6 +208,9 @@ function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisa
           onChange={e => setChoferId(listos.find(c => (c.nombre || c.id) === e.target.value)?.id || "")}/></div>
         <button onClick={asignar} disabled={ocupado || !placa || !chofer} style={{ ...boton(A), opacity: ocupado || !placa || !chofer ? .5 : 1 }}>{ocupado ? "Asignando…" : "Asignar y mandar ruta al chofer"}</button>
       </div>
+      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, marginTop: 10, cursor: "pointer" }}>
+        <input type="checkbox" checked={ordenar} onChange={e => setOrdenar(e.target.checked)} style={{ width: 18, height: 18 }}/>
+        Ordenar las entregas por cercanía (quítalo si el cliente pidió un orden)</label>
       {listos.length === 0 && <div style={{ fontSize: 12, color: AMBER, fontWeight: 700, marginTop: 8 }}>Ningún chofer tiene la app lista todavía. Su cuenta se crea en En vivo → Choferes en ruta.</div>}
       <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Los lugares de carga y entrega deben estar en Lugares con su pin confirmado.</div>
     </Seccion>);
