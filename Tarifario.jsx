@@ -2,14 +2,14 @@
    Lo consulta toda la oficina; solo un administrador cambia precios. */
 import { useEffect, useMemo, useState } from "react";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, BD2, DISP, MONO, fechaHora, etiqueta, caja, rejilla, boton, Campo, Chip, Seccion, Dialogo } from "./uiBasico.jsx";
-import { UNIDADES_TARIFA, buscarTarifa, precioDeTarifa, factorCliente, validarTarifa } from "./tarifario.ts";
+import { UNIDADES_TARIFA, buscarTarifa, precioConGanancia, validarTarifa } from "./tarifario.ts";
 
 const pesos = n => n === null || n === undefined || n === "" ? "—" : "$" + Number(n).toLocaleString("es-MX", { maximumFractionDigits: 2 });
 
 function Calculadora({ tarifas }){
-  const [tipo, setTipo] = useState("nacional"), [texto, setTexto] = useState(""), [unidad, setUnidad] = useState("eur"), [bloque, setBloque] = useState("cliente");
+  const [tipo, setTipo] = useState("nacional"), [texto, setTexto] = useState(""), [unidad, setUnidad] = useState("eur"), [ganancia, setGanancia] = useState("");
   const nombres = useMemo(() => tarifas.filter(t => t.tipo === tipo && t.activo !== false && !t.valorUnico).map(t => t.nombre).sort((a, b) => a.localeCompare(b, "es")), [tarifas, tipo]);
-  const t = buscarTarifa(tarifas, tipo, texto), p = t ? precioDeTarifa(t, unidad, tipo === "local" ? "base" : bloque) : null;
+  const t = buscarTarifa(tarifas, tipo, texto), p = t ? precioConGanancia(t, unidad, ganancia) : null;
   const nombreUnidad = UNIDADES_TARIFA.find(u => u.k === unidad).nombre;
   return (
     <Seccion titulo="Consulta rápida de precio">
@@ -17,14 +17,14 @@ function Calculadora({ tarifas }){
         <Campo label="Tipo" opciones={["Nacional", "Local"]} value={tipo === "nacional" ? "Nacional" : "Local"} onChange={e => { setTipo(e.target.value === "Nacional" ? "nacional" : "local"); setTexto(""); }}/>
         <Campo label={tipo === "nacional" ? "Destino" : "Concepto"} lista={nombres} value={texto} onChange={e => setTexto(e.target.value)} placeholder="Escribe o elige"/>
         <Campo label="Unidad" opciones={UNIDADES_TARIFA.map(u => u.nombre)} value={nombreUnidad} onChange={e => setUnidad(UNIDADES_TARIFA.find(u => u.nombre === e.target.value).k)}/>
-        {tipo === "nacional" && <Campo label="Bloque" opciones={["Cliente", "Base"]} value={bloque === "cliente" ? "Cliente" : "Base"} onChange={e => setBloque(e.target.value === "Cliente" ? "cliente" : "base")}/>}
+        <Campo label="Ganancia a agregar (%)" inputMode="decimal" value={ganancia} onChange={e => setGanancia(e.target.value)} placeholder="0 = precio base"/>
       </div>
       <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 12, border: "1px solid " + (p ? GREEN + "50" : BD2), background: p ? GREEN + "0d" : "#f8fafc", fontSize: 14 }}>
         {!texto.trim() ? <span style={{ color: MUTED }}>Elige un destino para ver su precio.</span>
           : !t ? <span style={{ color: AMBER, fontWeight: 700 }}>No hay una tarifa con ese nombre. No se estima: hay que capturarla.</span>
-          : !p ? <span style={{ color: AMBER, fontWeight: 700 }}>{t.nombre} no tiene precio para {nombreUnidad} en ese bloque.</span>
+          : !p ? <span style={{ color: AMBER, fontWeight: 700 }}>{t.nombre} no tiene precio para {nombreUnidad}.</span>
           : <><b style={{ fontFamily: DISP, fontSize: 22 }}>{pesos(p.redondeado)}</b> <span style={{ color: MUTED }}>+ IVA {pesos(p.iva)} = <b style={{ color: TEXT }}>{pesos(p.total)}</b></span>
-            <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>{t.nombre}{t.km ? ` · ${t.km} km` : ""} · {nombreUnidad} · tarifa {pesos(p.tarifa)}, redondeada a decenas hacia arriba</div></>}
+            <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>{t.nombre}{t.km ? ` · ${t.km} km` : ""} · {nombreUnidad} · base {pesos(p.base)}{p.gananciaPct ? ` + ${p.gananciaPct} % de ganancia = ${pesos(p.tarifa)}` : ""}, redondeado a decenas hacia arriba{p.gananciaPct ? ` · ganancia ${pesos(p.ganancia)}` : ""}</div></>}
       </div>
     </Seccion>);
 }
@@ -47,7 +47,7 @@ function Editar({ inicial, store, usuario, onGuardar, onClose, guardando }){
       <Seccion titulo={f.tipo === "nacional" ? "Precio base, sin IVA" : "Precio por unidad, sin IVA"}>
         <div style={rejilla}>{UNIDADES_TARIFA.map(u => <Campo key={u.k} label={u.nombre} inputMode="decimal" value={f.base[u.k] ?? ""} onChange={precio("base", u.k)}/>)}</div>
       </Seccion>
-      {f.tipo === "nacional" && <Seccion titulo="Precio cliente, sin IVA">
+      {f.tipo === "nacional" && <Seccion titulo="Precio con ganancia de referencia, sin IVA (opcional)">
         <div style={rejilla}>{UNIDADES_TARIFA.map(u => <Campo key={u.k} label={u.nombre} inputMode="decimal" value={f.cliente[u.k] ?? ""} onChange={precio("cliente", u.k)}/>)}</div>
       </Seccion>}
       <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14, minHeight: 42 }}><input type="checkbox" checked={f.activo !== false} onChange={e => setF(x => ({ ...x, activo: e.target.checked }))} style={{ width: 20, height: 20 }}/>Tarifa vigente</label>
@@ -74,7 +74,6 @@ export default function Tarifario({ store, usuario }){
   useEffect(() => store.suscribir(x => { setTarifas(x); setCargando(false); setError(""); }, e => { setError(e.message); setCargando(false); }), [store]);
   useEffect(() => { if(!aviso) return; const t = setTimeout(() => setAviso(null), 4000); return () => clearTimeout(t); }, [aviso]);
   const visibles = useMemo(() => { const t = q.trim().toLowerCase(); return tarifas.filter(x => x.tipo === tab && (!t || x.nombre.toLowerCase().includes(t))).sort((a, b) => a.nombre.localeCompare(b.nombre, "es")); }, [tarifas, tab, q]);
-  const factores = useMemo(() => { const m = {}; for(const t of tarifas.filter(x => x.tipo === "nacional" && x.activo !== false)){ const f = factorCliente(t); const k = f === null ? "sin bloque cliente" : Number.isNaN(f) ? "mezclado" : "+" + Math.round((f - 1) * 1000) / 10 + " %"; (m[k] ||= []).push(t.nombre); } return Object.entries(m).sort((a, b) => b[1].length - a[1].length); }, [tarifas]);
   const guardar = async datos => {
     setGuardando(true);
     try { const n = await store.guardar(usuario, form.id ? form : null, datos); setAviso({ msg: n ? "Tarifa guardada" : "Sin cambios" }); setForm(null); }
@@ -89,8 +88,6 @@ export default function Tarifario({ store, usuario }){
         {esAdmin && <button onClick={() => setForm({ tipo: tab })} style={boton(A)}>+ Agregar tarifa</button>}
       </div>
       <Calculadora tarifas={tarifas}/>
-      {factores.length > 1 && <div style={{ background: AMBER + "10", border: "1px solid " + AMBER + "50", color: "#92400e", borderRadius: 12, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>
-        <b>El bloque cliente no guarda la misma relación en todos los destinos:</b> {factores.map(([k, v]) => `${v.length} con ${k}${v.length <= 3 ? " (" + v.join(", ") + ")" : ""}`).join(" · ")}. Revisa cuál es la regla correcta.</div>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         {[["nacional", "Nacional"], ["local", "Local ZMCM"]].map(([k, l]) => <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k} style={{ border: "1.5px solid " + (tab === k ? A : BD2), background: tab === k ? A + "14" : "#fff", color: tab === k ? A : MUTED, borderRadius: 999, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l} · {tarifas.filter(t => t.tipo === k).length}</button>)}
         <input value={q} onChange={e => setQ(e.target.value)} aria-label="Buscar tarifa" placeholder="Buscar…" style={{ ...caja, maxWidth: 280, marginLeft: "auto" }}/>
@@ -110,7 +107,7 @@ export default function Tarifario({ store, usuario }){
           </tbody>
         </table>
       </div>
-      {tab === "nacional" && <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Arriba el precio base; abajo en azul el precio cliente.</div>}
+      {tab === "nacional" && <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Arriba el precio base, que es el que se cotiza. Abajo en azul, la referencia con ganancia que traía el Excel. La ganancia de cada cotización se decide en la consulta de arriba.</div>}
       {form && <Dialogo titulo={form.id ? form.nombre : "Agregar tarifa"} onClose={() => setForm(null)}>
         {esAdmin ? <Editar inicial={form} store={store} usuario={usuario} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/>
           : <fieldset disabled style={{ border: "none", padding: 0, margin: 0 }}><Editar inicial={form} store={store} usuario={usuario} onGuardar={() => {}} onClose={() => setForm(null)} guardando={false}/></fieldset>}

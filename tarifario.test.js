@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { redondearDecenasArriba, idTarifa, buscarTarifa, precioDeTarifa, factorCliente, validarTarifa, diffTarifa, bajoElBase, sinAcentos } from "./tarifario.ts";
+import { redondearDecenasArriba, idTarifa, buscarTarifa, precioDeTarifa, precioConGanancia, factorCliente, validarTarifa, diffTarifa, bajoElBase, sinAcentos } from "./tarifario.ts";
 
 /* Valores de EJEMPLO para probar la lógica; no son el tarifario real. */
 const t = (nombre, base, cliente, extra = {}) => ({ tipo: "nacional", nombre, km: 100, base, cliente, ...extra });
@@ -49,6 +49,23 @@ describe("precio de una tarifa", () => {
     expect(precioDeTarifa(tarifas[0], "rab", "cliente")).toBeNull();
     expect(precioDeTarifa(tarifas[4], "eur", "cliente")).toBeNull();
     expect(precioDeTarifa(null, "eur", "base")).toBeNull();
+  });
+});
+
+describe("precio con porcentaje de ganancia", () => {
+  it("sin ganancia es el precio base redondeado", () => {
+    expect(precioConGanancia(tarifas[0], "cam", 0)).toMatchObject({ base: 2000.5, gananciaPct: 0, tarifa: 2000.5, redondeado: 2010, iva: 321.6, total: 2331.6 });
+    expect(precioConGanancia(tarifas[0], "eur", "")).toMatchObject({ gananciaPct: 0, redondeado: 1000, ganancia: 0 });
+  });
+  it("agrega el porcentaje sobre el base y redondea hacia arriba", () => {
+    expect(precioConGanancia(tarifas[0], "eur", 12)).toMatchObject({ base: 1000, gananciaPct: 12, tarifa: 1120, redondeado: 1120, ganancia: 120 });
+    expect(precioConGanancia(tarifas[0], "cam", "10")).toMatchObject({ tarifa: 2200.55, redondeado: 2210, ganancia: 209.5 });
+  });
+  it("ignora porcentajes negativos o absurdos y no inventa si no hay base", () => {
+    expect(precioConGanancia(tarifas[0], "eur", -20).redondeado).toBe(1000);
+    expect(precioConGanancia(tarifas[0], "eur", 9999).gananciaPct).toBe(300);
+    expect(precioConGanancia(tarifas[0], "rab", 10)).toBeNull();
+    expect(precioConGanancia(null, "eur", 10)).toBeNull();
   });
 });
 
