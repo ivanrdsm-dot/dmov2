@@ -16,6 +16,7 @@ export interface TipoCatalogo extends TipoUnidad {
   version: string;               // de qué versión sale la referencia
   nota: string;
 }
+/* `confirmada: true` en el catálogo significa que el dueño confirmó la versión exacta de su unidad. */
 
 /* Las cantidades habituales vienen de la lista de flota del dueño:
    Transporter ×3 + Eurovan 1 t ×1, Expert ×1, Sprinter ×1, Crafter ×1, 3½ ×1, Rabón ×1, Mudancero ×1. */
@@ -30,12 +31,12 @@ export const TIPOS_UNIDAD: TipoCatalogo[] = [
     nota: "La tarima solo entra por las puertas traseras: la puerta lateral mide 0.93 m." },
   { clave: "sprinter", nombre: "Mercedes Sprinter", tarifa: "kra", nombresFlota: ["Mercedes Sprinter"], enFlotaHabitual: 1, enFlota: 1,
     capacidadKg: 945, capacidadM3: 9.0, tarimasPiso: 3, altoInteriorM: 1.72, largoInteriorM: 3.27, anchoInteriorM: 1.35, puertaTrasera: "1.55 × 1.55 m",
-    cajasSueltasMax: 150, confirmada: false, fuente: "ficha Mercedes-Benz México", version: "311 Mediana, techo normal (la de menor carga)",
-    nota: "La 417 carga 1,661 a 1,805 kg y la Larga lleva 4 tarimas y hasta 14 m³: hay que confirmar cuál es la de la flota. Regla de la casa: no alcanza arriba de unas 150 cajas de líquido." },
+    cajasSueltasMax: 150, confirmada: true, fuente: "ficha Mercedes-Benz México; versión confirmada por el dueño (nov-2026)", version: "311 Mediana, 945 kg de carga útil",
+    nota: "Versión confirmada: la de 945 kg. Con techo normal son 9.0 m³ y 1.72 m de alto; si la unidad es de techo alto sube a 10.5 m³ y 2.0 m: falta medir el techo. Regla de la casa: no alcanza arriba de unas 150 cajas de líquido." },
   { clave: "crafter", nombre: "VW Crafter", tarifa: "kra", nombresFlota: ["VW Crafter", "Krafter"], enFlotaHabitual: 1, enFlota: 1,
     capacidadKg: 1346, capacidadM3: 9.9, tarimasPiso: 3, altoInteriorM: 1.73, largoInteriorM: 3.45, anchoInteriorM: 1.38, puertaTrasera: "1.52 m de ancho",
-    confirmada: false, fuente: "ficha VW México y folleto global", version: "3.5T: carga de la larga (1,346 kg) con volumen y piso de la mediana",
-    nota: "La larga lleva 4 tarimas y 14.4 m³. Se toma lo más conservador de ambas hasta confirmar la versión." },
+    confirmada: false, fuente: "ficha VW México y folleto global; el dueño confirmó que es la 3.5 t (nov-2026)", version: "3.5T: carga de la larga (1,346 kg) con volumen y piso de la mediana",
+    nota: "Confirmado que es la de 3.5 toneladas de peso bruto. Falta saber si es mediana (1,469 kg, 9.9 m³, 3 tarimas) o larga (1,346 kg, 14.4 m³, 4 tarimas): se usa lo más conservador de las dos." },
   { clave: "c35", nombre: "Camioneta 3½ (16 m³)", tarifa: "cam", nombresFlota: ["Camioneta 3.5T"], enFlotaHabitual: 1, enFlota: 1,
     capacidadKg: 2700, capacidadM3: 16, tarimasPiso: 5, altoInteriorM: 2.2, largoInteriorM: 3.5, anchoInteriorM: 2.2, puertaTrasera: "depende del carrocero",
     confirmada: false, fuente: "chasis Isuzu ELF 400 / Foton S3 y cajas típicas de carrocero", version: "caja de 16 m³: 3.5 × 2.2 × 2.2 m",
@@ -80,7 +81,7 @@ export function tiposParaCotizar(unidades: UnidadFlotaMin[] = []): TipoUnidad[] 
     const mias = activas.filter(u => tipoPorNombreFlota(u.tipo)?.clave === t.clave);
     const completas = mias.filter(u => num(u.capacidadKg) && num(u.capacidadM3) && num(u.capacidadTarimas));
     const base: TipoUnidad = { clave: t.clave, nombre: t.nombre, tarifa: t.tarifa, capacidadKg: t.capacidadKg, capacidadM3: t.capacidadM3, tarimasPiso: t.tarimasPiso,
-      altoInteriorM: t.altoInteriorM, cajasSueltasMax: t.cajasSueltasMax, enFlota: hayTipos ? mias.length : t.enFlotaHabitual, fuente: t.fuente, confirmada: false };
+      altoInteriorM: t.altoInteriorM, cajasSueltasMax: t.cajasSueltasMax, enFlota: hayTipos ? mias.length : t.enFlotaHabitual, fuente: t.fuente, confirmada: t.confirmada };
     if(completas.length === 0) return base;
     const min = (k: keyof UnidadFlotaMin) => Math.min(...completas.map(u => num(u[k])));
     const altos = completas.map(u => num(u.altoCm)).filter(Boolean);

@@ -8,7 +8,7 @@ describe("catálogo de tipos de unidad", () => {
     for(const t of TIPOS_UNIDAD){
       for(const k of ["capacidadKg", "capacidadM3", "tarimasPiso", "altoInteriorM"]) expect(t[k], `${t.clave}.${k}`).toBeGreaterThan(0);
       expect(t.fuente.length).toBeGreaterThan(5); expect(t.version.length).toBeGreaterThan(5);
-      expect(t.confirmada).toBe(false);          // la referencia nunca se presenta como dato confirmado
+      expect(t.confirmada, t.clave).toBe(t.clave === "sprinter");      // solo queda confirmada la versión que el dueño confirmó
     }
   });
   it("va de menor a mayor: más volumen nunca significa menos tarimas de piso", () => {
