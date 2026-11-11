@@ -7,11 +7,12 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export const UNIDADES_TARIFA = [
-  { k: "eur", nombre: "Eurovan 1 tonelada" },
-  { k: "cam", nombre: "Camioneta 3½ (16 m³)" },
-  { k: "kra", nombre: "Krafter" },
-  { k: "rab", nombre: "Rabón 40 m³" },
-  { k: "mud", nombre: "Mudancero 70 m³" },
+  /* Un solo nombre por unidad en todo el sistema (regla de simplicidad). */
+  { k: "eur", nombre: "Eurovan (1 t)" },
+  { k: "cam", nombre: "Camión 3.5 t" },
+  { k: "kra", nombre: "Sprinter / Crafter" },
+  { k: "rab", nombre: "Rabón" },
+  { k: "mud", nombre: "Mudancero" },
 ] as const;
 export type UnidadTarifa = typeof UNIDADES_TARIFA[number]["k"];
 export type Bloque = "base" | "cliente";

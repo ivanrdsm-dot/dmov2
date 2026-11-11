@@ -49,3 +49,21 @@ describe("lo que ve el cliente", () => {
     expect(n.porConfirmar).toContain("Si en la carga y la descarga hace falta maniobra con ayudantes.");
   });
 });
+
+describe("cotización hecha por destino (Cotizador por destino)", () => {
+  const pro = { folio: "COT-2026-0009", estado: "Aprobada", empresa: "Cliente", solicitante: "Ana", precioPropuesto: 7730, precioAprobado: 8000,
+    entrada: { fuente: "pro", modo: "foraneo", tipoRuta: "nacional", destino: "Puebla", entregas: 3, considera: ["Destinos: Puebla (3 puntos).", "Casetas incluidas."] },
+    resultado: { unidadNombre: "Camión 3.5 t", unidades: 1, maniobra: false, conceptos: [{ concepto: "Puebla base", monto: 7727.1 }], supuestos: [] } };
+  it("describe lo elegido, no pregunta andenes y no deja ver el desglose", () => {
+    const d = datosCotizacionCliente(pro, { ahoraMs: AHORA });
+    expect(d.servicio).toBe("Transporte a Puebla · 1 × Camión 3.5 t");
+    expect(d.considera).toEqual(["Unidad: 1 × Camión 3.5 t.", "Destinos: Puebla (3 puntos).", "Casetas incluidas."]);
+    expect(d.porConfirmar).toEqual([]);
+    expect(d).toMatchObject({ precio: 8000, iva: 1280, total: 9280 });
+    expect(JSON.stringify(d)).not.toContain("7727");
+  });
+  it("distribución se nombra como distribución", () => {
+    expect(datosCotizacionCliente({ ...pro, entrada: { ...pro.entrada, modo: "masivo" }, resultado: { ...pro.resultado, unidades: 4 } }, { ahoraMs: AHORA }).servicio)
+      .toBe("Distribución a puntos de venta · 4 × Camión 3.5 t");
+  });
+});

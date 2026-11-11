@@ -79,8 +79,8 @@ describe("auditoría del tarifario", () => {
   it("valida precios positivos y avisa de cliente menor que base o falta de km", () => {
     expect(validarTarifa(tarifas[0])).toEqual({ ok: true, errores: [], avisos: [] });
     expect(validarTarifa({ tipo: "nacional", nombre: "", base: {} }).errores).toEqual(["Nombre", "Al menos un precio"]);
-    expect(validarTarifa(t("X", { eur: -5 }, {})).errores).toEqual(["Eurovan 1 tonelada (base): debe ser mayor a cero", "Al menos un precio"]);
-    expect(validarTarifa({ tipo: "nacional", nombre: "X", base: { eur: 100 }, cliente: { eur: 90 } }).avisos).toEqual(["Eurovan 1 tonelada: el precio cliente es menor que el base", "Sin kilometraje"]);
+    expect(validarTarifa(t("X", { eur: -5 }, {})).errores).toEqual(["Eurovan (1 t) (base): debe ser mayor a cero", "Al menos un precio"]);
+    expect(validarTarifa({ tipo: "nacional", nombre: "X", base: { eur: 100 }, cliente: { eur: 90 } }).avisos).toEqual(["Eurovan (1 t): el precio cliente es menor que el base", "Sin kilometraje"]);
     expect(validarTarifa({ tipo: "local", nombre: "Entrega adicional", valorUnico: 1200 }).ok).toBe(true);
   });
   it("historial: solo los precios que cambiaron", () => {
