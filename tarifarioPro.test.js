@@ -59,3 +59,39 @@ describe("punto adicional", () => {
     expect(puntoAdicionalSugerido({ entregaAdicionalLocal: null }, 0)).toBeNull();
   });
 });
+
+import { REGLAS_PRO, reglasPro, descuentoPorPuntos, idRegla } from "./tarifarioPro.ts";
+import { validarTarifa, diffTarifa } from "./tarifario.ts";
+
+describe("reglas del Cotizador Pro en el tarifario", () => {
+  const docs = REGLAS_PRO.map(r => ({ id: idRegla(r.clave), tipo: "regla", clave: r.clave, nombre: r.nombre, unidad: r.unidad, valor: r.valorInicial, activo: true }));
+  it("los valores iniciales son los que tenía el código", () => {
+    expect(Object.fromEntries(REGLAS_PRO.map(r => [r.clave, r.valorInicial]))).toEqual({ urgente_pct: 35, descuento_puntos_pct: 5, descuento_puntos_tramo: 20, descuento_puntos_tope: 20, ayudante_foraneo: 2800, hotel_noche: 1100, comida_dia: 700 });
+  });
+  it("lee los valores vigentes; la que falta o está de baja no se inventa", () => {
+    expect(reglasPro(docs)).toEqual({ valores: { urgente_pct: 35, descuento_puntos_pct: 5, descuento_puntos_tramo: 20, descuento_puntos_tope: 20, ayudante_foraneo: 2800, hotel_noche: 1100, comida_dia: 700 }, faltantes: [] });
+    const r = reglasPro(docs.map(d => d.clave === "hotel_noche" ? { ...d, activo: false } : d.clave === "comida_dia" ? { ...d, valor: 0 } : d));
+    expect(r.valores.hotel_noche).toBeUndefined();
+    expect(r.valores.comida_dia).toBe(0);
+    expect(r.faltantes).toEqual(['Regla "Hotel por unidad por noche"']);
+    expect(reglasPro([]).faltantes).toHaveLength(REGLAS_PRO.length);
+  });
+  it("el descuento por volumen se calcula con las reglas y respeta el tope", () => {
+    const v = reglasPro(docs).valores;
+    expect([1, 19, 20, 39, 40, 80, 200].map(n => descuentoPorPuntos(v, n))).toEqual([0, 0, 0.05, 0.05, 0.1, 0.2, 0.2]);
+    expect(descuentoPorPuntos({ ...v, descuento_puntos_pct: 10, descuento_puntos_tramo: 10, descuento_puntos_tope: 15 }, 30)).toBe(0.15);
+    expect(descuentoPorPuntos({ ...v, descuento_puntos_pct: 0 }, 80)).toBe(0);
+    expect(descuentoPorPuntos({}, 80)).toBe(0);
+  });
+  it("validación y historial de una regla", () => {
+    const base = { tipo: "regla", nombre: "Hotel", unidad: "$" };
+    expect(validarTarifa({ ...base, valor: 1200 }).ok).toBe(true);
+    expect(validarTarifa({ ...base, valor: 0 })).toMatchObject({ ok: true, avisos: ["Con valor 0 la regla no se aplica"] });
+    expect(validarTarifa({ ...base, valor: -1 }).ok).toBe(false);
+    expect(validarTarifa({ ...base, valor: "" }).ok).toBe(false);
+    expect(validarTarifa({ ...base, unidad: "%", valor: 120 }).ok).toBe(false);
+    expect(validarTarifa({ ...base, unidad: "puntos", valor: 2.5 }).ok).toBe(false);
+    expect(diffTarifa({ ...base, valor: 1100 }, { ...base, valor: 1250 })).toEqual([{ campo: "valor", antes: 1100, despues: 1250 }]);
+    expect(diffTarifa({ ...base, valor: 5 }, { ...base, valor: 0 })).toEqual([{ campo: "valor", antes: 5, despues: 0 }]);
+  });
+});

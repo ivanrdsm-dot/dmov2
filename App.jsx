@@ -33,7 +33,7 @@ const CatalogosVista = lazy(()=>import("./Catalogos.jsx"));
 import { crearDespachoStore } from "./despachoStore.js";
 const DespachoVista = lazy(()=>import("./Despacho.jsx"));
 import { crearTarifarioStore } from "./tarifarioStore.js";
-import { tablasPro, puntoAdicionalSugerido } from "./tarifarioPro.ts";
+import { tablasPro, puntoAdicionalSugerido, reglasPro, descuentoPorPuntos } from "./tarifarioPro.ts";
 const TarifarioVista = lazy(()=>import("./Tarifario.jsx"));
 const CotizadorAutoVista = lazy(()=>import("./CotizadorAuto.jsx"));
 import { crearCotizacionesStore } from "./cotizacionesStore.js";
@@ -599,6 +599,7 @@ button:focus-visible{outline:2px solid ${A};outline-offset:2px;border-radius:8px
 let TAR = [];
 let LOC = {};
 let ENTREGA_ADIC_LOCAL = null;
+let REGLAS = {};          // reglas del cotizador (urgente, descuento por puntos, ayudante, viáticos)
 const tarifarioPro = { estado:{cargado:false,faltantes:[],error:""}, subs:new Set(), unsub:null };
 function useTarifarioPro(){
   const [,refrescar]=useState(0);
@@ -608,10 +609,11 @@ function useTarifarioPro(){
     if(!tarifarioPro.unsub){
       tarifarioPro.unsub=crearTarifarioStore(db).suscribir(lista=>{
         const t=tablasPro(lista);
-        TAR=t.ciudades; LOC=t.local; ENTREGA_ADIC_LOCAL=t.entregaAdicionalLocal;
+        const r=reglasPro(lista);
+        TAR=t.ciudades; LOC=t.local; ENTREGA_ADIC_LOCAL=t.entregaAdicionalLocal; REGLAS=r.valores;
         /* El tarifario escribe algunos nombres sin acento: se les asigna su estado. */
         for(const c of TAR) if(!CIUDAD_ESTADO[c.c]){ const k=Object.keys(CIUDAD_ESTADO).find(x=>normTxt(x)===normTxt(c.c)); if(k) CIUDAD_ESTADO[c.c]=CIUDAD_ESTADO[k]; }
-        tarifarioPro.estado={cargado:true,faltantes:t.faltantes,error:""};
+        tarifarioPro.estado={cargado:true,faltantes:[...t.faltantes,...r.faltantes],error:""};
         tarifarioPro.subs.forEach(g=>g());
       },e=>{
         tarifarioPro.unsub=null;
@@ -626,8 +628,16 @@ function useTarifarioPro(){
 /* Punto adicional: el tarifario solo tiene el de ruta local. Fuera de la zona local
    no hay sugerido (0): el precio por punto se captura en cada ciudad. */
 const sugerirPunto = (veh,km)=>puntoAdicionalSugerido({entregaAdicionalLocal:ENTREGA_ADIC_LOCAL},km)??0;
-/* Descuento por volumen (regla del Cotizador Pro, no del tarifario): cada 20 puntos −5 %, tope −20 %. */
-const descPuntos = n => Math.min(0.20, Math.floor((n||0)/20)*0.05);
+/* Descuento por volumen de puntos: sus tres valores se editan en Tarifario → Reglas del cotizador. */
+const descPuntos = n => descuentoPorPuntos(REGLAS,n);
+const pctUrgente = () => (REGLAS.urgente_pct||0)/100;
+/* Valor inicial tomado de una regla del tarifario; si el usuario lo edita en la cotización, se respeta. */
+function useValorRegla(clave,cargado){
+  const [v,setV]=useState(REGLAS[clave]??0);
+  const tocado=useRef(false);
+  useEffect(()=>{ if(cargado&&!tocado.current) setV(REGLAS[clave]??0); },[cargado,clave,REGLAS[clave]]);
+  return [v,x=>{tocado.current=true;setV(x);}];
+}
 
 /* ── Mapa ciudad → estado (para filtro por estado en cotizador) ── */
 const CIUDAD_ESTADO = {
@@ -4483,8 +4493,8 @@ function Cotizador({onSaved}){
   const [fNumAyud,setFNumAyud]=useState(1);
   const [fRes,setFRes]=useState(false);
   const [fPersonas,setFPersonas]=useState(1); // 1 o 2 en la unidad: hotel igual, comida se duplica
-  const [fComida,setFComida]=useState(COMIDA);
-  const [fHotel,setFHotel]=useState(HOTEL);
+  const [fComida,setFComida]=useValorRegla("comida_dia",tarPro.cargado);
+  const [fHotel,setFHotel]=useValorRegla("hotel_noche",tarPro.cargado);
   const [fDiasOv,setFDiasOv]=useState(null);   // override manual de días de ruta
   const [fNochesOv,setFNochesOv]=useState(null);
 
@@ -4494,8 +4504,8 @@ function Cotizador({onSaved}){
   const [mPersonas,setMPersonas]=useState(1);
   const [mAyud,setMAyud]=useState(false);
   const [mUrg,setMUrg]=useState(false);
-  const [mComida,setMComida]=useState(COMIDA);
-  const [mHotel,setMHotel]=useState(HOTEL);
+  const [mComida,setMComida]=useValorRegla("comida_dia",tarPro.cargado);
+  const [mHotel,setMHotel]=useValorRegla("hotel_noche",tarPro.cargado);
   const [mCiudades,setMCiudades]=useState([]);
   const [mSearch,setMSearch]=useState("");
   const [mEstadoFil,setMEstadoFil]=useState("(Todos)");
@@ -4546,8 +4556,8 @@ function Cotizador({onSaved}){
   const fXC=fComida*fPersonas*fDias;
   const fXH=fHotel*fNoches;
   const fXV=fXC+fXH;
-  const fXU=fUrg?(fBaseTotal+fPtsTotal)*.35:0;
-  const fXM=fMani?AYUD*fNumAyud:0;
+  const fXU=fUrg?(fBaseTotal+fPtsTotal)*pctUrgente():0;
+  const fXM=fMani?(REGLAS.ayudante_foraneo||0)*fNumAyud:0;
   const fXR=fRes&&fCiudades.length>0?(LOC[fVeh]?.resguardo||0):0;
   const fSub=fBaseTotal+fPtsTotal+fXU+fXM+fXR+fXV;
   const fIva=fSub*.16;const fTot=fSub+fIva;
@@ -4571,7 +4581,7 @@ function Cotizador({onSaved}){
   const mTotVans=mCiudades.reduce((a,c)=>a+c.vans,0);
   const mPersonasT=mTotVans*(mPersonas+(mAyud?1:0));
   const mBaseTotal=mCiudades.reduce((a,c)=>a+(c.tarifa||0)*c.vans,0);
-  const mXU=mUrg?mBaseTotal*.35:0;
+  const mXU=mUrg?mBaseTotal*pctUrgente():0;
   const mMaxKm=mCiudades.length>0?Math.max(...mCiudades.map(c=>c.km)):0;
   const {xC:mXC,xH:mXH,total:mXV}=useMemo(()=>mMaxKm>0?calcViaticos(mMaxKm,mPersonasT,mComida,mHotel,mTotVans):{xC:0,xH:0,total:0},[mMaxKm,mPersonasT,mComida,mHotel,mTotVans]);
   const mSub=mBaseTotal+mXU+mXV;const mIva=mSub*.16;const mTot=mSub+mIva;
@@ -4591,7 +4601,7 @@ function Cotizador({onSaved}){
           c.nAd>0?{label:"   ↳ "+c.nAd+" punto(s) adicional(es) × "+fmt(c.pp)+(c.d>0?" · desc. −"+Math.round(c.d*100)+"%":""),value:"+"+fmt(c.xPts),color:BLUE}:null,
         ]).filter(Boolean),
         fCiudades.length>1&&{label:"Total tarifas ("+fCiudades.length+" ciudades)",value:fmt(fBaseTotal+fPtsTotal)},
-        fUrg&&{label:"⚡ Urgente +35%",value:"+"+fmt(fXU),color:ROSE},
+        fUrg&&{label:"⚡ Urgente +"+(REGLAS.urgente_pct||0)+"%",value:"+"+fmt(fXU),color:ROSE},
         fMani&&{label:"💪 Ayudantes maniobras ("+fNumAyud+")",value:"+"+fmt(fXM),color:VIOLET},
         fRes&&{label:"🛡️ Resguardo 1 día",value:"+"+fmt(fXR),color:GREEN},
         fXC>0&&{label:"🍽️ Comida · "+fPersonas+" persona(s) × "+fDias+" día(s) × "+fmt(fComida),value:"+"+fmt(fXC),color:AMBER},
@@ -4614,7 +4624,7 @@ function Cotizador({onSaved}){
       stops:[{city:"CDMX"},...mCiudades.map(c=>({city:c.c,pdv:c.pdv}))],
       lines:[
         ...mCiudades.map(c=>({label:"📍 "+c.c+" · "+c.pdv+" PDVs · "+c.vans+" van(s)",value:fmt((c.tarifa||0)*c.vans)})),
-        mUrg&&{label:"⚡ Urgente +35%",value:"+"+fmt(mXU),color:ROSE},
+        mUrg&&{label:"⚡ Urgente +"+(REGLAS.urgente_pct||0)+"%",value:"+"+fmt(mXU),color:ROSE},
         mXC>0&&{label:"🍽️ Comidas personal",value:"+"+fmt(mXC),color:AMBER},
         mXH>0&&{label:"🏨 Hotel personal",value:"+"+fmt(mXH),color:BLUE},
         {label:"Subtotal",value:fmt(mSub)},{label:"IVA 16%",value:fmt(mIva),color:MUTED},
@@ -4762,8 +4772,8 @@ function Cotizador({onSaved}){
           return a+Math.round((nPts-1)*pp*(1-descPuntos(nPts)));
         },0);
         const xv = fComida*fPersonas*fDias + fHotel*fNoches;
-        const xu = fUrg?(baseTotal+ptsTotal)*.35:0;
-        const xm = fMani?AYUD*fNumAyud:0;
+        const xu = fUrg?(baseTotal+ptsTotal)*pctUrgente():0;
+        const xm = fMani?(REGLAS.ayudante_foraneo||0)*fNumAyud:0;
         const xr = fRes?(LOC[k]?.resguardo||0):0;
         const sub = baseTotal+ptsTotal+xu+xm+xr+xv;
         return {veh:k,label:v.label,total:sub*1.16,subtotal:sub};
@@ -4780,7 +4790,7 @@ function Cotizador({onSaved}){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div>
             <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:26,color:TEXT,letterSpacing:"-0.03em"}}>Cotizador Pro</h1>
-            <p style={{color:MUTED,fontSize:12,marginTop:2}}>Precios del módulo Tarifario · {TAR.filter(c=>!c.local).length} destinos · Puntos con desc. volumen · Viáticos $1,100 hotel + $700 comida · Casetas TAG incluidas</p>
+            <p style={{color:MUTED,fontSize:12,marginTop:2}}>Precios del módulo Tarifario · {TAR.filter(c=>!c.local).length} destinos · Reglas y viáticos en Tarifario → Reglas del cotizador · Casetas TAG incluidas</p>
             {!tarPro.cargado&&!tarPro.error&&<p style={{color:AMBER,fontSize:12,fontWeight:700,marginTop:4}}>Cargando el tarifario…</p>}
             {tarPro.error&&<p style={{color:ROSE,fontSize:12,fontWeight:700,marginTop:4}}>No se pudo leer el tarifario: {tarPro.error}. Sin tarifario no hay precios.</p>}
             {tarPro.cargado&&tarPro.faltantes.length>0&&<p style={{color:AMBER,fontSize:11,marginTop:4}}>Falta en el tarifario: {tarPro.faltantes.join(" · ")}</p>}
@@ -4887,7 +4897,7 @@ function Cotizador({onSaved}){
                   style={{width:90,background:"#fff",border:"1.5px solid "+A+"35",borderRadius:8,padding:"5px 9px",fontFamily:MONO,fontSize:13,fontWeight:700,color:A}}/>
                 {lPP!=null&&lPP!==(ENTREGA_ADIC_LOCAL||0)&&<button onClick={()=>setLPP(null)} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline"}}>↺ tarifario {ENTREGA_ADIC_LOCAL?fmt(ENTREGA_ADIC_LOCAL):"sin tarifa"}</button>}
                 {lDesc>0&&<span style={{fontSize:10,fontWeight:800,color:GREEN,background:GREEN+"12",borderRadius:6,padding:"2px 8px"}}>🎉 Desc. volumen −{Math.round(lDesc*100)}% ({lNumPuntos} puntos)</span>}
-                {lDesc===0&&lNumPuntos>=10&&<span style={{fontSize:10,color:MUTED}}>💡 A partir de 20 puntos: −5% · 40: −10% · 60: −15% (tope −20%)</span>}
+                {lDesc===0&&lNumPuntos>=10&&REGLAS.descuento_puntos_pct>0&&<span style={{fontSize:10,color:MUTED}}>💡 Cada {REGLAS.descuento_puntos_tramo} puntos: −{REGLAS.descuento_puntos_pct}% (tope −{REGLAS.descuento_puntos_tope}%)</span>}
               </div>
               {lPuntos.map((p,i)=>(
                 <div key={p.id} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
@@ -5086,7 +5096,7 @@ function Cotizador({onSaved}){
                 <span style={{color:GREEN,fontWeight:700}}>🛣️ Casetas: incluidas (TAG DMovimiento)</span>
               </div>}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
-                <Tog checked={fUrg} onChange={setFUrg} label="⚡ Urgente +35%" color={ROSE}/>
+                <Tog checked={fUrg} onChange={setFUrg} label={"⚡ Urgente +"+(REGLAS.urgente_pct||0)+"%"} color={ROSE}/>
                 <Tog checked={fMani} onChange={setFMani} label="💪 Maniobras" color={VIOLET}/>
                 <Tog checked={fRes} onChange={setFRes} label="🛡️ Resguardo" color={GREEN}/>
               </div>
@@ -5116,7 +5126,7 @@ function Cotizador({onSaved}){
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:13}}>
                 <Tog checked={mAyud} onChange={setMAyud} label="💪 Ayudante/van" color={VIOLET}/>
-                <Tog checked={mUrg} onChange={setMUrg} label="⚡ Urgente +35%" color={ROSE}/>
+                <Tog checked={mUrg} onChange={setMUrg} label={"⚡ Urgente +"+(REGLAS.urgente_pct||0)+"%"} color={ROSE}/>
               </div>
               {mCiudades.length>0&&<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
                 <InfoBox icon={Truck} color={A} title="Vans totales" value={mTotVans} sub={mCiudades.length+" ciudades"}/>
@@ -5699,7 +5709,7 @@ function RouteMapPreview({stops,height=280}){
 }
 
 function PlanificadorRutas(){
-  useTarifarioPro();
+  const tarPl=useTarifarioPro();
   const [nombre,setNombre]=useState("");
   const [cliente,setCliente]=useState("");
   const [clienteTel,setClienteTel]=useState("");
@@ -5720,8 +5730,8 @@ function PlanificadorRutas(){
   const [searchOrigen,setSearchOrigen]=useState("");
   const [maxDia,setMaxDia]=useState(20);
   const [plazo,setPlazo]=useState(5);
-  const [comida,setComida]=useState(COMIDA);
-  const [hotel,setHotel]=useState(HOTEL);
+  const [comida,setComida]=useValorRegla("comida_dia",tarPl.cargado);
+  const [hotel,setHotel]=useValorRegla("hotel_noche",tarPl.cargado);
   const [pVan,setPVan]=useState(1);
   const [ayud,setAyud]=useState(false);
   const [urg,setUrg]=useState(false);
@@ -5756,7 +5766,7 @@ function PlanificadorRutas(){
   const totalPuntosDestino = useMemo(()=>stops.filter(s=>!s.isOrigin).reduce((a,s)=>a+((s.puntos||[]).length||1),0),[stops]);
   const paradasExtra = Math.max(0, totalPuntosDestino - paradasIncluidas);
   const xParadasExtra = aplicarParadaExtra ? paradasExtra * (Number(costoParadaExtra)||0) : 0;
-  const xU=urg?tarifaT*.35:0;
+  const xU=urg?tarifaT*pctUrgente():0;
   const sub=tarifaT+xU+xViat+xParadasExtra;
   const iva=sub*.16;
   const total=sub+iva;
@@ -6156,7 +6166,7 @@ function PlanificadorRutas(){
             </div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               <Tog checked={ayud} onChange={setAyud} label="💪 Ayudante/van" color={VIOLET}/>
-              <Tog checked={urg} onChange={setUrg} label="⚡ Urgente +35%" color={ROSE}/>
+              <Tog checked={urg} onChange={setUrg} label={"⚡ Urgente +"+(REGLAS.urgente_pct||0)+"%"} color={ROSE}/>
             </div>
           </div>
 
@@ -6214,7 +6224,7 @@ function PlanificadorRutas(){
               const destinos=stops.filter(s=>!s.isOrigin).map(s=>s.city).join(" → ");
               conceptos.push({desc:`Transporte ${vehD?.label||""} · ${destinos}`,cant:vans,precio:tarifaT/vans});
               if(xViat>0) conceptos.push({desc:`Viáticos del personal (${crew} personas × ${diasF} días)`,cant:1,precio:xViat});
-              if(xU>0) conceptos.push({desc:"Recargo urgente +35%",cant:1,precio:xU});
+              if(xU>0) conceptos.push({desc:"Recargo urgente +"+(REGLAS.urgente_pct||0)+"%",cant:1,precio:xU});
               if(xParadasExtra>0) conceptos.push({desc:`Paradas extra (${paradasExtra} × ${fmt(costoParadaExtra)})`,cant:paradasExtra,precio:Number(costoParadaExtra)||0});
               try{
                 const ref = await addDoc(collection(db,"presupuestos"),{
