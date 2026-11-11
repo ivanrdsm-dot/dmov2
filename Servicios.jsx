@@ -170,7 +170,42 @@ function Formulario({ inicial, clientes, choferes, unidades, puntos = [], provee
   );
 }
 
-function Detalle({ s, store, usuario, unidades, onEditar, onClose, avisar }){
+/* Chofer y ruta en un solo paso, desde el servicio: elige unidad y chofer (con la app
+   lista), se guardan en el servicio, el servidor arma la ruta con los lugares del
+   catálogo y el servicio pasa a "Asignada". Antes había que escribir el chofer aquí
+   y volver a elegirlo en Despacho. */
+function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisar }){
+  const [placa, setPlaca] = useState(s.unidadPlaca || ""), [choferId, setChoferId] = useState(s.choferId || ""), [ocupado, setOcupado] = useState(false);
+  if(!despacho || !["Confirmada", "Asignada"].includes(s.estado) || s.rutaArmadaEn) return null;
+  const listos = choferesApp.filter(c => !!c.authUid && c.status !== "Inactivo");   // tiene cuenta de la app
+  const chofer = listos.find(c => c.id === choferId);
+  const asignar = async () => {
+    if(!placa || !chofer){ avisar("Elige la unidad y el chofer", true); return; }
+    setOcupado(true);
+    try {
+      await store.actualizar(usuario, s, { ...s, unidadPlaca: placa, choferNombre: chofer.nombre || "", asignacionTipo: s.asignacionTipo || "Flota propia" });
+      await despacho.prepararRuta(s.id, chofer.id);
+      if(s.estado === "Confirmada") await store.cambiarEstado(usuario, { ...s, unidadPlaca: placa, choferNombre: chofer.nombre || "" }, "Asignada", {});
+      avisar("Listo: " + (chofer.nombre || "el chofer") + " ya tiene la ruta en su app");
+    } catch(e){
+      const m = String(e?.message || e);
+      avisar(/pin confirmado/.test(m) ? m + ". Ve a Lugares y confirma el pin de esos puntos." : "No se pudo: " + m, true);
+    } finally { setOcupado(false); }
+  };
+  return (
+    <Seccion titulo="Chofer y ruta">
+      <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 180px" }}><Campo label="Unidad (placas)" opciones={["", ...unidades.map(u => u.placa).filter(Boolean)]} value={placa} onChange={e => setPlaca(e.target.value)}/></div>
+        <div style={{ flex: "1 1 200px" }}><Campo label="Chofer con la app lista" opciones={["", ...listos.map(c => c.nombre || c.id)]} value={chofer ? (chofer.nombre || chofer.id) : ""}
+          onChange={e => setChoferId(listos.find(c => (c.nombre || c.id) === e.target.value)?.id || "")}/></div>
+        <button onClick={asignar} disabled={ocupado || !placa || !chofer} style={{ ...boton(A), opacity: ocupado || !placa || !chofer ? .5 : 1 }}>{ocupado ? "Asignando…" : "Asignar y mandar ruta al chofer"}</button>
+      </div>
+      {listos.length === 0 && <div style={{ fontSize: 12, color: AMBER, fontWeight: 700, marginTop: 8 }}>Ningún chofer tiene la app lista todavía. Su cuenta se crea en En vivo → Choferes en ruta.</div>}
+      <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Los lugares de carga y entrega deben estar en Lugares con su pin confirmado.</div>
+    </Seccion>);
+}
+
+function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = null, onEditar, onClose, avisar }){
   const esAdmin = usuario.rol === "admin";
   const [eventos, setEventos] = useState([]);
   const [destino, setDestino] = useState("");
@@ -224,6 +259,7 @@ function Detalle({ s, store, usuario, unidades, onEditar, onClose, avisar }){
           <div style={{ flex: "1 1 180px" }}><Campo label="Precio aprobado sin IVA" inputMode="decimal" value={precio} onChange={e => setPrecio(e.target.value)}/></div>
           <button onClick={aprobar} disabled={ocupado} style={boton(GREEN)}>Aprobar precio</button></div>}
       </Seccion>
+      <ChoferYRuta s={s} store={store} usuario={usuario} unidades={unidades} choferesApp={choferesApp} despacho={despacho} avisar={avisar}/>
       <CostosServicio s={s} store={store} usuario={usuario} avisar={avisar}/>
       <Seccion titulo="Cambiar estado">
         {opciones.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Este servicio ya no cambia de estado.</div> : <>
@@ -247,7 +283,8 @@ function Detalle({ s, store, usuario, unidades, onEditar, onClose, avisar }){
   );
 }
 
-export default function Servicios({ store, usuario, clientes = [], choferes = [], prefill = null, onCreado = null }){
+export default function Servicios({ store, usuario, clientes = [], choferes = [], prefill = null, onCreado = null, despacho = null }){
+  const [choferesApp, setChoferesApp] = useState([]);
   const [lista, setLista] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -264,6 +301,7 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
   useEffect(() => store.suscribirCatalogo("unidades", setUnidades), [store]);
   useEffect(() => store.suscribirCatalogo("puntos_entrega", setPuntos), [store]);
   useEffect(() => store.suscribirCatalogo("proveedores", setProveedores), [store]);
+  useEffect(() => store.suscribirCatalogo("choferes", setChoferesApp), [store]);
   /* Viene de la bandeja de Solicitudes: abre el formulario con lo que ya se sabe. */
   useEffect(() => { if(prefill) setForm({ ...prefill }); }, [prefill]);
   useEffect(() => { if(!aviso) return; const t = setTimeout(() => setAviso(null), 4500); return () => clearTimeout(t); }, [aviso]);
@@ -305,9 +343,14 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
         {tarjeta("Con datos PENDIENTES", k.conPendientes, k.conPendientes ? AMBER : GREEN)}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-        {["Activos", "Todos", ...ESTADOS_SERVICIO, "Cancelada"].map(e => (
+        {/* Dos botones y un selector, en vez de 13 botones de estado. */}
+        {["Activos", "Todos"].map(e => (
           <button key={e} onClick={() => setFiltro(e)} aria-pressed={filtro === e} style={{ border: "1.5px solid " + (filtro === e ? A : BD2), background: filtro === e ? A + "14" : "#fff", color: filtro === e ? A : MUTED,
-            borderRadius: 999, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{e}{k.porEstado[e] ? ` · ${k.porEstado[e]}` : ""}</button>))}
+            borderRadius: 999, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{e}</button>))}
+        <select aria-label="Ver por estado" value={["Activos", "Todos"].includes(filtro) ? "" : filtro} onChange={e => setFiltro(e.target.value || "Activos")} style={{ ...caja, width: "auto", padding: "6px 10px" }}>
+          <option value="">Por estado…</option>
+          {[...ESTADOS_SERVICIO, "Cancelada"].map(e => <option key={e} value={e}>{e}{k.porEstado[e] ? ` (${k.porEstado[e]})` : ""}</option>)}
+        </select>
         <input value={q} onChange={e => setQ(e.target.value)} aria-label="Buscar servicio" placeholder="Buscar folio, cliente, chofer, placas…" style={{ ...caja, maxWidth: 300, marginLeft: "auto" }}/>
       </div>
       {error && <div role="alert" style={{ color: ROSE, fontSize: 13, marginBottom: 10 }}>No se pudieron leer los servicios: {error}</div>}
@@ -317,7 +360,7 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
             <th key={h} style={{ textAlign: "left", padding: "11px 12px", fontSize: 10, color: MUTED, letterSpacing: "0.07em", textTransform: "uppercase", borderBottom: "1px solid " + BORDER }}>{h}</th>)}</tr></thead>
           <tbody>
             {visibles.map(s => { const pend = validarServicio(s).pendientes.length; return (
-              <tr key={s.id} style={{ borderBottom: "1px solid " + BORDER }}>
+              <tr key={s.id} onClick={() => setDetalleId(s.id)} tabIndex={0} onKeyDown={e => e.key === "Enter" && setDetalleId(s.id)} style={{ borderBottom: "1px solid " + BORDER, cursor: "pointer" }}>
                 <td style={{ padding: "10px 12px", fontFamily: MONO, fontWeight: 700 }}>{s.folio}</td>
                 <td style={{ padding: "10px 12px" }}>{s.recibidaEn?.replace("T", " ")}<div style={{ fontSize: 11, color: MUTED }}>{s.canal}</div></td>
                 <td style={{ padding: "10px 12px" }}>{s.empresa}<div style={{ fontSize: 11, color: MUTED }}>{s.solicitante}</div></td>
@@ -326,7 +369,7 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
                 <td style={{ padding: "10px 12px" }}>{s.unidadPlaca || "—"}<div style={{ fontSize: 11, color: MUTED }}>{s.choferNombre || s.proveedor || ""}</div></td>
                 <td style={{ padding: "10px 12px", fontFamily: MONO }}>{s.precio ? dinero(s.precio) : <span style={{ color: MUTED }}>{s.precioPropuesto ? dinero(s.precioPropuesto) + " prop." : "—"}</span>}</td>
                 <td style={{ padding: "10px 12px" }}><Chip color={COLOR_ESTADO[s.estado] || MUTED}>{s.estado}</Chip>{pend > 0 && <div style={{ fontSize: 10, color: AMBER, fontWeight: 700, marginTop: 3 }}>{pend} pendiente(s)</div>}</td>
-                <td style={{ padding: "10px 12px", textAlign: "right" }}><button onClick={() => setDetalleId(s.id)} style={{ ...boton(BLUE, false), padding: "6px 12px", minHeight: 34 }}>Abrir</button></td>
+                <td style={{ padding: "10px 12px", textAlign: "right" }}><button onClick={e => { e.stopPropagation(); setDetalleId(s.id); }} style={{ ...boton(BLUE, false), padding: "6px 12px", minHeight: 34 }}>Abrir</button></td>
               </tr>); })}
             {!cargando && visibles.length === 0 && <tr><td colSpan={9} style={{ padding: 28, textAlign: "center", color: MUTED }}>{lista.length === 0 ? "Aún no hay servicios registrados. Registra el primero." : "Ningún servicio coincide con el filtro."}</td></tr>}
             {cargando && <tr><td colSpan={9} style={{ padding: 28, textAlign: "center", color: MUTED }}>Cargando…</td></tr>}
@@ -335,7 +378,7 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
       </div>
       {form && <Dialogo titulo={form.id ? "Editar " + form.folio : form.solicitudFolio ? "Registrar servicio de " + form.solicitudFolio : "Registrar servicio"} onClose={() => setForm(null)}>
         <Formulario inicial={form} clientes={clientes} choferes={choferes} unidades={unidades} puntos={puntos} proveedores={proveedores} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/></Dialogo>}
-      {detalle && !form && <Detalle s={detalle} store={store} usuario={usuario} unidades={unidades} avisar={avisar} onClose={() => setDetalleId(null)} onEditar={() => setForm(detalle)}/>}
+      {detalle && !form && <Detalle s={detalle} store={store} usuario={usuario} unidades={unidades} choferesApp={choferesApp} despacho={despacho} avisar={avisar} onClose={() => setDetalleId(null)} onEditar={() => setForm(detalle)}/>}
       {aviso && <div role="status" style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: aviso.mal ? ROSE : TEXT, color: "#fff", borderRadius: 12, padding: "12px 18px", fontSize: 13, fontWeight: 600, zIndex: 700, maxWidth: "90vw" }}>{aviso.msg}</div>}
     </div>
   );
