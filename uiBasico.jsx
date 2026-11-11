@@ -8,7 +8,8 @@ export const DISP = "'Bricolage Grotesque',sans-serif", MONO = "'JetBrains Mono'
 
 export const p2 = n => String(n).padStart(2, "0");
 export const ahoraLocal = () => { const d = new Date(); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`; };
-export const dinero = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? "$" + n.toLocaleString("es-MX", { maximumFractionDigits: 2 }) : "—"; };
+/* Pesos: sin centavos si es exacto ($3,500); con dos si los hay ($2,280.50). */
+export const dinero = v => { const n = Number(v); if(!(Number.isFinite(n) && n > 0)) return "—"; const c = Math.round(n * 100) % 100 !== 0; return "$" + n.toLocaleString("es-MX", { minimumFractionDigits: c ? 2 : 0, maximumFractionDigits: 2 }); };
 export const fechaHora = ms => ms ? new Date(ms).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 
 export const etiqueta = { fontSize: 10, fontWeight: 700, color: MUTED, marginBottom: 5, letterSpacing: "0.07em", textTransform: "uppercase", display: "block" };

@@ -9,6 +9,51 @@ import {
 } from "./servicios.ts";
 import { recomendarUnidades } from "./dimensionamiento.ts";
 import { proveedorHabilitado, puntoListoParaRuta } from "./catalogos.ts";
+import { CONCEPTOS_COSTO, validarCosto, totalCostos, margenServicio } from "./costos.ts";
+
+/* Costos reales del servicio. Los captura la oficina; el margen lo ve solo un admin.
+   Un costo no se edita ni se borra: se anula con motivo. */
+function CostosServicio({ s, store, usuario, avisar }){
+  const esAdmin = usuario.rol === "admin";
+  const [costos, setCostos] = useState([]), [f, setF] = useState({ concepto: CONCEPTOS_COSTO[0], monto: "", nota: "" });
+  const [anulando, setAnulando] = useState(null), [motivo, setMotivo] = useState(""), [ocupado, setOcupado] = useState(false);
+  useEffect(() => store.suscribirCostos ? store.suscribirCostos(s.id, setCostos, () => setCostos([])) : undefined, [store, s.id]);
+  const t = totalCostos(costos);
+  /* El margen usa el total que calcula el servidor; mientras llega, el de la lista. */
+  const m = margenServicio({ precio: s.precio, costoTotal: t.total, costosN: t.n });
+  const errores = validarCosto(f);
+  const correr = async (fn, ok) => { setOcupado(true); try { await fn(); avisar(ok); } catch(e){ avisar("No se pudo guardar: " + e.message, true); } finally { setOcupado(false); } };
+  const agregar = () => { if(errores.length){ avisar("Falta: " + errores.join(" · "), true); return; }
+    correr(async () => { await store.agregarCosto(usuario, s, f); setF(x => ({ ...x, monto: "", nota: "" })); }, "Costo agregado"); };
+  const colorM = m.estado === "pérdida" ? ROSE : m.estado === "con margen" ? GREEN : AMBER;
+  return (
+    <Seccion titulo="Costos reales">
+      {esAdmin && <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+        {[["Precio aprobado", dinero(m.precio)], ["Costo real", m.costo === null ? "—" : dinero(m.costo) || "$0"], ["Margen", m.margen === null ? "—" : (m.margen < 0 ? "−" : "") + dinero(Math.abs(m.margen))], ["Margen %", m.margenPct === null ? "—" : m.margenPct + " %"]].map(([k, v]) =>
+          <div key={k} style={{ flex: "1 1 130px", border: "1px solid " + BORDER, borderRadius: 12, padding: "8px 12px" }}><span style={etiqueta}>{k}</span><b style={{ fontFamily: MONO, fontSize: 15 }}>{v}</b></div>)}
+        <div style={{ flexBasis: "100%" }}><Chip color={colorM}>{m.estado === "sin precio" ? "Sin precio aprobado: no hay margen que medir" : m.estado === "sin costos" ? "Faltan los costos reales" : m.estado === "pérdida" ? "Este servicio dejó pérdida" : "Con margen"}</Chip></div>
+      </div>}
+      {costos.length === 0 ? <div style={{ fontSize: 13, color: MUTED, marginBottom: 10 }}>Todavía no se capturan costos de este servicio.</div> : costos.map(c => (
+        <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 13, padding: "6px 0", borderBottom: "1px solid " + BORDER, opacity: c.anulado ? .55 : 1 }}>
+          <span style={{ flex: "1 1 180px", textDecoration: c.anulado ? "line-through" : "none" }}><b>{c.concepto}</b>{c.nota ? <span style={{ color: MUTED }}> · {c.nota}</span> : null}</span>
+          <b style={{ fontFamily: MONO, textDecoration: c.anulado ? "line-through" : "none" }}>{dinero(c.monto)}</b>
+          <span style={{ fontSize: 11, color: MUTED, flexBasis: "100%" }}>{c.actorNombre} · {fechaHora(c.ts)}{c.anulado ? ` · anulado por ${c.anuladoNombre || ""}: ${c.motivoAnulacion || ""}` : ""}</span>
+          {!c.anulado && (anulando === c.id ? <div style={{ display: "flex", gap: 8, flexBasis: "100%", alignItems: "end", flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 200px" }}><Campo label="Motivo de la anulación" value={motivo} onChange={e => setMotivo(e.target.value)}/></div>
+              <button onClick={() => correr(async () => { await store.anularCosto(usuario, s, c, motivo); setAnulando(null); setMotivo(""); }, "Costo anulado")} disabled={ocupado} style={boton(ROSE)}>Anular</button>
+              <button onClick={() => { setAnulando(null); setMotivo(""); }} style={boton(MUTED, false)}>Cancelar</button></div>
+            : <button onClick={() => setAnulando(c.id)} style={{ ...boton(MUTED, false), padding: "4px 10px", minHeight: 30, fontSize: 12 }}>Anular</button>)}
+        </div>))}
+      {t.n > 0 && <div style={{ fontSize: 13, marginTop: 8 }}>Total vigente: <b style={{ fontFamily: MONO }}>{dinero(t.total)}</b> en {t.n} costo(s), sin IVA.</div>}
+      <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap", marginTop: 12 }}>
+        <div style={{ flex: "1 1 190px" }}><Campo label="Concepto" opciones={[...CONCEPTOS_COSTO]} value={f.concepto} onChange={e => setF(x => ({ ...x, concepto: e.target.value }))}/></div>
+        <div style={{ flex: "0 1 140px" }}><Campo label="Monto sin IVA" inputMode="decimal" value={f.monto} onChange={e => setF(x => ({ ...x, monto: e.target.value }))}/></div>
+        <div style={{ flex: "1 1 200px" }}><Campo label={f.concepto === "Otro" ? "Nota (qué fue) *" : "Nota"} value={f.nota} onChange={e => setF(x => ({ ...x, nota: e.target.value }))} placeholder="Factura, proveedor, ruta…"/></div>
+        <button onClick={agregar} disabled={ocupado} style={boton(A)}>Agregar costo</button>
+      </div>
+      <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Uso interno: estos costos nunca salen en documentos para el cliente.</div>
+    </Seccion>);
+}
 
 const COLOR_ESTADO = { Solicitud: AMBER, Cotizada: BLUE, Confirmada: VIOLET, Asignada: VIOLET, "En ruta": A, Entregada: GREEN,
   Cerrada: GREEN, Conciliada: GREEN, Facturada: MUTED, Cobrada: MUTED, Cancelada: ROSE };
@@ -179,6 +224,7 @@ function Detalle({ s, store, usuario, unidades, onEditar, onClose, avisar }){
           <div style={{ flex: "1 1 180px" }}><Campo label="Precio aprobado sin IVA" inputMode="decimal" value={precio} onChange={e => setPrecio(e.target.value)}/></div>
           <button onClick={aprobar} disabled={ocupado} style={boton(GREEN)}>Aprobar precio</button></div>}
       </Seccion>
+      <CostosServicio s={s} store={store} usuario={usuario} avisar={avisar}/>
       <Seccion titulo="Cambiar estado">
         {opciones.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Este servicio ya no cambia de estado.</div> : <>
           <div style={{ display: "flex", gap: 10, alignItems: "end", flexWrap: "wrap" }}>
@@ -193,7 +239,7 @@ function Detalle({ s, store, usuario, unidades, onEditar, onClose, avisar }){
         {eventos.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Sin eventos.</div> : eventos.map(e => (
           <div key={e.id} style={{ fontSize: 13, padding: "7px 0", borderBottom: "1px solid " + BORDER }}>
             <span style={{ fontFamily: MONO, fontSize: 11, color: MUTED }}>{fechaHora(e.ts)}</span> · <b>{e.actorNombre || e.actorUid}</b>{" "}
-            {e.tipo === "creado" ? "registró el servicio" : e.tipo === "estado" ? `cambió de ${e.de} a ${e.a}` : e.tipo === "precio_aprobado" ? `aprobó el precio ${dinero(e.cambios?.[0]?.despues)}` : `editó ${(e.cambios || []).map(c => c.campo).join(", ")}`}
+            {e.tipo === "creado" ? "registró el servicio" : e.tipo === "costo" ? `agregó un costo: ${e.datos?.concepto} ${dinero(e.datos?.monto)}` : e.tipo === "costo_anulado" ? `anuló un costo (${e.datos?.concepto} ${dinero(e.datos?.monto)})` : e.tipo === "estado" ? `cambió de ${e.de} a ${e.a}` : e.tipo === "precio_aprobado" ? `aprobó el precio ${dinero(e.cambios?.[0]?.despues)}` : `editó ${(e.cambios || []).map(c => c.campo).join(", ")}`}
             {e.excepcion && <span style={{ color: ROSE }}> · sin {e.faltantes.join(", ")}</span>}{e.motivo && <span style={{ color: MUTED }}> · Motivo: {e.motivo}</span>}
           </div>))}
       </Seccion>

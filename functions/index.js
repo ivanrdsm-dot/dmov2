@@ -114,3 +114,6 @@ export {
 
 /* Fase 2 · vigilante de la operación (alertas automáticas cada 5 min) */
 export { vigilante } from "./vigilante.js";
+
+/* Fase 6 · costos reales por servicio: el total lo recalcula el servidor */
+export { recalcularCostos } from "./costos.js";

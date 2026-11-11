@@ -39,7 +39,7 @@ const Tabla = ({ columnas, filas, vacio }) => filas.length === 0 ? <div style={{
     <thead><tr>{columnas.map(h => <th key={h} style={{ textAlign: "left", padding: "6px 8px", fontSize: 10, color: MUTED, letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid " + BORDER }}>{h}</th>)}</tr></thead>
     <tbody>{filas.map((f, i) => <tr key={i} style={{ borderBottom: "1px solid " + BORDER }}>{f.map((c, j) => <td key={j} style={{ padding: "6px 8px", fontFamily: j ? MONO : "inherit" }}>{c}</td>)}</tr>)}</tbody></table></div>;
 
-export default function ReportesOperacion({ solicitudesStore, cotizacionesStore, serviciosStore }){
+export default function ReportesOperacion({ solicitudesStore, cotizacionesStore, serviciosStore, esAdmin = false }){
   const [sol, setSol] = useState(null), [cot, setCot] = useState(null), [srv, setSrv] = useState(null), [con, setCon] = useState({});
   const [clave, setClave] = useState("30d"), [ahora, setAhora] = useState(Date.now()), [error, setError] = useState("");
   useEffect(() => solicitudesStore.suscribir(setSol, e => { setSol([]); setError(e.message); }), [solicitudesStore]);
@@ -129,11 +129,23 @@ export default function ReportesOperacion({ solicitudesStore, cotizacionesStore,
         </div>
       </Seccion>
 
+      {esAdmin && <Seccion titulo="Margen (solo administradores)">
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+          <Dato valor={r.margen.medidos ? dinero(r.margen.ingreso) : "sin datos"} nombre="Ingreso aprobado medido" nota={`${r.margen.medidos} servicio(s) con precio y costos`}/>
+          <Dato valor={r.margen.medidos ? dinero(r.margen.costo) || "$0" : "sin datos"} nombre="Costo real"/>
+          <Dato valor={r.margen.medidos ? (r.margen.margen < 0 ? "−" : "") + (dinero(Math.abs(r.margen.margen)) || "$0") : "sin datos"} nombre="Margen" nota={r.margen.conPerdida ? `${r.margen.conPerdida} con pérdida` : ""}/>
+          <Dato valor={porc(r.margen.margenPct)} nombre="Margen %"/>
+          <Dato valor={r.margen.sinCostos} nombre="Servicios sin costos capturados" nota="No entran al cálculo"/>
+        </div>
+        <span style={etiqueta}>Por cliente</span>
+        <Tabla columnas={["Cliente", "Servicios", "Ingreso", "Costo", "Margen", "%"]} filas={r.margen.porCliente.map(c => [c.nombre, c.n, dinero(c.ingreso), dinero(c.costo) || "$0", (c.margen < 0 ? "−" : "") + (dinero(Math.abs(c.margen)) || "$0"), c.margenPct === null ? "—" : c.margenPct + " %"])} vacio="Ningún servicio del periodo tiene precio aprobado y costos capturados."/>
+      </Seccion>}
+
       <Seccion titulo="Descargar el detalle del periodo">
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button onClick={() => descargar("solicitudes-" + sufijo, csvSolicitudes(sol, periodo))} style={boton(BLUE, false)}>Solicitudes (CSV)</button>
           <button onClick={() => descargar("cotizaciones-" + sufijo, csvCotizaciones(cot, periodo))} style={boton(BLUE, false)}>Cotizaciones (CSV)</button>
-          <button onClick={() => descargar("servicios-" + sufijo, csvServicios(srv, periodo))} style={boton(BLUE, false)}>Servicios (CSV)</button>
+          <button onClick={() => descargar("servicios-" + sufijo, csvServicios(srv, periodo, { conMargen: esAdmin }))} style={boton(BLUE, false)}>Servicios (CSV)</button>
         </div>
         <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Se abren en Excel. Incluyen precios internos: no son para enviar al cliente.</div>
       </Seccion>
