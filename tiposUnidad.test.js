@@ -63,9 +63,16 @@ describe("casos de logística con el catálogo real", () => {
     { tipo: "local", nombre: "Viaje local con 1 ayudante y/o maniobra", base: { eur: 3000, cam: 4300, kra: 5000, rab: 8000, mud: 10000 } }];
   const tipos = tiposParaCotizar([]), anden = { tieneAnden: true, tieneMontacargas: true };
   const caso = (carga, extra = {}) => cotizar({ carga, tipoRuta: "local", origen: anden, destinoOp: anden, ...extra }, tipos, TARIFAS);
-  it("2 tarimas van en Transporter; 3 ya piden Sprinter o Crafter", () => {
-    expect(caso({ tarimas: 2, tarimaPesoKg: 400 }).unidad.tipo.clave).toBe("transporter");
+  it("2 tarimas bajas van en Transporter; 3 ya piden Sprinter o Crafter", () => {
+    expect(caso({ tarimas: 2, tarimaPesoKg: 400, tarimaAltoM: 1.2 }).unidad.tipo.clave).toBe("transporter");
     expect(["sprinter", "crafter"]).toContain(caso({ tarimas: 3, tarimaPesoKg: 250 }).unidad.tipo.clave);
+  });
+  it("una tarima armada a 1.5 m no entra en Transporter ni pasa por la puerta de la Expert", () => {
+    const c = caso({ tarimas: 2, tarimaPesoKg: 400 });                // sin altura declarada se asume 1.5 m
+    expect(c.unidad.tipo.clave).toBe("sprinter");
+    expect(c.motivoUnidad).toContain("no entra armada en: VW Transporter / Eurovan 1 t, Peugeot Expert");
+    expect(caso({ tarimas: 2, tarimaPesoKg: 400, tarimaAltoM: 1.3 }).unidad.tipo.clave).toBe("transporter");   // 1.3 m sí cabe en 1.34 m
+    expect(caso({ tarimas: 2, tarimaPesoKg: 600, tarimaAltoM: 1.3 }).unidad.tipo.clave).toBe("crafter");       // 1,200 kg: la Expert los carga, pero 1.3 m no pasa por su puerta de 1.22 m; sigue la Crafter
   });
   it("10 tarimas no apilables piden rabón; apilables caben en la 3½ a dos niveles", () => {
     expect(caso({ tarimas: 10, tarimaPesoKg: 250, tarimaAltoM: 1.0, apilable: false }).unidad.tipo.clave).toBe("rabon");

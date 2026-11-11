@@ -26,11 +26,11 @@ export const TIPOS_UNIDAD: TipoCatalogo[] = [
     cajasSueltasMax: 125, confirmada: false, fuente: "ficha global VW T6.1 y ficha México 2025", version: "T6.1 corta, techo normal (la versión más chica)",
     nota: "La nueva generación en México declara 988 kg y 6.7 m³. Regla de la casa: hasta unas 125 cajas densas." },
   { clave: "expert", nombre: "Peugeot Expert", tarifa: "eur", nombresFlota: ["Peugeot Expert"], enFlotaHabitual: 1, enFlota: 1,
-    capacidadKg: 1400, capacidadM3: 6.1, tarimasPiso: 2, altoInteriorM: 1.39, largoInteriorM: 2.86, anchoInteriorM: 1.25, puertaTrasera: "1.28 × 1.22 m",
+    capacidadKg: 1400, capacidadM3: 6.1, tarimasPiso: 2, altoInteriorM: 1.39, puertaAltoM: 1.22, largoInteriorM: 2.86, anchoInteriorM: 1.25, puertaTrasera: "1.28 × 1.22 m",
     confirmada: false, fuente: "ficha Peugeot México 2025; medidas interiores de fuentes secundarias", version: "Furgón largo (L3)",
     nota: "La tarima solo entra por las puertas traseras: la puerta lateral mide 0.93 m." },
   { clave: "sprinter", nombre: "Mercedes Sprinter", tarifa: "kra", nombresFlota: ["Mercedes Sprinter"], enFlotaHabitual: 1, enFlota: 1,
-    capacidadKg: 945, capacidadM3: 9.0, tarimasPiso: 3, altoInteriorM: 1.72, largoInteriorM: 3.27, anchoInteriorM: 1.35, puertaTrasera: "1.55 × 1.55 m",
+    capacidadKg: 945, capacidadM3: 9.0, tarimasPiso: 3, altoInteriorM: 1.72, puertaAltoM: 1.55, largoInteriorM: 3.27, anchoInteriorM: 1.35, puertaTrasera: "1.55 × 1.55 m",
     cajasSueltasMax: 150, confirmada: true, fuente: "ficha Mercedes-Benz México; versión confirmada por el dueño (nov-2026)", version: "311 Mediana, 945 kg de carga útil",
     nota: "Versión confirmada: la de 945 kg. Con techo normal son 9.0 m³ y 1.72 m de alto; si la unidad es de techo alto sube a 10.5 m³ y 2.0 m: falta medir el techo. Regla de la casa: no alcanza arriba de unas 150 cajas de líquido." },
   { clave: "crafter", nombre: "VW Crafter", tarifa: "kra", nombresFlota: ["VW Crafter", "Krafter"], enFlotaHabitual: 1, enFlota: 1,
@@ -81,7 +81,7 @@ export function tiposParaCotizar(unidades: UnidadFlotaMin[] = []): TipoUnidad[] 
     const mias = activas.filter(u => tipoPorNombreFlota(u.tipo)?.clave === t.clave);
     const completas = mias.filter(u => num(u.capacidadKg) && num(u.capacidadM3) && num(u.capacidadTarimas));
     const base: TipoUnidad = { clave: t.clave, nombre: t.nombre, tarifa: t.tarifa, capacidadKg: t.capacidadKg, capacidadM3: t.capacidadM3, tarimasPiso: t.tarimasPiso,
-      altoInteriorM: t.altoInteriorM, cajasSueltasMax: t.cajasSueltasMax, enFlota: hayTipos ? mias.length : t.enFlotaHabitual, fuente: t.fuente, confirmada: t.confirmada };
+      altoInteriorM: t.altoInteriorM, puertaAltoM: t.puertaAltoM, cajasSueltasMax: t.cajasSueltasMax, enFlota: hayTipos ? mias.length : t.enFlotaHabitual, fuente: t.fuente, confirmada: t.confirmada };
     if(completas.length === 0) return base;
     const min = (k: keyof UnidadFlotaMin) => Math.min(...completas.map(u => num(u[k])));
     const altos = completas.map(u => num(u.altoCm)).filter(Boolean);

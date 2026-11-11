@@ -153,7 +153,7 @@ describe("cotización completa", () => {
     expect(cotizar({ carga: { cajas: 60, ...CAJA, entarimada: false }, tipoRuta: "nacional" }, TIPOS, TARIFAS).pendientes).toEqual(["Destino"]);
   });
   it("nunca da precio 'listo' con preguntas abiertas ni con unidad de proveedor sin confirmar", () => {
-    const sinAnden = cotizar({ carga: { tarimas: 2, tarimaPesoKg: 300 }, tipoRuta: "local" }, TIPOS, TARIFAS);
+    const sinAnden = cotizar({ carga: { tarimas: 2, tarimaPesoKg: 300, tarimaAltoM: 1.2 }, tipoRuta: "local" }, TIPOS, TARIFAS);
     expect(sinAnden.lista).toBe(false);
     expect(sinAnden.precio).toBe(2500);
     const prov = cotizar({ carga: { tarimas: 12, tarimaPesoKg: 400 }, tipoRuta: "local", origen: CON_ANDEN, destinoOp: CON_ANDEN }, TIPOS, TARIFAS);
