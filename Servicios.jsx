@@ -2,21 +2,15 @@
    quién lo pidió, por dónde llegó, qué se mueve, quién lo ejecuta y en qué estado va.
    No habla con Firestore: recibe un `store` (serviciosStore.js o uno en memoria). */
 import { useEffect, useMemo, useState } from "react";
+import { A, BLUE, GREEN, ROSE, AMBER, VIOLET, MUTED, TEXT, BORDER, BD2, DISP, MONO, ahoraLocal, dinero, fechaHora, etiqueta, caja, rejilla, boton, Campo, Chip, Seccion, Dialogo } from "./uiBasico.jsx";
 import {
   ESTADOS_SERVICIO, CANALES_SOLICITUD, TIPOS_ASIGNACION,
   validarServicio, evaluarCambioEstado, kpisServicios, resumenRuta, minutosACotizacion,
 } from "./servicios.ts";
 
-const A = "#f97316", BLUE = "#2563eb", GREEN = "#059669", ROSE = "#e11d48", AMBER = "#d97706", VIOLET = "#7c3aed";
-const MUTED = "#607080", TEXT = "#0c1829", BORDER = "#e8eef6", BD2 = "#d2dcea";
-const DISP = "'Bricolage Grotesque',sans-serif", MONO = "'JetBrains Mono',monospace";
 const COLOR_ESTADO = { Solicitud: AMBER, Cotizada: BLUE, Confirmada: VIOLET, Asignada: VIOLET, "En ruta": A, Entregada: GREEN,
   Cerrada: GREEN, Conciliada: GREEN, Facturada: MUTED, Cobrada: MUTED, Cancelada: ROSE };
 
-const p2 = n => String(n).padStart(2, "0");
-const ahoraLocal = () => { const d = new Date(); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`; };
-const dinero = v => { const n = Number(v); return Number.isFinite(n) && n > 0 ? "$" + n.toLocaleString("es-MX", { maximumFractionDigits: 2 }) : "—"; };
-const fechaHora = ms => ms ? new Date(ms).toLocaleString("es-MX", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
 const VACIO = () => ({
   canal: "", recibidaEn: ahoraLocal(), empresa: "", clienteId: "", plan: "", centroCostos: "", solicitante: "", solicitanteContacto: "",
   fechaServicio: "", horaServicio: "", origenes: [{ nombre: "", direccion: "", contacto: "", telefono: "" }],
@@ -25,44 +19,6 @@ const VACIO = () => ({
   cotizacionFolio: "", precioPropuesto: "", confirmadoPor: "", asignacionTipo: "", unidadPlaca: "", choferNombre: "", proveedor: "",
   receptor: "", notas: "",
 });
-
-const etiqueta = { fontSize: 10, fontWeight: 700, color: MUTED, marginBottom: 5, letterSpacing: "0.07em", textTransform: "uppercase", display: "block" };
-const caja = { width: "100%", background: "#fff", border: "1.5px solid " + BD2, borderRadius: 10, padding: "10px 13px", fontSize: 14, fontFamily: "inherit", color: TEXT, boxSizing: "border-box" };
-const rejilla = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 12 };
-const boton = (color, lleno = true) => ({ background: lleno ? color : "#fff", color: lleno ? "#fff" : color, border: "1.5px solid " + color, borderRadius: 10,
-  padding: "10px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", minHeight: 42 });
-
-function Campo({ label, lista, opciones, area, ...p }){
-  const id = "srv-" + label.replace(/[^a-z0-9]/gi, "-").toLowerCase() + (p.name ? "-" + p.name : "");
-  return (
-    <label style={{ display: "block" }}>
-      <span style={etiqueta}>{label}</span>
-      {opciones ? <select {...p} style={caja}>{opciones.map(o => <option key={o} value={o}>{o || "— Elegir —"}</option>)}</select>
-        : area ? <textarea {...p} style={{ ...caja, minHeight: 70, resize: "vertical" }}/>
-        : <input {...p} list={lista ? id + "-l" : undefined} style={caja}/>}
-      {lista && <datalist id={id + "-l"}>{lista.map(o => <option key={o} value={o}/>)}</datalist>}
-    </label>
-  );
-}
-const Chip = ({ color, children }) => <span style={{ display: "inline-block", background: color + "16", color, border: "1px solid " + color + "40",
-  borderRadius: 999, padding: "3px 10px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>{children}</span>;
-const Seccion = ({ titulo, children }) => <fieldset style={{ border: "1px solid " + BORDER, borderRadius: 14, padding: "14px 16px", margin: "0 0 14px" }}>
-  <legend style={{ fontFamily: DISP, fontWeight: 700, fontSize: 13, padding: "0 6px" }}>{titulo}</legend>{children}</fieldset>;
-
-function Dialogo({ titulo, onClose, children }){
-  useEffect(() => { const h = e => { if(e.key === "Escape") onClose(); }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, [onClose]);
-  return (
-    <div onClick={e => e.target === e.currentTarget && onClose()} style={{ position: "fixed", inset: 0, background: "rgba(12,24,41,.45)", zIndex: 500, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 12, overflowY: "auto" }}>
-      <div role="dialog" aria-modal="true" aria-label={titulo} style={{ background: "#fff", borderRadius: 18, width: "100%", maxWidth: 860, margin: "20px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid " + BORDER, position: "sticky", top: 0, background: "#fff", borderRadius: "18px 18px 0 0", zIndex: 2 }}>
-          <span style={{ fontFamily: DISP, fontWeight: 700, fontSize: 16, flex: 1 }}>{titulo}</span>
-          <button onClick={onClose} aria-label="Cerrar" style={{ ...boton(MUTED, false), padding: "6px 12px", minHeight: 34 }}>Cerrar</button>
-        </div>
-        <div style={{ padding: "18px 20px" }}>{children}</div>
-      </div>
-    </div>
-  );
-}
 
 function Puntos({ titulo, puntos, onChange }){
   const set = (i, k, v) => onChange(puntos.map((p, j) => j === i ? { ...p, [k]: v } : p));
@@ -218,7 +174,7 @@ function Detalle({ s, store, usuario, onEditar, onClose, avisar }){
   );
 }
 
-export default function Servicios({ store, usuario, clientes = [], choferes = [] }){
+export default function Servicios({ store, usuario, clientes = [], choferes = [], prefill = null, onCreado = null }){
   const [lista, setLista] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -231,6 +187,8 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
   const [aviso, setAviso] = useState(null);
   useEffect(() => store.suscribir(x => { setLista(x); setCargando(false); setError(""); }, e => { setError(e.message); setCargando(false); }), [store]);
   useEffect(() => store.suscribirCatalogo("unidades", setUnidades), [store]);
+  /* Viene de la bandeja de Solicitudes: abre el formulario con lo que ya se sabe. */
+  useEffect(() => { if(prefill) setForm({ ...prefill }); }, [prefill]);
   useEffect(() => { if(!aviso) return; const t = setTimeout(() => setAviso(null), 4500); return () => clearTimeout(t); }, [aviso]);
   const avisar = (msg, mal = false) => setAviso({ msg, mal });
   const hoy = ahoraLocal().slice(0, 10);
@@ -245,7 +203,7 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
     setGuardando(true);
     try {
       if(form?.id){ const n = await store.actualizar(usuario, form, datos); avisar(n ? `Guardado: ${n} campo(s) cambiaron` : "Sin cambios"); }
-      else { const r = await store.crear(usuario, datos); avisar("Servicio registrado: " + r.folio); }
+      else { const r = await store.crear(usuario, datos); avisar("Servicio registrado: " + r.folio); if(onCreado) await onCreado(r, datos); }
       setForm(null);
     } catch(e){ avisar("No se pudo guardar: " + e.message, true); }
     finally { setGuardando(false); }
@@ -298,7 +256,7 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
           </tbody>
         </table>
       </div>
-      {form && <Dialogo titulo={form.id ? "Editar " + form.folio : "Registrar servicio"} onClose={() => setForm(null)}>
+      {form && <Dialogo titulo={form.id ? "Editar " + form.folio : form.solicitudFolio ? "Registrar servicio de " + form.solicitudFolio : "Registrar servicio"} onClose={() => setForm(null)}>
         <Formulario inicial={form} clientes={clientes} choferes={choferes} unidades={unidades} onGuardar={guardar} onClose={() => setForm(null)} guardando={guardando}/></Dialogo>}
       {detalle && !form && <Detalle s={detalle} store={store} usuario={usuario} avisar={avisar} onClose={() => setDetalleId(null)} onEditar={() => setForm(detalle)}/>}
       {aviso && <div role="status" style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: aviso.mal ? ROSE : TEXT, color: "#fff", borderRadius: 12, padding: "12px 18px", fontSize: 13, fontWeight: 600, zIndex: 700, maxWidth: "90vw" }}>{aviso.msg}</div>}

@@ -98,8 +98,8 @@ service cloud.firestore {
     }
     /* El folio debe ser el que el contador emite EN ESTA MISMA transacción:
        así no se puede reutilizar un folio ya emitido. */
-    function folioRecienEmitido(folio) {
-      let ruta = /databases/$(database)/documents/contadores/$('servicios-' + folio.split('-')[1]);
+    function folioRecienEmitido(coleccion, folio) {
+      let ruta = /databases/$(database)/documents/contadores/$(coleccion + '-' + folio.split('-')[1]);
       return getAfter(ruta).data.ultimoFolio == folio
         && (!exists(ruta) || getAfter(ruta).data.n == get(ruta).data.n + 1);
     }
@@ -111,7 +111,7 @@ service cloud.firestore {
         && request.resource.data.estado == 'Solicitud'
         && request.resource.data.folio is string
         && request.resource.data.folio.matches('SRV-20[0-9]{2}-[0-9]{4,}')
-        && folioRecienEmitido(request.resource.data.folio)
+        && folioRecienEmitido('servicios', request.resource.data.folio)
         && (!tocaPrecio(request.resource.data.keys()) || esAdmin());
       allow update: if esOficina()
         && request.resource.data.folio == resource.data.folio
@@ -126,6 +126,49 @@ service cloud.firestore {
           && request.resource.data.ts == request.time;
         allow update, delete: if false;
       }
+    }
+    /* ── Solicitudes (bandeja de entrada) ────────────────────────────────────
+       Las que llegan por correo o Slack las crea el servidor (Cloud Function).
+       La oficina solo puede: registrar una manual, cambiar su estado y anotar.
+       El mensaje original, el folio, el canal y las horas de recepción y acuse
+       son inmutables; nadie borra. */
+    function solicitudInmutables() {
+      return ['folio','canal','idExterno','hilo','origen','creadoPor','recibidaEn','registradaEn',
+              'asunto','texto','textoTruncado','adjuntos','remitenteNombre','remitenteCorreo','automatico','acuseEnviadoEn'];
+    }
+    match /solicitudes/{id} {
+      allow read: if esOficina();
+      allow create: if esOficina()
+        && request.resource.data.origen == 'manual'
+        && request.resource.data.creadoPor == request.auth.uid
+        && request.resource.data.registradaEn == request.time
+        && request.resource.data.recibidaEn is timestamp
+        && request.resource.data.recibidaEn <= request.time
+        && request.resource.data.estado == 'Nueva'
+        && request.resource.data.canal in ['Correo','Slack','WhatsApp','Teléfono','En persona']
+        && !request.resource.data.keys().hasAny(['acuseEnviadoEn','primeraRespuestaEn'])
+        && request.resource.data.folio is string
+        && request.resource.data.folio.matches('SOL-20[0-9]{2}-[0-9]{4,}')
+        && folioRecienEmitido('solicitudes', request.resource.data.folio);
+      allow update: if esOficina()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(solicitudInmutables())
+        && request.resource.data.estado in ['Nueva','En revisión','Respondida','Convertida','Descartada']
+        // La primera respuesta se fija una sola vez y con la hora del servidor.
+        && (!('primeraRespuestaEn' in request.resource.data.diff(resource.data).affectedKeys())
+            || (!('primeraRespuestaEn' in resource.data) && request.resource.data.primeraRespuestaEn == request.time));
+      allow delete: if false;
+      match /eventos/{eventoId} {
+        allow read: if esOficina();
+        allow create: if esOficina()
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.ts == request.time;
+        allow update, delete: if false;
+      }
+    }
+    /* Estado de conectores (latidos): lo escribe solo el servidor. */
+    match /sistema/{id} {
+      allow read: if esOficina();
+      allow write: if false;
     }
     /* Contadores de folio: solo avanzan de uno en uno. */
     match /contadores/{id} {
@@ -175,7 +218,7 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores']);
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema']);
     }
   }
 }
