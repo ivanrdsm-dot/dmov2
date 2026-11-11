@@ -50,8 +50,8 @@ async function servicioDelChofer(servicioId, chofer){
   if(!snap.exists || snap.data().choferId !== chofer.id) throw falla("permission-denied", "Este servicio no está asignado a ti");
   return { ref, servicio: { id: snap.id, ...snap.data() } };
 }
-async function jornadaDeHoy(chofer){
-  const snap = await db().doc(`jornadas/${chofer.id}_${fechaCDMX()}`).get();
+async function jornadaDeHoy(chofer, ms = Date.now()){
+  const snap = await db().doc(`jornadas/${chofer.id}_${fechaCDMX(ms)}`).get();
   if(!snap.exists) throw falla("failed-precondition", "Primero haz tu check-in de hoy");
   return snap.data();
 }
@@ -131,15 +131,28 @@ export const choferSubirPosiciones = onCall(OPC, async req => {
 export const choferCerrarParada = onCall(OPC, async req => {
   const { chofer } = await choferDe(req);
   const { ref: refServicio, servicio } = await servicioDelChofer(req.data?.servicioId, chofer);
-  await jornadaDeHoy(chofer);
+  /* Cierre hecho sin señal: la app lo guardó con su hora y lo manda después. Se valida contra la
+     posición confiable más cercana a ESE momento (ya recibida en los lotes), no contra "ahora". */
+  const cerradaMs = Number(req.data?.cerradaMs);
+  const diferida = Number.isFinite(cerradaMs) && cerradaMs < Date.now() - 2 * 60000 && cerradaMs > Date.now() - 72 * 3600000;
+  const momento = diferida ? cerradaMs : Date.now();
+  await jornadaDeHoy(chofer, momento);
   if(servicio.estado !== "En ruta") throw falla("failed-precondition", "Inicia la ruta antes de cerrar paradas");
   const paradaId = txt(req.data?.paradaId, 80), refParada = db().doc(`servicios/${servicio.id}/paradas/${paradaId}`);
   const e = req.data?.evidencia || {}, prefijo = `evidencias/${chofer.id}/${servicio.id}/`;
   const fotos = (Array.isArray(e.fotos) ? e.fotos : []).map(f => txt(f, 400)).filter(f => f.startsWith(prefijo)).slice(0, 10);
   const evidencia = { fotos, receptor: txt(e.receptor, 120), cantidadEntregada: e.cantidadEntregada ?? "", firmaRuta: txt(e.firmaRuta, 400).startsWith(prefijo) ? txt(e.firmaRuta, 400) : "", notas: txt(e.notas, 500) };
   const incidencia = TIPOS_INCIDENCIA.includes(e.incidencia) ? e.incidencia : "";
-  const u = await db().doc("ubicaciones/" + chofer.id).get();
-  const posicion = u.exists && u.data().confiableTMs ? { lat: u.data().confiableLat, lng: u.data().confiableLng, tMs: u.data().confiableTMs, precisionM: u.data().precisionM, confiable: true } : null;
+  let posicion = null;
+  if(diferida){
+    const lotes = await db().collection(`servicios/${servicio.id}/posiciones`).where("hastaMs", ">=", cerradaMs - 5 * 60000).orderBy("hastaMs").limit(8).get();
+    const cerca = lotes.docs.flatMap(d => d.data().puntos || []).filter(p => p.confiable !== false && Math.abs(p.tMs - cerradaMs) <= 5 * 60000)
+      .sort((x, y) => Math.abs(x.tMs - cerradaMs) - Math.abs(y.tMs - cerradaMs))[0];
+    if(cerca) posicion = { lat: cerca.lat, lng: cerca.lng, tMs: Math.min(cerca.tMs, cerradaMs), precisionM: cerca.precisionM, confiable: true };
+  } else {
+    const u = await db().doc("ubicaciones/" + chofer.id).get();
+    if(u.exists && u.data().confiableTMs) posicion = { lat: u.data().confiableLat, lng: u.data().confiableLng, tMs: u.data().confiableTMs, precisionM: u.data().precisionM, confiable: true };
+  }
 
   const resultado = await db().runTransaction(async tx => {
     /* En una transacción todas las lecturas van antes que las escrituras */
@@ -147,15 +160,15 @@ export const choferCerrarParada = onCall(OPC, async req => {
     const todas = await tx.get(db().collection(`servicios/${servicio.id}/paradas`));
     if(!ps.exists) throw falla("not-found", "Parada no encontrada");
     const parada = { id: ps.id, ...ps.data() };
-    const v = evaluarCierreParada({ parada, posicion, ahoraMs: Date.now(), evidencia, excepcion: parada.excepcion ? { ...parada.excepcion, paradaId: parada.id } : null });
+    const v = evaluarCierreParada({ parada, posicion, ahoraMs: momento, evidencia, excepcion: parada.excepcion ? { ...parada.excepcion, paradaId: parada.id } : null });
     if(!v.permitido){
       eventoServicio(tx, servicio.id, { tipo: "cierre_rechazado", paradaId, motivo: v.motivo, distanciaM: v.distanciaM ?? null, ...actorChofer(chofer) });
       return { ...v, parada };
     }
     tx.update(refParada, { estado: incidencia ? "Incidencia" : "Entregada", incidencia, evidencia, cerradaEn: ahora(), cerradaPor: chofer.id,
-      distanciaAlCerrarM: v.distanciaM ?? null, cerradaPorExcepcion: v.porExcepcion === true });
+      distanciaAlCerrarM: v.distanciaM ?? null, cerradaPorExcepcion: v.porExcepcion === true, cerradaDiferida: diferida, cerradaEnEquipoMs: diferida ? cerradaMs : null });
     eventoServicio(tx, servicio.id, { tipo: incidencia ? "parada_incidencia" : "parada_entregada", paradaId, paradaNombre: parada.nombre || "", receptor: evidencia.receptor,
-      incidencia, distanciaM: v.distanciaM ?? null, porExcepcion: v.porExcepcion === true, ...actorChofer(chofer) });
+      incidencia, distanciaM: v.distanciaM ?? null, porExcepcion: v.porExcepcion === true, diferida, ...actorChofer(chofer) });
     const pendientes = todas.docs.filter(d => d.id !== paradaId && !["Entregada", "Incidencia"].includes(d.data().estado)).length;
     if(pendientes === 0){
       tx.update(refServicio, { estado: "Entregada", "estadoTs.Entregada": ahora(), receptor: evidencia.receptor, actualizadoEn: ahora() });
