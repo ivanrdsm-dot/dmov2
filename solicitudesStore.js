@@ -2,7 +2,7 @@
    servidor (functions/index.js); aquí la oficina las lee en vivo, registra las
    manuales y cambia su estado. Cada escritura lleva su evento de bitácora. */
 import {
-  collection, doc, onSnapshot, query, orderBy, limit, runTransaction, writeBatch, serverTimestamp, Timestamp,
+  collection, doc, getDoc, onSnapshot, query, orderBy, limit, runTransaction, writeBatch, serverTimestamp, Timestamp,
 } from "firebase/firestore";
 import { folioSolicitud } from "./functions/lib/solicitudes.js";
 
@@ -29,6 +29,11 @@ export function crearSolicitudesStore(db){
     suscribirEventos(id, cb, onErr){
       return onSnapshot(query(collection(db, "solicitudes", id, "eventos"), orderBy("ts", "asc"), limit(200)),
         s => cb(s.docs.map(d => { const e = d.data({ serverTimestamps: "estimate" }); return { id: d.id, ...e, ts: aMs(e.ts) }; })), onErr);
+    },
+    /* Una solicitud por id, con su estado actual (para ligarla desde otro módulo). */
+    async leer(id){
+      const s = await getDoc(doc(db, "solicitudes", id));
+      return s.exists() ? normalizarSolicitud(s.id, s.data()) : null;
     },
     suscribirConectores(cb){
       return onSnapshot(doc(db, "sistema", "conectores"), s => {
@@ -65,6 +70,12 @@ export function crearSolicitudesStore(db){
     },
     async cambiarEstado(usuario, s, a, motivo = ""){
       await escribir(usuario, s, { estado: a }, { tipo: "estado", de: s.estado, a, motivo: t(motivo, 500) });
+    },
+    /* La solicitud ya tiene cotización: queda ligada a su folio. No detiene el reloj:
+       eso pasa cuando alguien le responde al solicitante. */
+    async vincularCotizacion(usuario, s, cotizacion){
+      await escribir(usuario, s, { cotizacionId: cotizacion.id, cotizacionFolio: cotizacion.folio, ...(s.estado === "Nueva" ? { estado: "En revisión" } : {}) },
+        { tipo: "cotizada", de: s.estado, a: s.estado === "Nueva" ? "En revisión" : s.estado, cotizacionFolio: cotizacion.folio });
     },
     async vincularServicio(usuario, s, servicio){
       const cambios = { estado: "Convertida", servicioId: servicio.id, servicioFolio: servicio.folio };

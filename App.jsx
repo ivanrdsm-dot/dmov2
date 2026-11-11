@@ -35,6 +35,10 @@ const DespachoVista = lazy(()=>import("./Despacho.jsx"));
 import { crearTarifarioStore } from "./tarifarioStore.js";
 const TarifarioVista = lazy(()=>import("./Tarifario.jsx"));
 const CotizadorAutoVista = lazy(()=>import("./CotizadorAuto.jsx"));
+import { crearCotizacionesStore } from "./cotizacionesStore.js";
+import { servicioDesdeCotizacion } from "./cotizaciones.ts";
+const CotizacionesVista = lazy(()=>import("./Cotizaciones.jsx"));
+const ReportesOperacionVista = lazy(()=>import("./ReportesOperacion.jsx"));
 /* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
@@ -3507,7 +3511,7 @@ function getNavSections(rol){
       {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
     ]},
     {section:"OPERACIONES",items:[
-      ...(FF_SERVICIOS?[{id:"solicitudes", label:"Solicitudes", icon:Bell, badge:"NEW"},{id:"servicios", label:"Servicios", icon:ClipboardList, badge:"NEW"},{id:"despacho", label:"Despacho y torre", icon:Radio, badge:"NEW"},{id:"cotizadorAuto", label:"Cotizador automático", icon:Zap, badge:"NEW"},{id:"tarifario", label:"Tarifario", icon:DollarSign, badge:"NEW"}]:[]),
+      ...(FF_SERVICIOS?[{id:"solicitudes", label:"Solicitudes", icon:Bell, badge:"NEW"},{id:"servicios", label:"Servicios", icon:ClipboardList, badge:"NEW"},{id:"despacho", label:"Despacho y torre", icon:Radio, badge:"NEW"},{id:"cotizadorAuto", label:"Cotizador automático", icon:Zap, badge:"NEW"},{id:"cotizaciones", label:"Cotizaciones", icon:FileText, badge:"NEW"},{id:"reportesOperacion", label:"Reportes de operación", icon:BarChart2, badge:"NEW"},{id:"tarifario", label:"Tarifario", icon:DollarSign, badge:"NEW"}]:[]),
       {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
       {id:"rutas",    label:"Planificador Rutas",    icon:Map},
       {id:"choferes", label:"Choferes",              icon:Users},
@@ -14581,15 +14585,34 @@ function SOSGlobalBanner({onGo}){
    al guardar, la solicitud queda ligada al folio del servicio. */
 const usuarioDe=(authUser,userProfile)=>({uid:authUser?.uid||"",nombre:userProfile?.nombre||authUser?.displayName||"",email:authUser?.email||"",rol:userProfile?.rol||"operaciones"});
 const fechaLocalInput=ms=>{const d=new Date(ms||Date.now()),p=n=>String(n).padStart(2,"0");return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;};
-function SolicitudesModulo({authUser,userProfile,onCrearServicio}){
+function SolicitudesModulo({authUser,userProfile,onCrearServicio,onCotizar}){
   const store=useMemo(()=>crearSolicitudesStore(db),[]);
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
-  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando solicitudes…</div>}><SolicitudesVista store={store} usuario={usuario} onCrearServicio={onCrearServicio}/></Suspense>;
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando solicitudes…</div>}><SolicitudesVista store={store} usuario={usuario} onCrearServicio={onCrearServicio} onCotizar={onCotizar}/></Suspense>;
 }
-function CotizadorAutoModulo(){
+/* El cotizador guarda su resultado como cotización con folio; si viene de una
+   solicitud, la deja ligada. El precio lo aprueba un admin en Cotizaciones. */
+function CotizadorAutoModulo({authUser,userProfile,solicitud,onGuardada}){
   const tarifarioStore=useMemo(()=>crearTarifarioStore(db),[]);
   const serviciosStore=useMemo(()=>crearServiciosStore(db),[]);
-  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando cotizador…</div>}><CotizadorAutoVista tarifarioStore={tarifarioStore} serviciosStore={serviciosStore}/></Suspense>;
+  const cotizacionesStore=useMemo(()=>crearCotizacionesStore(db),[]);
+  const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
+  const guardada=async cot=>{
+    try{if(solicitud) await crearSolicitudesStore(db).vincularCotizacion(usuario,solicitud,cot);}
+    finally{onGuardada(cot);}
+  };
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando cotizador…</div>}><CotizadorAutoVista tarifarioStore={tarifarioStore} serviciosStore={serviciosStore} cotizacionesStore={cotizacionesStore} usuario={usuario} solicitud={solicitud} onGuardada={guardada}/></Suspense>;
+}
+function CotizacionesModulo({authUser,userProfile,onCrearServicio,onNueva}){
+  const store=useMemo(()=>crearCotizacionesStore(db),[]);
+  const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando cotizaciones…</div>}><CotizacionesVista store={store} usuario={usuario} onCrearServicio={onCrearServicio} onNueva={onNueva}/></Suspense>;
+}
+function ReportesOperacionModulo(){
+  const solicitudesStore=useMemo(()=>crearSolicitudesStore(db),[]);
+  const cotizacionesStore=useMemo(()=>crearCotizacionesStore(db),[]);
+  const serviciosStore=useMemo(()=>crearServiciosStore(db),[]);
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando reportes…</div>}><ReportesOperacionVista solicitudesStore={solicitudesStore} cotizacionesStore={cotizacionesStore} serviciosStore={serviciosStore}/></Suspense>;
 }
 function TarifarioModulo({authUser,userProfile}){
   const store=useMemo(()=>crearTarifarioStore(db),[]);
@@ -14606,12 +14629,23 @@ function CatalogoModulo({tipo,authUser,userProfile}){
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
   return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><CatalogosVista key={tipo} tipo={tipo} store={store} usuario={usuario}/></Suspense>;
 }
-function ServiciosModulo({authUser,userProfile,choferes,solicitud,onSolicitudUsada}){
+function ServiciosModulo({authUser,userProfile,choferes,solicitud,onSolicitudUsada,cotizacion=null,onCotizacionUsada=()=>{}}){
   useCatalogos();
   const store=useMemo(()=>crearServiciosStore(db),[]);
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
-  const prefill=useMemo(()=>solicitud?{canal:solicitud.canal,recibidaEn:fechaLocalInput(solicitud.recibidaEn),solicitante:solicitud.remitenteNombre||"",solicitanteContacto:solicitud.remitenteCorreo||"",notas:solicitud.asunto||"",solicitudId:solicitud.id,solicitudFolio:solicitud.folio}:null,[solicitud]);
+  /* De una cotización aceptada: el servicio nace con el precio que ya aprobó un admin
+     (las reglas del servidor lo comparan contra la cotización). */
+  const prefillCot=useMemo(()=>cotizacion?{...servicioDesdeCotizacion(cotizacion),recibidaEn:fechaLocalInput(cotizacion.solicitudRecibidaEn||cotizacion.creadoEn),precio:cotizacion.precioAprobado,precioAprobadoPor:cotizacion.aprobadoPor||""}:null,[cotizacion]);
+  const prefillSol=useMemo(()=>solicitud?{canal:solicitud.canal,recibidaEn:fechaLocalInput(solicitud.recibidaEn),solicitante:solicitud.remitenteNombre||"",solicitanteContacto:solicitud.remitenteCorreo||"",notas:solicitud.asunto||"",solicitudId:solicitud.id,solicitudFolio:solicitud.folio}:null,[solicitud]);
+  const prefill=prefillCot||prefillSol;
   const onCreado=async(servicio,datos)=>{
+    if(cotizacion&&datos.cotizacionId===cotizacion.id){
+      try{
+        await crearCotizacionesStore(db).vincularServicio(usuario,cotizacion,servicio);
+        if(cotizacion.solicitudId){const ss=crearSolicitudesStore(db);const sol=await ss.leer(cotizacion.solicitudId);if(sol&&!sol.servicioFolio) await ss.vincularServicio(usuario,sol,servicio);}
+      }finally{onCotizacionUsada();}
+      return;
+    }
     if(!solicitud||datos.solicitudId!==solicitud.id) return;
     try{await crearSolicitudesStore(db).vincularServicio(usuario,solicitud,servicio);}finally{onSolicitudUsada();}
   };
@@ -15155,6 +15189,8 @@ export default function App(){
   const [choferes,setChoferes]=useState([]);
   const [fbOk,setFbOk]=useState(false);
   const [solicitudAServicio,setSolicitudAServicio]=useState(null); // solicitud que se está convirtiendo en servicio
+  const [solicitudACotizar,setSolicitudACotizar]=useState(null);   // solicitud abierta en el cotizador
+  const [cotizacionAServicio,setCotizacionAServicio]=useState(null); // cotización aceptada que se convierte en servicio
   const [sidebarOpen,setSidebarOpen]=useState(()=>typeof window!=="undefined"?window.innerWidth>=768:true);
   const [searchOpen,setSearchOpen]=useState(false);
   const [installPrompt,setInstallPrompt]=useState(null);
@@ -15327,13 +15363,15 @@ export default function App(){
     cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    ...(FF_SERVICIOS?{solicitudes:<SolicitudesModulo authUser={authUser} userProfile={userProfile} onCrearServicio={x=>{setSolicitudAServicio(x);setView("servicios");}}/>,
+    ...(FF_SERVICIOS?{solicitudes:<SolicitudesModulo authUser={authUser} userProfile={userProfile} onCrearServicio={x=>{setCotizacionAServicio(null);setSolicitudAServicio(x);setView("servicios");}} onCotizar={x=>{setSolicitudACotizar(x);setView("cotizadorAuto");}}/>,
       despacho:<DespachoModulo authUser={authUser} userProfile={userProfile}/>,
-      cotizadorAuto:<CotizadorAutoModulo/>,
+      cotizadorAuto:<CotizadorAutoModulo authUser={authUser} userProfile={userProfile} solicitud={solicitudACotizar} onGuardada={()=>{setSolicitudACotizar(null);setView("cotizaciones");}}/>,
+      cotizaciones:<CotizacionesModulo authUser={authUser} userProfile={userProfile} onNueva={()=>{setSolicitudACotizar(null);setView("cotizadorAuto");}} onCrearServicio={c=>{setSolicitudAServicio(null);setCotizacionAServicio(c);setView("servicios");}}/>,
+      reportesOperacion:<ReportesOperacionModulo/>,
       tarifario:<TarifarioModulo authUser={authUser} userProfile={userProfile}/>,
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,
-      servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)}/>}:{}),
+      servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)} cotizacion={cotizacionAServicio} onCotizacionUsada={()=>setCotizacionAServicio(null)}/>}:{}),
     choferes:<Choferes/>,
     unidades:<Unidades/>,
     tracking:<LiveTracking/>,

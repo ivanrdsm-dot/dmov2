@@ -47,7 +47,7 @@ function Nueva({ onGuardar, onClose, guardando }){
   );
 }
 
-function Detalle({ s, store, usuario, ahora, onClose, onCrearServicio, avisar }){
+function Detalle({ s, store, usuario, ahora, onClose, onCrearServicio, onCotizar, avisar }){
   const [eventos, setEventos] = useState([]);
   const [nota, setNota] = useState("");
   const [ocupado, setOcupado] = useState(false);
@@ -73,9 +73,11 @@ function Detalle({ s, store, usuario, ahora, onClose, onCrearServicio, avisar })
         {(s.adjuntos || []).length > 0 && <div style={{ fontSize: 13, marginTop: 10 }}><span style={etiqueta}>Adjuntos en el correo</span>{s.adjuntos.map((a, i) => <div key={i}>{a.nombre} <span style={{ color: MUTED }}>· {Math.max(1, Math.round((a.tamano || 0) / 1024))} KB</span></div>)}</div>}
       </Seccion>
       <Seccion titulo="Qué sigue">
+        {s.cotizacionFolio && <div style={{ fontSize: 14, marginBottom: 8 }}>Cotización <b style={{ fontFamily: MONO }}>{s.cotizacionFolio}</b>.</div>}
         {s.servicioFolio ? <div style={{ fontSize: 14 }}>Convertida en el servicio <b style={{ fontFamily: MONO }}>{s.servicioFolio}</b>.</div> : <>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={() => onCrearServicio(s)} disabled={ocupado || s.estado === "Descartada"} style={boton(A)}>Crear servicio</button>
+            {onCotizar && <button onClick={() => onCotizar(s)} disabled={ocupado || s.estado === "Descartada"} style={boton(A)}>{s.cotizacionFolio ? "Cotizar de nuevo" : "Cotizar"}</button>}
+            <button onClick={() => onCrearServicio(s)} disabled={ocupado || s.estado === "Descartada"} style={boton(A, !onCotizar)}>Crear servicio</button>
             {!s.primeraRespuestaEn && s.estado !== "Descartada" && <button onClick={() => correr(() => store.marcarRespondida(usuario, s, nota), "Primera respuesta registrada: el reloj se detuvo")} disabled={ocupado} style={boton(GREEN)}>Ya le respondí</button>}
             {s.estado === "Nueva" && <button onClick={() => correr(() => store.cambiarEstado(usuario, s, "En revisión", nota), "En revisión")} disabled={ocupado} style={boton(BLUE, false)}>La estoy revisando</button>}
             {abierta && <button onClick={descartar} disabled={ocupado} style={boton(MUTED, false)}>No es una solicitud</button>}
@@ -96,7 +98,7 @@ function Detalle({ s, store, usuario, ahora, onClose, onCrearServicio, avisar })
   );
 }
 
-export default function Solicitudes({ store, usuario, onCrearServicio }){
+export default function Solicitudes({ store, usuario, onCrearServicio, onCotizar = null }){
   const [lista, setLista] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -178,7 +180,7 @@ export default function Solicitudes({ store, usuario, onCrearServicio }){
         </table>
       </div>
       {nueva && <Dialogo titulo="Registrar solicitud" onClose={() => setNueva(false)}><Nueva onGuardar={registrar} onClose={() => setNueva(false)} guardando={guardando}/></Dialogo>}
-      {detalle && <Detalle s={detalle} store={store} usuario={usuario} ahora={ahora} avisar={avisar} onClose={() => setDetalleId(null)} onCrearServicio={x => { setDetalleId(null); onCrearServicio(x); }}/>}
+      {detalle && <Detalle s={detalle} store={store} usuario={usuario} ahora={ahora} avisar={avisar} onClose={() => setDetalleId(null)} onCrearServicio={x => { setDetalleId(null); onCrearServicio(x); }} onCotizar={onCotizar ? x => { setDetalleId(null); onCotizar(x); } : null}/>}
       {aviso && <div role="status" style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: aviso.mal ? ROSE : TEXT, color: "#fff", borderRadius: 12, padding: "12px 18px", fontSize: 13, fontWeight: 600, zIndex: 700, maxWidth: "90vw" }}>{aviso.msg}</div>}
     </div>
   );
