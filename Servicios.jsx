@@ -114,20 +114,23 @@ function Formulario({ inicial, clientes, choferes, unidades, puntos = [], provee
   const planes = clientes.find(c => c.id === f.clienteId)?.planes || [];
   return (
     <form onSubmit={e => { e.preventDefault(); setIntento(true); if(v.ok) onGuardar(f); }}>
-      <Seccion titulo="Cómo llegó la solicitud">
+      <Seccion titulo="¿Quién lo pide?">
         <div style={rejilla}>
-          <Campo label="Canal *" opciones={["", ...CANALES_SOLICITUD]} value={f.canal} onChange={s("canal")}/>
-          <Campo label="Recibida el *" type="datetime-local" value={f.recibidaEn} onChange={s("recibidaEn")}/>
+          <Campo label="¿Por dónde llegó? *" opciones={["", ...CANALES_SOLICITUD]} value={f.canal} onChange={s("canal")}/>
+          <Campo label="¿Cuándo llegó? *" type="datetime-local" value={f.recibidaEn} onChange={s("recibidaEn")}/>
           <Campo label="Empresa o cliente *" lista={empresas} value={f.empresa} onChange={elegirEmpresa} placeholder="Escribe o elige"/>
+          <Campo label="Quién lo pide *" value={f.solicitante} onChange={s("solicitante")}/>
+          <Campo label="Su correo o teléfono" value={f.solicitanteContacto} onChange={s("solicitanteContacto")}/>
+        </div>
+        <details style={{ marginTop: 10 }}><summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, color: BLUE }}>Plan y centro de costos (para facturar)</summary>
+        <div style={{ ...rejilla, marginTop: 10 }}>
           <Campo label="Plan" lista={planes.map(String)} value={f.plan} onChange={s("plan")}/>
           <Campo label="Centro de costos" value={f.centroCostos} onChange={s("centroCostos")}/>
-          <Campo label="Quién solicita *" value={f.solicitante} onChange={s("solicitante")}/>
-          <Campo label="Correo o teléfono de quien solicita" value={f.solicitanteContacto} onChange={s("solicitanteContacto")}/>
-        </div>
+        </div></details>
       </Seccion>
-      <Puntos titulo="Orígenes · dónde se carga" puntos={f.origenes} catalogo={puntos} onChange={x => setF(y => ({ ...y, origenes: x }))}/>
-      <Puntos titulo="Destinos · dónde se entrega" puntos={f.destinos} catalogo={puntos} onChange={x => setF(y => ({ ...y, destinos: x }))}/>
-      <Seccion titulo="Fecha y carga">
+      <Puntos titulo="¿Dónde se carga?" puntos={f.origenes} catalogo={puntos} onChange={x => setF(y => ({ ...y, origenes: x }))}/>
+      <Puntos titulo="¿Dónde se entrega?" puntos={f.destinos} catalogo={puntos} onChange={x => setF(y => ({ ...y, destinos: x }))}/>
+      <Seccion titulo="¿Cuándo y qué se mueve?">
         <div style={rejilla}>
           <Campo label="Fecha del servicio" type="date" value={f.fechaServicio} onChange={s("fechaServicio")}/>
           <Campo label="Hora o ventana" value={f.horaServicio} onChange={s("horaServicio")} placeholder="8:00 a 10:00"/>
@@ -135,25 +138,30 @@ function Formulario({ inicial, clientes, choferes, unidades, puntos = [], provee
           <Campo label="Cajas" inputMode="numeric" value={f.cajas} onChange={s("cajas")}/>
           <Campo label="Tarimas" inputMode="numeric" value={f.tarimas} onChange={s("tarimas")}/>
           <Campo label="Peso (kg)" inputMode="decimal" value={f.pesoKg} onChange={s("pesoKg")}/>
-          <Campo label="Volumen (m³)" inputMode="decimal" value={f.volumenM3} onChange={s("volumenM3")}/>
-          <Campo label="Maniobras" value={f.maniobras} onChange={s("maniobras")} placeholder="Carga, descarga, ayudantes"/>
-          <Campo label="Valor declarado (MXN)" inputMode="decimal" value={f.valorDeclarado} onChange={s("valorDeclarado")}/>
+          <Campo label="¿Hacen falta ayudantes?" value={f.maniobras} onChange={s("maniobras")} placeholder="Ej. 2 ayudantes para descargar"/>
         </div>
-        <div style={{ marginTop: 12 }}><Campo label="Requisitos especiales" area value={f.requisitos} onChange={s("requisitos")} placeholder="Cita en CEDIS, EPP, horario de acceso"/></div>
+        <details style={{ marginTop: 10 }}><summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, color: BLUE }}>Más detalles (opcional): volumen, valor de la mercancía, requisitos</summary>
+        <div style={{ ...rejilla, marginTop: 10 }}>
+          <Campo label="Volumen (m³)" inputMode="decimal" value={f.volumenM3} onChange={s("volumenM3")}/>
+          <Campo label="Valor de la mercancía (MXN)" inputMode="decimal" value={f.valorDeclarado} onChange={s("valorDeclarado")}/>
+        </div>
+        <div style={{ marginTop: 12 }}><Campo label="Requisitos especiales" area value={f.requisitos} onChange={s("requisitos")} placeholder="Cita en CEDIS, EPP, horario de acceso"/></div></details>
         <div style={{ marginTop: 12 }}><UnidadSugerida carga={f} unidades={unidades} onElegir={placa => setF(x => ({ ...x, unidadPlaca: placa, asignacionTipo: x.asignacionTipo || "Flota propia" }))}/></div>
       </Seccion>
-      <Seccion titulo="Cotización y asignación">
+      <Seccion titulo={inicial?.id ? "Cotización y asignación" : "Cotización"}>
         <div style={rejilla}>
           <Campo label="Folio de cotización" value={f.cotizacionFolio} onChange={s("cotizacionFolio")} placeholder="COT-2026-…"/>
           <Campo label="Precio propuesto sin IVA" inputMode="decimal" value={f.precioPropuesto} onChange={s("precioPropuesto")}/>
           <Campo label="Quién confirmó por el cliente" value={f.confirmadoPor} onChange={s("confirmadoPor")}/>
+          {/* Al registrar no se pide unidad ni chofer: eso se hace después en "Chofer y ruta" del servicio. */}
+          {inicial?.id && <>
           <Campo label="Tipo de asignación" opciones={["", ...TIPOS_ASIGNACION]} value={f.asignacionTipo} onChange={s("asignacionTipo")}/>
           {f.asignacionTipo === "Proveedor externo" && <div><Campo label="Proveedor" lista={proveedores.filter(x => x.activo !== false).map(x => x.nombre).filter(Boolean)} value={f.proveedor} onChange={s("proveedor")}/>
             {(() => { const pr = proveedores.find(x => x.nombre === f.proveedor); if(!f.proveedor) return null; if(!pr) return <div style={{ fontSize: 11, fontWeight: 700, color: AMBER, marginTop: 3 }}>No está en el catálogo de proveedores</div>;
               const h = proveedorHabilitado(pr, ahoraLocal().slice(0, 10)); return <div style={{ fontSize: 11, fontWeight: 700, color: h.habilitado ? GREEN : ROSE, marginTop: 3 }}>{h.habilitado ? "Proveedor habilitado" : "No habilitado: " + h.motivos[0]}</div>; })()}</div>}
           <Campo label="Placas de la unidad" lista={unidades.map(u => u.placa).filter(Boolean)} value={f.unidadPlaca} onChange={s("unidadPlaca")}/>
           <Campo label="Chofer" lista={choferes.map(c => c.nombre).filter(Boolean)} value={f.choferNombre} onChange={s("choferNombre")}/>
-          <Campo label="Quién recibió" value={f.receptor} onChange={s("receptor")}/>
+          <Campo label="Quién recibió" value={f.receptor} onChange={s("receptor")}/></>}
         </div>
         <div style={{ marginTop: 12 }}><Campo label="Notas" area value={f.notas} onChange={s("notas")}/></div>
         <p style={{ fontSize: 12, color: MUTED, margin: "10px 0 0" }}>El precio aprobado lo fija un administrador desde el detalle del servicio.</p>

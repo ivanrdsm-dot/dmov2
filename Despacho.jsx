@@ -38,7 +38,7 @@ function Viaje({ s, ubicacion, choferes, store, ahora, avisar }){
           <div style={{ flex: "1 1 220px" }}><Campo label="Chofer con app lista" opciones={["", ...listos.map(c => c.nombre || c.id)]} value={listos.find(c => c.id === choferId)?.nombre || ""}
             onChange={e => setChoferId(listos.find(c => (c.nombre || c.id) === e.target.value)?.id || "")}/>
             {listos.length === 0 && <div style={{ fontSize: 11, color: AMBER, fontWeight: 700, marginTop: 3 }}>Ningún chofer tiene la app lista. Crea su cuenta abajo.</div>}</div>
-          <button disabled={!choferId || ocupado} onClick={() => correr(() => store.prepararRuta(s.id, choferId), "Ruta armada y asignada")} style={{ ...boton(A), opacity: !choferId || ocupado ? .5 : 1 }}>Armar ruta</button>
+          <button disabled={!choferId || ocupado} onClick={() => correr(() => store.prepararRuta(s.id, choferId), "Ruta armada y asignada")} style={{ ...boton(A), opacity: !choferId || ocupado ? .5 : 1 }}>Mandar ruta al chofer</button>
         </div>
       ) : (
         <div style={{ marginTop: 10 }}>
@@ -53,7 +53,7 @@ function Viaje({ s, ubicacion, choferes, store, ahora, avisar }){
                 : <button onClick={() => { setExcepcion(p); setMotivo(""); }} style={{ ...boton(MUTED, false), padding: "4px 10px", minHeight: 30, fontSize: 12 }}>Autorizar cierre fuera del punto</button>)}
             </div>))}
         </div>)}
-      {excepcion && <Dialogo titulo={"Excepción de geocerca · " + excepcion.nombre} onClose={() => setExcepcion(null)}>
+      {excepcion && <Dialogo titulo={"Cerrar la entrega fuera del punto · " + excepcion.nombre} onClose={() => setExcepcion(null)}>
         <p style={{ fontSize: 14, marginTop: 0 }}>El chofer podrá cerrar esta parada aunque el sistema no lo ubique dentro del punto. Queda registrado quién lo autorizó y por qué.</p>
         <Campo label="Motivo (mínimo 10 caracteres) *" area value={motivo} onChange={e => setMotivo(e.target.value)} placeholder="CEDIS techado sin señal de GPS; confirmado por teléfono con recibo"/>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}>
@@ -83,15 +83,15 @@ export default function Despacho({ store, usuario }){
   const tarjeta = (l, v, color) => <div style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, padding: "14px 16px" }}><div style={{ ...etiqueta, marginBottom: 6 }}>{l}</div><div style={{ fontFamily: DISP, fontWeight: 800, fontSize: 26, color }}>{v}</div></div>;
   return (
     <div style={{ padding: "22px 20px", maxWidth: 1280, margin: "0 auto" }}>
-      <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 24, margin: 0 }}>Despacho y torre de control</h1>
-      <div style={{ fontSize: 13, color: MUTED, marginBottom: 16 }}>Quién va a dónde y quién está transmitiendo. La ubicación y los cierres los valida el servidor.</div>
+      <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 24, margin: 0 }}>Choferes en ruta</h1>
+      <div style={{ fontSize: 13, color: MUTED, marginBottom: 16 }}>Quién va a dónde y si su teléfono está mandando ubicación.</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 16 }}>
         {tarjeta("En ruta", enRuta.length, TEXT)}{tarjeta("Por salir", porSalir.length, BLUE)}
         {tarjeta("Sin señal", enRuta.filter(s => estadoSenal(ubicaciones[s.choferId], ahora).senal === "sin señal").length, ROSE)}
         {tarjeta("Alertas críticas sin atender", criticas.length, criticas.length ? ROSE : GREEN)}
       </div>
       <Seccion titulo="Viajes">
-        {servicios.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>No hay servicios asignados ni en ruta. Un servicio aparece aquí cuando pasa a "Asignada".</div>
+        {servicios.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Nadie está en ruta ahora. Un servicio aparece aquí cuando le asignas chofer.</div>
           : <div style={{ display: "grid", gap: 10 }}>{[...enRuta, ...porSalir].map(s => <Viaje key={s.id} s={s} ubicacion={ubicaciones[s.choferId]} choferes={activos} store={store} ahora={ahora} avisar={avisar}/>)}</div>}
       </Seccion>
       <Seccion titulo="Choferes y su app">
@@ -103,7 +103,7 @@ export default function Despacho({ store, usuario }){
               <td style={{ padding: "9px 8px", color: COLOR_SENAL[sn.senal], fontWeight: 700 }}>{sn.senal}{sn.minutos !== null ? ` · ${haceCuanto(ubicaciones[c.id]?.tMs, ahora)}` : ""}</td>
               <td style={{ padding: "9px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
                 {usuario.rol === "admin" && <button onClick={() => { setLigar(c); setCorreo(c.correoApp || ""); setEnlace(""); }} style={{ ...boton(BLUE, false), padding: "5px 10px", minHeight: 32, fontSize: 12, marginRight: 6 }}>{c.authUid ? "Nuevo enlace" : "Crear cuenta"}</button>}
-                {c.dispositivoId && <button onClick={() => { setLiberar(c); setMotivo(""); }} style={{ ...boton(MUTED, false), padding: "5px 10px", minHeight: 32, fontSize: 12 }}>Liberar equipo</button>}
+                {c.dispositivoId && <button onClick={() => { setLiberar(c); setMotivo(""); }} style={{ ...boton(MUTED, false), padding: "5px 10px", minHeight: 32, fontSize: 12 }}>Cambió de teléfono</button>}
               </td></tr>); })}
           {activos.length === 0 && <tr><td style={{ padding: 16, color: MUTED }}>No hay choferes activos.</td></tr>}
         </tbody></table></div>
@@ -127,7 +127,7 @@ export default function Despacho({ store, usuario }){
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 10 }}>
             <button onClick={() => navigator.clipboard?.writeText(enlace).then(() => avisar("Enlace copiado"))} style={boton(BLUE)}>Copiar enlace</button><button onClick={() => setLigar(null)} style={boton(MUTED, false)}>Cerrar</button></div>
         </>}</Dialogo>}
-      {liberar && <Dialogo titulo={"Liberar equipo · " + liberar.nombre} onClose={() => setLiberar(null)}>
+      {liberar && <Dialogo titulo={"Cambio de teléfono · " + liberar.nombre} onClose={() => setLiberar(null)}>
         <p style={{ fontSize: 14, marginTop: 0 }}>Su cuenta dejará de estar ligada al teléfono actual y se ligará al siguiente desde el que entre. Úsalo por cambio o reposición de equipo.</p>
         <Campo label="Motivo *" area value={motivo} onChange={e => setMotivo(e.target.value)}/>
         <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}><button onClick={() => setLiberar(null)} style={boton(MUTED, false)}>Cancelar</button>
