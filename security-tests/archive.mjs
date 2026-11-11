@@ -87,10 +87,16 @@ test('archive originals cannot be overwritten or deleted',async()=>{
  await assertFails(uploadBytes(object,new TextEncoder().encode('<changed/>'),metadata));
  await assertFails(deleteObject(object));
 });
-test('operational image evidence permissions remain available for authenticated drivers',async()=>{
- const object=ref(context('driver','anonymous').storage(),'evidencias/driver-test.jpg');
- await assertSucceeds(uploadBytes(object,new Uint8Array([255,216,255]),{contentType:'image/jpeg'}));
+test('operational image evidence is office-only: anonymous and unauthenticated sessions are denied',async()=>{
+ const jpg=new Uint8Array([255,216,255]);
+ for(const ctx of [env.unauthenticatedContext(),context('driver','anonymous'),context('inactive'),context('stranger')])
+   await assertFails(uploadBytes(ref(ctx.storage(),'evidencias/driver-test.jpg'),jpg,{contentType:'image/jpeg'}));
+ const object=ref(context('ops').storage(),'evidencias/driver-test.jpg');
+ await assertSucceeds(uploadBytes(object,jpg,{contentType:'image/jpeg'}));
  await assertSucceeds(getBytes(object));
+ await assertFails(uploadBytes(ref(context('ops').storage(),'evidencias/no-imagen.txt'),jpg,{contentType:'text/plain'}));
+ for(const ctx of [env.unauthenticatedContext(),context('driver','anonymous')])
+   await assertFails(getBytes(ref(ctx.storage(),'evidencias/driver-test.jpg')));
 });
 
 
