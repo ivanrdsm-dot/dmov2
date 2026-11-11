@@ -46,12 +46,15 @@ export default function ReportesOperacion({ solicitudesStore, cotizacionesStore,
   useEffect(() => cotizacionesStore.suscribir(setCot, e => { setCot([]); setError(e.message); }), [cotizacionesStore]);
   useEffect(() => serviciosStore.suscribir(setSrv, e => { setSrv([]); setError(e.message); }), [serviciosStore]);
   useEffect(() => solicitudesStore.suscribirConectores(setCon), [solicitudesStore]);
+  const [vig, setVig] = useState({});
+  useEffect(() => solicitudesStore.suscribirVigilante ? solicitudesStore.suscribirVigilante(setVig) : undefined, [solicitudesStore]);
   useEffect(() => { const t = setInterval(() => setAhora(Date.now()), 60000); return () => clearInterval(t); }, []);
   const listo = sol && cot && srv;
   const periodo = useMemo(() => periodoDe(clave, ahora), [clave, ahora]);
   const r = useMemo(() => listo ? reporteOperacion({ solicitudes: sol, cotizaciones: cot, servicios: srv }, periodo, ahora) : null, [listo, sol, cot, srv, periodo, ahora]);
   const nombres = PERIODOS.map(p => p[1]);
   const correo = con.gmail, minLatido = correo?.ultimoLatido ? Math.round((ahora - correo.ultimoLatido) / 60000) : null;
+  const minVig = vig.ultimaCorrida ? Math.round((ahora - vig.ultimaCorrida) / 60000) : null;
   const topado = listo && [sol, cot, srv].some(x => x.length >= TOPE);
   if(!r) return <div style={{ padding: 40, color: MUTED }}>Cargando reportes…</div>;
   const S = r.solicitudes, C = r.cotizaciones, V = r.servicios, sufijo = periodo.clave + "-" + new Date(ahora).toISOString().slice(0, 10) + ".csv";
@@ -69,6 +72,7 @@ export default function ReportesOperacion({ solicitudesStore, cotizacionesStore,
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 13 }}>
           <Chip color={minLatido === null ? MUTED : minLatido <= 5 ? GREEN : ROSE}>{minLatido === null ? "Correo: sin señal registrada" : minLatido <= 5 ? "Correo conectado" : `Correo sin señal hace ${textoDuracion(minLatido)}`}</Chip>
           {correo?.ultimoLatido && <span style={{ color: MUTED }}>Última revisión del buzón: {fechaHora(correo.ultimoLatido)}</span>}
+          <Chip color={minVig === null ? MUTED : minVig <= 15 ? GREEN : ROSE}>{minVig === null ? "Alertas automáticas: sin corrida registrada" : minVig <= 15 ? `Alertas automáticas activas · ${vig.abiertas || 0} abiertas` : `Alertas automáticas sin correr hace ${textoDuracion(minVig)}`}</Chip>
           <span style={{ color: MUTED }}>· {sol.length} solicitudes, {cot.length} cotizaciones y {srv.length} servicios en el sistema</span>
         </div>
       </Seccion>

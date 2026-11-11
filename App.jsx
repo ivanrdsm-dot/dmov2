@@ -14301,11 +14301,19 @@ function AlertasCentro({setView}){
     delivered:{color:GREEN,icon:"✅",label:"Entrega",priority:5},
     start:    {color:VIOLET,icon:"▶️",label:"Ruta iniciada",priority:6},
     complete: {color:GREEN,icon:"🏁",label:"Ruta completada",priority:6},
+    /* Vigilante (servidor, cada 5 min): se resuelven solas cuando la situación se atiende. */
+    solicitud_sin_respuesta:{color:ROSE,icon:"⏱️",label:"Solicitud sin responder",priority:2},
+    cotizacion_por_aprobar: {color:AMBER,icon:"💲",label:"Cotización por aprobar",priority:3},
+    cotizacion_sin_enviar:  {color:AMBER,icon:"📤",label:"Cotización aprobada sin enviar",priority:3},
+    servicio_sin_asignar:   {color:ROSE,icon:"🚚",label:"Servicio de hoy sin asignar",priority:2},
+    conector_sin_senal:     {color:ROSE,icon:"📡",label:"Conector sin señal",priority:2},
   };
+  const VISTA_REF = {solicitudes:"solicitudes",cotizaciones_logistica:"cotizaciones",servicios:"servicios",sistema:"reportesOperacion"};
 
   const filtered = items.filter(a=>{
     if(filtro==="todas") return true;
     if(filtro==="criticas") return a.type==="sos"||a.type==="geofence"||a.type==="issue";
+    if(filtro==="operacion") return a.origen==="vigilante";
     return a.type===filtro;
   });
 
@@ -14358,7 +14366,7 @@ function AlertasCentro({setView}){
 
       {/* Filtros */}
       <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:14}}>
-        {[["todas","Todas"],["criticas","⚠️ Críticas"],["sos","🚨 SOS"],["geofence","📍 Fuera zona"],["issue","⚠️ Problemas"],["arrival","📬 Llegadas"],["delivered","✅ Entregas"],["start","▶️ Inicios"],["complete","🏁 Finales"]].map(([v,l])=>(
+        {[["todas","Todas"],["operacion","⏱️ Operación"],["criticas","⚠️ Críticas"],["sos","🚨 SOS"],["geofence","📍 Fuera zona"],["issue","⚠️ Problemas"],["arrival","📬 Llegadas"],["delivered","✅ Entregas"],["start","▶️ Inicios"],["complete","🏁 Finales"]].map(([v,l])=>(
           <button key={v} onClick={()=>setFiltro(v)} className="btn" style={{padding:"6px 13px",borderRadius:9,border:"1.5px solid "+(filtro===v?A:BD2),background:filtro===v?A+"10":"#fff",color:filtro===v?A:MUTED,fontWeight:filtro===v?700:500,fontSize:11,cursor:"pointer"}}>{l}</button>
         ))}
       </div>
@@ -14376,7 +14384,7 @@ function AlertasCentro({setView}){
               <div style={{flex:1,minWidth:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                   <span style={{fontWeight:700,fontSize:13,color:meta.color}}>{meta.label}</span>
-                  <span style={{fontSize:11,color:MUTED}}>· {a.choferNombre||"—"}</span>
+                  <span style={{fontSize:11,color:MUTED}}>· {a.folio||a.choferNombre||"—"}</span>
                   <span style={{fontSize:10,color:MUTED,fontFamily:MONO}}>· {a.ts?.seconds?ago(a.ts.seconds):"ahora"}</span>
                   {atend&&<Tag color={GREEN} sm>✓ Atendida</Tag>}
                 </div>
@@ -14385,6 +14393,7 @@ function AlertasCentro({setView}){
               </div>
               <div style={{display:"flex",gap:5,flexShrink:0}}>
                 {a.data?.lat&&a.data?.lng&&<button onClick={()=>abrirUbicacion(a)} className="btn" style={{padding:"5px 10px",borderRadius:7,background:BLUE+"10",border:"1px solid "+BLUE+"30",color:BLUE,fontSize:11,fontWeight:700}}>Mapa</button>}
+                {VISTA_REF[a.ref?.coleccion]&&setView&&<button onClick={()=>setView(VISTA_REF[a.ref.coleccion])} className="btn" style={{padding:"5px 10px",borderRadius:7,background:BLUE+"10",border:"1px solid "+BLUE+"30",color:BLUE,fontSize:11,fontWeight:700}}>Ver</button>}
                 {!atend&&<button onClick={()=>marcarAtendida(a.id)} className="btn" style={{padding:"5px 10px",borderRadius:7,background:GREEN+"10",border:"1px solid "+GREEN+"30",color:GREEN,fontSize:11,fontWeight:700}}>✓ Atendida</button>}
               </div>
             </div>

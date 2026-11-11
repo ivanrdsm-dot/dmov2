@@ -35,6 +35,10 @@ export function crearSolicitudesStore(db){
       const s = await getDoc(doc(db, "solicitudes", id));
       return s.exists() ? normalizarSolicitud(s.id, s.data()) : null;
     },
+    /* Latido del vigilante (función programada del servidor). */
+    suscribirVigilante(cb){
+      return onSnapshot(doc(db, "sistema", "vigilante"), s => { const d = s.exists() ? s.data({ serverTimestamps: "estimate" }) : {}; cb({ ...d, ultimaCorrida: aMs(d.ultimaCorrida) }); }, () => cb({}));
+    },
     suscribirConectores(cb){
       return onSnapshot(doc(db, "sistema", "conectores"), s => {
         const d = s.exists() ? s.data({ serverTimestamps: "estimate" }) : {};

@@ -111,3 +111,6 @@ export {
   choferRegistrarDispositivo, choferCheckIn, choferIniciarRuta, choferSubirPosiciones, choferCerrarParada, choferSOS,
   oficinaVincularChofer, oficinaLiberarDispositivo, oficinaPrepararRuta, oficinaAutorizarExcepcion,
 } from "./chofer.js";
+
+/* Fase 2 · vigilante de la operación (alertas automáticas cada 5 min) */
+export { vigilante } from "./vigilante.js";
