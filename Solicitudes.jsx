@@ -41,7 +41,7 @@ function Nueva({ onGuardar, onClose, guardando }){
       <p style={{ fontSize: 12, color: MUTED }}>Las solicitudes de correo entran solas. Usa este formulario para WhatsApp, teléfono o en persona.</p>
       <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
         <button type="button" onClick={onClose} style={boton(MUTED, false)}>Cancelar</button>
-        <button type="submit" disabled={guardando} style={{ ...boton(A), opacity: guardando ? .6 : 1 }}>{guardando ? "Guardando…" : "Registrar solicitud"}</button>
+        <button type="submit" disabled={guardando} style={{ ...boton(A), opacity: guardando ? .6 : 1 }}>{guardando ? "Guardando…" : "Registrar pedido"}</button>
       </div>
     </form>
   );
@@ -137,19 +137,19 @@ export default function Solicitudes({ store, usuario, onCrearServicio, onCotizar
     <div style={{ padding: "22px 20px", maxWidth: 1280, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 24, margin: 0 }}>Solicitudes</h1>
-          <div style={{ fontSize: 13, color: MUTED }}>Todo lo que nos piden, en un solo lugar y con reloj. Meta: primera respuesta en {META_PRIMERA_RESPUESTA_MIN} minutos hábiles.</div>
+          <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 24, margin: 0 }}>Pedidos</h1>
+          <div style={{ fontSize: 13, color: MUTED }}>Todo lo que nos piden llega aquí. Hay que contestar cada pedido en menos de {META_PRIMERA_RESPUESTA_MIN} minutos (en horario de oficina).</div>
         </div>
-        <button onClick={() => setNueva(true)} style={boton(A)}>+ Registrar solicitud</button>
+        <button onClick={() => setNueva(true)} style={boton(A)}>+ Registrar pedido</button>
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }} aria-label="Estado de los conectores">
         {CONECTORES.map(c => { const e = estadoConector(c); return <Chip key={c.id} color={e.color}>{c.nombre}: {e.texto}</Chip>; })}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 16 }}>
-        {tarjeta("Sin responder", k.sinResponder, k.sinResponder ? AMBER : GREEN)}
-        {tarjeta(`Fuera de meta (más de ${META_PRIMERA_RESPUESTA_MIN} min)`, k.fueraDeMeta, k.fueraDeMeta ? ROSE : GREEN)}
-        {tarjeta("Mediana de primera respuesta", textoDuracion(k.medianaMin), TEXT, k.respondidas ? `${k.respondidas} respondidas` : "Aún sin respuestas medidas")}
-        {tarjeta("Respondidas dentro de meta", k.pctDentroDeMeta === null ? "—" : k.pctDentroDeMeta + " %", k.pctDentroDeMeta !== null && k.pctDentroDeMeta < 80 ? AMBER : GREEN)}
+        {tarjeta("Sin contestar", k.sinResponder, k.sinResponder ? AMBER : GREEN)}
+        {tarjeta(`Llevan más de ${META_PRIMERA_RESPUESTA_MIN} min sin contestar`, k.fueraDeMeta, k.fueraDeMeta ? ROSE : GREEN)}
+        {tarjeta("Tiempo normal en contestar", textoDuracion(k.medianaMin), TEXT, k.respondidas ? `${k.respondidas} respondidas` : "Aún sin respuestas medidas")}
+        {tarjeta(`Contestados a tiempo`, k.pctDentroDeMeta === null ? "—" : k.pctDentroDeMeta + " %", k.pctDentroDeMeta !== null && k.pctDentroDeMeta < 80 ? AMBER : GREEN)}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         {["Abiertas", "Todas", ...ESTADOS_SOLICITUD].map(e => (
@@ -174,12 +174,12 @@ export default function Solicitudes({ store, usuario, onCrearServicio, onCotizar
                 <td style={{ padding: "10px 12px" }}><Chip color={COLOR_ESTADO[s.estado] || MUTED}>{s.estado}</Chip></td>
                 <td style={{ padding: "10px 12px", textAlign: "right" }}><button onClick={() => setDetalleId(s.id)} style={{ ...boton(BLUE, false), padding: "6px 12px", minHeight: 34 }}>Abrir</button></td>
               </tr>))}
-            {!cargando && visibles.length === 0 && <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", color: MUTED }}>{lista.length === 0 ? "Aún no hay solicitudes. Las de correo entrarán solas; las demás se registran con el botón." : "Ninguna solicitud coincide con el filtro."}</td></tr>}
+            {!cargando && visibles.length === 0 && <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", color: MUTED }}>{lista.length === 0 ? "Aún no hay pedidos. Los que llegan por correo entran solos; los demás se registran con el botón." : "Ninguna solicitud coincide con el filtro."}</td></tr>}
             {cargando && <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", color: MUTED }}>Cargando…</td></tr>}
           </tbody>
         </table>
       </div>
-      {nueva && <Dialogo titulo="Registrar solicitud" onClose={() => setNueva(false)}><Nueva onGuardar={registrar} onClose={() => setNueva(false)} guardando={guardando}/></Dialogo>}
+      {nueva && <Dialogo titulo="Registrar pedido" onClose={() => setNueva(false)}><Nueva onGuardar={registrar} onClose={() => setNueva(false)} guardando={guardando}/></Dialogo>}
       {detalle && <Detalle s={detalle} store={store} usuario={usuario} ahora={ahora} avisar={avisar} onClose={() => setDetalleId(null)} onCrearServicio={x => { setDetalleId(null); onCrearServicio(x); }} onCotizar={onCotizar ? x => { setDetalleId(null); onCotizar(x); } : null}/>}
       {aviso && <div role="status" style={{ position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", background: aviso.mal ? ROSE : TEXT, color: "#fff", borderRadius: 12, padding: "12px 18px", fontSize: 13, fontWeight: 600, zIndex: 700, maxWidth: "90vw" }}>{aviso.msg}</div>}
     </div>
