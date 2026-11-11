@@ -29,6 +29,11 @@ service cloud.firestore {
     function esChofer() {
       return noAnon() && exists(/databases/$(database)/documents/choferes_auth/$(request.auth.uid));
     }
+    /* Papelera: estas colecciones solo se borran si en el mismo lote queda la copia
+       en papelera/{coleccion}__{id} (ver papelera.js). Nadie edita ni borra la papelera. */
+    function conCopia(col, id) {
+      return existsAfter(/databases/$(database)/documents/papelera/$(col + '__' + id));
+    }
     function miChoferId() {
       return get(/databases/$(database)/documents/choferes_auth/$(request.auth.uid)).data.choferId;
     }
@@ -39,9 +44,9 @@ service cloud.firestore {
        Ahora solo entra la oficina con sesión de Google y perfil activo.
        El rastreo público y la app de chofer vuelven con identidad real y
        validación en servidor (Fase 1); hasta entonces no hay acceso anónimo. */
-    match /rutas/{rutaId}            { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /rutas/{rutaId}            { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('rutas', rutaId); }
     match /driverLocations/{choferId}{ allow read: if esOficina(); allow create, update, delete: if esAdmin(); }
-    match /choferes/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /choferes/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('choferes', id); }
     match /gastosChofer/{id}         { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
     match /jornadas/{id}             { allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId()); allow create, update: if esOficina(); allow delete: if esAdmin(); }
     match /mensajes/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
@@ -78,24 +83,24 @@ service cloud.firestore {
         !('cfdiArchiveLocked' in resource.data) || resource.data.cfdiArchiveLocked != true
         || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notas','status','fechaPago','fechaVenc','emailCliente',
              'intranetFolio','intranetFecha','intranetEstatus','intranetDirector','seguimiento','seguimientoFecha','cotizacionFolio','cotizacionId']));
-      allow delete: if esAdmin() && (!('cfdiArchiveLocked' in resource.data) || resource.data.cfdiArchiveLocked != true);
+      allow delete: if esAdmin() && (!('cfdiArchiveLocked' in resource.data) || resource.data.cfdiArchiveLocked != true) && conCopia('facturas', id);
     }
     match /pagos/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /pagosProveedores/{id}  { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /presupuestos/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /pagosProveedores/{id}  { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('pagosProveedores', id); }
+    match /presupuestos/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('presupuestos', id); }
     match /cotizaciones/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /cuentas/{id}           { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /cuentas/{id}           { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('cuentas', id); }
     /* Catálogo de planes del grupo (número → empresa, RFC, director de intranet):
        lo lee toda la oficina (formulario de facturas); lo edita solo admin. */
     match /planes/{id}            { allow read: if esOficina(); allow create, update, delete: if esAdmin(); }
     /* Cierres contables cargados desde la balanza: lectura de oficina, escritura admin. */
     match /cierresContables/{id}  { allow read: if esOficina(); allow create, update, delete: if esAdmin(); }
-    match /viaticos/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /prospeccion/{id}       { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /proyectos/{id}         { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /plantillasCotizador/{id}{ allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /unidades/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /entregas/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /viaticos/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('viaticos', id); }
+    match /prospeccion/{id}       { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('prospeccion', id); }
+    match /proyectos/{id}         { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('proyectos', id); }
+    match /plantillasCotizador/{id}{ allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('plantillasCotizador', id); }
+    match /unidades/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('unidades', id); }
+    match /entregas/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('entregas', id); }
 
     /* ── Servicios (Fase 0 · alta manual) ────────────────────────────────────
        - Oficina registra y edita; NADIE borra (ni admin): los servicios se cancelan.
@@ -241,6 +246,18 @@ service cloud.firestore {
         || (de == 'Aprobada' && a == 'Enviada')
         || (de == 'Enviada' && a in ['Aceptada','Rechazada'])
         || (de in ['Propuesta','Aprobada','Enviada'] && a == 'Cancelada');
+    }
+    match /papelera/{id} {
+      allow read: if esAdmin();
+      allow create: if esAdmin()
+        && request.resource.data.keys().hasOnly(['coleccion','docId','datos','borradoPorUid','borradoPorNombre','motivo','borradoEn'])
+        && request.resource.data.coleccion is string && request.resource.data.docId is string
+        && id == request.resource.data.coleccion + '__' + request.resource.data.docId
+        && exists(/databases/$(database)/documents/$(request.resource.data.coleccion)/$(request.resource.data.docId))
+        && request.resource.data.datos is map
+        && request.resource.data.borradoPorUid == request.auth.uid
+        && request.resource.data.borradoEn == request.time;
+      allow update, delete: if false;
     }
     match /cotizaciones_logistica/{id} {
       allow read: if esOficina();

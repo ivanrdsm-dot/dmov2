@@ -35,6 +35,7 @@ const DespachoVista = lazy(()=>import("./Despacho.jsx"));
 import { crearTarifarioStore } from "./tarifarioStore.js";
 import { porPagarPorTipo, tipoDeuda } from "./deudas.ts";
 import { facturaEmitida, facturaPorCobrar, facturaVencida, facturaSinFechaVenc, diasDeAtraso } from "./cobranza.ts";
+import { borrarConRastro } from "./papelera.js";
 import { tablasPro, puntoAdicionalSugerido, reglasPro, descuentoPorPuntos } from "./tarifarioPro.ts";
 import { redondearDecenasArriba } from "./tarifario.ts";
 import { cotizarDistribucion } from "./distribucion.ts";
@@ -114,6 +115,9 @@ try{
   db = getFirestore(fbApp);
 }
 const auth = getAuth(fbApp);
+/* Borrar = guardar copia en la papelera + borrar, en un solo lote (papelera.js, regla 7). */
+const borrarRegistro=(col,id,motivo="")=>{const u=auth.currentUser;return borrarConRastro(db,{uid:u?.uid,nombre:u?.displayName||u?.email||""},col,id,motivo)
+  .catch(e=>{alert("No se pudo borrar: "+(e?.code==="permission-denied"?"solo un administrador puede borrar.":e?.message||e));throw e;});};
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({prompt:"select_account"});
 
@@ -3603,14 +3607,14 @@ async function exportEstadoResultadosXLSX(er, analisis, periodoLabel){
   linea("UTILIDAD BRUTA",er.utilidadBruta.total,er.utilidadBruta.pct,{total:true});
   Object.entries(er.gastosOperativos.detalle).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>linea("    "+k,v,er.ventas>0?v/er.ventas*100:null,{neg:true}));
   linea("(−) Gastos operativos",er.gastosOperativos.total,er.gastosOperativos.pct,{bold:true,neg:true});
-  linea("EBITDA / UTILIDAD OPERATIVA",er.ebitda.total,er.ebitda.pct,{total:true});
+  linea("UTILIDAD DE LA OPERACIÓN (EBITDA)",er.ebitda.total,er.ebitda.pct,{total:true});
   linea("(−) Impuestos y derechos",er.impuestos.total,er.impuestos.pct,{neg:true});
   linea("(−) Gastos financieros",er.financieros.total,er.financieros.pct,{neg:true});
   linea("UTILIDAD NETA",er.utilidadNeta.total,er.utilidadNeta.pct,{total:true});
   r++;
   er.notas.forEach(n=>{put(A1(0,r),"Nota: "+n,styleSubtitle);merges.push({s:{r,c:0},e:{r,c:3}});r++;});
   r++;
-  put(A1(0,r),"ANÁLISIS DEL CFO (automático, determinístico)",styleColHeader);merges.push({s:{r,c:0},e:{r,c:3}});r++;
+  put(A1(0,r),"LECTURA AUTOMÁTICA DE LOS NÚMEROS",styleColHeader);merges.push({s:{r,c:0},e:{r,c:3}});r++;
   (analisis||[]).forEach(a=>{
     const txt=a.lista?("ACCIONES: "+a.lista.join(" · ")):("["+a.tipo.toUpperCase()+"] "+a.texto);
     put(A1(0,r),txt,{font:{name:"Arial",sz:9},alignment:{wrapText:true,vertical:"top"}});
@@ -3913,7 +3917,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
       <div className="au" style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18,flexWrap:"wrap",gap:12}}>
         <div>
           <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Portal Financiero</h1>
-          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Estado de Resultados · indicadores ejecutivos · análisis CFO — todo desde datos ya capturados</p>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Cuánto entró, cuánto salió y qué significa — con lo que ya está capturado</p>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
           <Sel label="Desde" options={MESES} value={desde} onChange={e=>setDesde(e.target.value)}/>
@@ -3964,7 +3968,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
             {lineaER("(−) GASTOS DE ADMINISTRACIÓN Y ESTRUCTURA",er.gastosOperativos.total,er.gastosOperativos.pct,{neg:true,head:true})}
             {seccionCostos(er.gastosOperativos)}
           </>}
-          {lineaER("= EBITDA / UTILIDAD OPERATIVA",er.ebitda.total,er.ebitda.pct,{total:true})}
+          {lineaER("= UTILIDAD DE LA OPERACIÓN (EBITDA)",er.ebitda.total,er.ebitda.pct,{total:true})}
           {(er.impuestos.total>0||er.financieros.total>0)&&lineaER("(−) OTROS EGRESOS",er.impuestos.total+er.financieros.total,er.ventas>0?(er.impuestos.total+er.financieros.total)/er.ventas*100:null,{neg:true,head:true})}
           {er.impuestos.total>0&&lineaER("Impuestos y derechos",er.impuestos.total,er.impuestos.pct,{item:true,neg:true})}
           {er.financieros.total>0&&lineaER("Gastos financieros (comisiones)",er.financieros.total,er.financieros.pct,{item:true,neg:true})}
@@ -3977,7 +3981,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
         {/* ══ ANÁLISIS DEL CFO ══ */}
         <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:16,padding:"20px 22px"}}>
           <div style={{fontFamily:DISP,fontWeight:800,fontSize:16,marginBottom:4}}>Análisis financiero automático</div>
-          <div style={{fontSize:11,color:MUTED,marginBottom:14}}>Generado de los datos del periodo — determinístico y auditable</div>
+          <div style={{fontSize:11,color:MUTED,marginBottom:14}}>Escrito solo con los datos del periodo: no inventa nada</div>
           <div style={{display:"flex",flexDirection:"column",gap:11}}>
             {data.analisis.map((a,i)=>{
               const [c,tag]=tipoChip[a.tipo]||[MUTED,a.tipo.toUpperCase()];
@@ -4134,6 +4138,8 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const sinVenc = factsEmitidas.filter(facturaSinFechaVenc);
   const montoSinVenc = sinVenc.reduce((a,f)=>a+(f.total||0),0);
   const pctCob=totalFac>0?Math.round(cobrado/totalFac*100):0;
+  // Lo pendiente que todavía no vence no es un atraso: se dice aparte para que el % no asuste de más.
+  const aunNoVence=factsEmitidas.filter(f=>f.status!=="Pagada"&&!facturaVencida(f,hoyTs)&&!facturaSinFechaVenc(f)).reduce((a,f)=>a+(f.total||0),0);
   const totalGastos=viat.reduce((a,g)=>a+(g.monto||0),0);
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const mesActual=MESES[new Date().getMonth()];
@@ -4234,7 +4240,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
             <div>
               <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Ingresos (sin IVA)</div>
               <div style={{fontFamily:MONO,fontSize:34,fontWeight:900,color:"#4ade80",lineHeight:1,letterSpacing:"-0.02em"}}>{fmtK(ingYtd)}</div>
-              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{plYtd.reduce((a,d)=>a+d.nFacts,0)} registros internos (CFDI por verificar)</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.5)",marginTop:5}}>{plYtd.reduce((a,d)=>a+d.nFacts,0)} facturas registradas (sin confirmar en el SAT)</div>
             </div>
             <div>
               <div style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.55)",textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Costos</div>
@@ -4269,7 +4275,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" registros internos sin pagar"} onClick={()=>setView("facturas")}/>
           <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:sinVenc.length?AMBER:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:sinVenc.length?AMBER:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":sinVenc.length>0?sinVenc.length+" sin fecha de vencimiento ("+fmtK(montoSinVenc)+")":"al corriente ✓"} onClick={()=>setView("facturas")}/>
           <KpiCard icon={FileText} color={VIOLET} accent={sinFacturar.length>0} label="Sin facturar" value={sinFacturar.length} valueColor={VIOLET} sub="servicios por solicitar a Katia" onClick={()=>setView("facturas")}/>
-          <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"+(aunNoVence>0?" · "+fmtK(aunNoVence)+" aún no vence":"")} onClick={()=>setView("facturas")}/>
         </div>
       )}
       {/* Fila nueva: Operaciones choferes + alertas */}
@@ -4725,7 +4731,7 @@ function Cotizador({onSaved,usuario}){
 
   const eliminarPlantilla = async(id)=>{
     if(!confirm("¿Eliminar esta plantilla?")) return;
-    await deleteDoc(doc(db,"plantillasCotizador",id));
+    await borrarRegistro("plantillasCotizador",id);
     showT("Plantilla eliminada");
   };
 
@@ -6392,8 +6398,8 @@ function PlanificadorRutas(){
           }} className="btn" style={{flex:"1 1 90px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+BLUE+"30",color:BLUE,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><RefreshCw size={14}/>Duplicar</button>
           {viewR.mapURL&&<a href={viewR.mapURL} target="_blank" rel="noopener noreferrer" className="btn" style={{flex:"1 1 90px",padding:"10px 0",borderRadius:10,background:BLUE+"0e",border:"1.5px solid "+BLUE+"28",color:BLUE,textDecoration:"none",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Globe size={14}/>Maps</a>}
           <button onClick={async()=>{
-            if(!confirm("¿Eliminar esta ruta permanentemente?\n\nEsta acción no se puede deshacer.")) return;
-            await deleteDoc(doc(db,"rutas",viewR.id));
+            if(!confirm("¿Eliminar esta ruta?\n\nSe guarda una copia en la papelera.")) return;
+            await borrarRegistro("rutas",viewR.id);
             setViewR(null);
             showT("Ruta eliminada");
           }} className="btn" style={{flex:"1 1 90px",padding:"10px 0",borderRadius:10,background:"#fff",border:"1.5px solid "+ROSE+"30",color:ROSE,display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontFamily:SANS,fontWeight:700,fontSize:13}}><Trash2 size={14}/>Eliminar</button>
@@ -6530,7 +6536,7 @@ function PlanificadorNacional(){
       showT("✓ Proyecto guardado"); setTab("lista");
     }catch(e){showT(e.message,"err");}
   };
-  const delProyecto=async id=>{if(!confirm("¿Eliminar proyecto?"))return;await deleteDoc(doc(db,"proyectos",id));showT("Eliminado");};
+  const delProyecto=async id=>{if(!confirm("¿Eliminar proyecto?"))return;await borrarRegistro("proyectos",id);showT("Eliminado");};
 
   return(
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
@@ -7187,7 +7193,7 @@ function Facturas({rol="admin"}){
       setModal(false);setForm(empty);setEditItem(null);
     }catch(e){showT(e.message,"err");}
   };
-  const del=async id=>{if(items.find(f=>f.id===id)?.cfdiArchiveLocked){showT("Un expediente con originales fiscales no se puede eliminar.","err");return;}if(!confirm("¿Eliminar este registro?"))return;await deleteDoc(doc(db,"facturas",id));showT("Eliminado");};
+  const del=async id=>{if(items.find(f=>f.id===id)?.cfdiArchiveLocked){showT("Un expediente con originales fiscales no se puede eliminar.","err");return;}if(!confirm("¿Eliminar este registro?"))return;await borrarRegistro("facturas",id);showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"facturas",id),{status});
   /* Cambio de estado desde la tabla. "Pagada" necesita fecha de cobro (flujo de
      efectivo, cartera y conciliación contra el cierre contable dependen de
@@ -7981,7 +7987,7 @@ function Clientes(){
     if(!confirm("¿Dar de baja el plan "+p.numero+" · "+p.nombre+"?\n\nDeja de ofrecerse en facturas nuevas; las facturas que ya lo tienen no cambian. Se puede reactivar guardándolo de nuevo."))return;
     try{await setDoc(doc(db,"planes",p.numero),{numero:p.numero,activo:false,actualizadoEn:serverTimestamp()},{merge:true});showT("Plan "+p.numero+" dado de baja");}catch(e){showT(e.message,"err");}
   };
-  const del=async id=>{if(!confirm("¿Eliminar?"))return;await deleteDoc(doc(db,"cuentas",id));showT("Eliminado");};
+  const del=async id=>{if(!confirm("¿Eliminar? Se guarda una copia en la papelera."))return;await borrarRegistro("cuentas",id);showT("Eliminado");};
   const filt=items.filter(c=>c.nombre?.toLowerCase().includes(q.toLowerCase())||c.contacto?.toLowerCase().includes(q.toLowerCase())||c.plan?.toLowerCase().includes(q.toLowerCase()));
   return(
     <div style={{flex:1,overflowY:"auto",padding:"28px 32px",background:"#f1f4fb"}}>
@@ -8800,7 +8806,7 @@ async function exportReporteXLSX(facts, viat, mesDesde, mesHasta, anio="2026"){
     ["Total costos operativos",                      gC,          "",""],
     ["Utilidad bruta",                               gU,          "",""],
     ["Margen de utilidad %",                         gI>0?gU/gI:0,"≥ 15% óptimo",""],
-    ["Registros internos (CFDI por verificar)",                            factsF.length,"",""],
+    ["Facturas registradas (sin confirmar en el SAT)",                            factsF.length,"",""],
     ["Facturas cobradas (Pagadas)",                  factsF.filter(f=>f.status==="Pagada").length,"",""],
     ["% Cobro sobre facturado",                      gI>0?gCob/gI:0,"≥ 80% objetivo",""],
     ["Cartera por cobrar",                           gPend,       "",""],
@@ -9400,7 +9406,7 @@ function PagosProveedores({userProfile}){
 
   const del=async(p)=>{
     if(!confirm(`¿Eliminar el pago ${p.folio||""} de ${p.proveedor} por ${fmt(p.total||0)}?`))return;
-    try{await deleteDoc(doc(db,"pagosProveedores",p.id));showT("Pago eliminado");}catch(e){showT(e.message,"err");}
+    try{await borrarRegistro("pagosProveedores",p.id);showT("Pago eliminado");}catch(e){showT(e.message,"err");}
   };
 
   /* ── Adjuntos (colección aparte para no chocar con el límite de 1MB/doc) ── */
@@ -10268,7 +10274,7 @@ function Viaticos(){
       setModal(false);setForm(empty);showT("✓ Gasto registrado");
     }catch(e){showT(e.message,"err");}
   };
-  const del=async id=>{if(!confirm("¿Eliminar?"))return;await deleteDoc(doc(db,"viaticos",id));showT("Eliminado");};
+  const del=async id=>{if(!confirm("¿Eliminar? Se guarda una copia en la papelera."))return;await borrarRegistro("viaticos",id);showT("Eliminado");};
 
   const filt=items.filter(g=>(filtMes==="todos"||g.mes===filtMes)&&(filtTipo==="todos"||g.tipo===filtTipo));
   const totGastos=filt.reduce((a,g)=>a+(g.monto||0),0);
@@ -10483,7 +10489,7 @@ function Entregas(){
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   useEffect(()=>onSnapshot(collection(db,"entregas"),s=>{setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)));setLoad(false);}),[]);
   const save=async()=>{if(!form.pdv){showT("PDV requerido","err");return;}try{await addDoc(collection(db,"entregas"),{...form,hora:new Date().toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"}),createdAt:serverTimestamp()});setForm({pdv:"",dir:"",receptor:"",notas:"",status:"Entregado"});showT("✓ Entrega registrada");}catch(e){showT(e.message,"err");}};
-  const del=async id=>{if(!confirm("¿Eliminar esta entrega?"))return;await deleteDoc(doc(db,"entregas",id));showT("Eliminada");};
+  const del=async id=>{if(!confirm("¿Eliminar esta entrega?"))return;await borrarRegistro("entregas",id);showT("Eliminada");};
   const filt=items.filter(e=>e.pdv?.toLowerCase().includes(q.toLowerCase())||e.dir?.toLowerCase().includes(q.toLowerCase()));
   const sc={Entregado:GREEN,"En tránsito":BLUE,Pendiente:AMBER,Rechazado:ROSE};
   return(
@@ -10607,7 +10613,7 @@ function Presupuestos(){
   };
   /* Un presupuesto ligado a una factura no se borra: se perdería de dónde salió la factura. */
   const del=async id=>{const p=items.find(x=>x.id===id);if(p?.convertidoAFacturaId){showT("Este presupuesto ya tiene factura: no se puede borrar. Cámbialo a Rechazado si ya no aplica.","err");return;}
-    if(!confirm("¿Eliminar este presupuesto? No se puede deshacer."))return;await deleteDoc(doc(db,"presupuestos",id));showT("Eliminado");};
+    if(!confirm("¿Eliminar este presupuesto? Se guarda una copia en la papelera."))return;await borrarRegistro("presupuestos",id);showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"presupuestos",id),{status});
 
   // Conversión 1-click a factura: crea un registro en facturas con los datos del presupuesto
@@ -11006,7 +11012,7 @@ function Choferes(){
       setModal(false);setForm(empty);setEditItem(null);
     }catch(e){showT(e.message,"err");}
   };
-  const del=async id=>{if(!confirm("¿Eliminar este chofer?"))return;await deleteDoc(doc(db,"choferes",id));showT("Eliminado");};
+  const del=async id=>{if(!confirm("¿Eliminar este chofer?"))return;await borrarRegistro("choferes",id);showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"choferes",id),{status});
 
   const filt=items.filter(c=>(statusF==="todos"||c.status===statusF)&&(!q||(c.nombre||"").toLowerCase().includes(q.toLowerCase())||(c.tel||"").includes(q)||(c.placa||"").toLowerCase().includes(q.toLowerCase())));
@@ -11149,7 +11155,7 @@ function Prospeccion(){
       setModal(false);setForm(empty);setEditItem(null);
     }catch(e){showT(e.message,"err");}
   };
-  const del=async id=>{if(!confirm("¿Eliminar este prospecto?"))return;await deleteDoc(doc(db,"prospeccion",id));showT("Eliminado");};
+  const del=async id=>{if(!confirm("¿Eliminar este prospecto?"))return;await borrarRegistro("prospeccion",id);showT("Eliminado");};
 
   const MESES=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
   const filt=items.filter(p=>(statusF==="todos"||p.status===statusF)&&(!q||(p.empresa||"").toLowerCase().includes(q.toLowerCase())||(p.contacto||"").toLowerCase().includes(q.toLowerCase())));

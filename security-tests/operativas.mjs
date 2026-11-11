@@ -2,6 +2,7 @@ import { before, after, test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where } from 'firebase/firestore';
+import { borrarConRastro } from '../papelera.js';
 
 /* RBAC v4: rutas, choferes y ubicaciones cerradas a oficina. Nada anónimo ni público. */
 let env;
@@ -65,8 +66,25 @@ test('operaciones lee, crea y edita lo operativo, pero no borra ni falsea ubicac
   await assertFails(setDoc(doc(db, 'driverLocations', 'uno'), { lat: 0, lng: 0 }));
 });
 
-test('admin borra y administra ubicaciones', async () => {
+test('admin borra y administra ubicaciones; rutas y choferes solo con copia en la papelera', async () => {
   const db = ctx('admin').firestore();
   await assertSucceeds(setDoc(doc(db, 'driverLocations', 'limpieza'), { lat: 1, lng: 1 }));
-  for(const col of COLS) await assertSucceeds(deleteDoc(doc(db, col, 'uno')));
+  for(const col of ['rutas', 'choferes']){
+    await assertFails(deleteDoc(doc(db, col, 'uno')));                                  // sin copia no se borra
+    await assertSucceeds(borrarConRastro(db, { uid: 'admin', nombre: 'admin' }, col, 'uno'));
+    const copia = await getDoc(doc(db, 'papelera', col + '__uno'));
+    if(copia.data().datos.nombre !== 'Editado' || copia.data().borradoPorUid !== 'admin') throw new Error('copia incompleta en ' + col);
+  }
+  for(const col of COLS.filter(c => !['rutas', 'choferes'].includes(c))) await assertSucceeds(deleteDoc(doc(db, col, 'uno')));
+});
+
+test('la papelera: solo admin la lee y escribe, con su propio uid; nadie la edita ni la borra', async () => {
+  const dbA = ctx('admin').firestore(), dbO = ctx('ops').firestore();
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'viaticos', 'v1'), { concepto: 'Comida', monto: 100 }));
+  await assertFails(borrarConRastro(dbO, { uid: 'ops' }, 'viaticos', 'v1'));            // operaciones no borra
+  await assertFails(getDoc(doc(dbO, 'papelera', 'rutas__uno')));                         // ni lee la papelera
+  await assertFails(setDoc(doc(dbA, 'papelera', 'viaticos__v1'), { coleccion: 'viaticos', docId: 'v1', datos: {}, borradoPorUid: 'otro', borradoEn: new Date() }));
+  await assertSucceeds(borrarConRastro(dbA, { uid: 'admin' }, 'viaticos', 'v1'));
+  await assertFails(updateDoc(doc(dbA, 'papelera', 'viaticos__v1'), { motivo: 'cambio' }));
+  await assertFails(deleteDoc(doc(dbA, 'papelera', 'viaticos__v1')));
 });
