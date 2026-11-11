@@ -218,14 +218,16 @@ function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisa
 
 /* Link para el cliente: una página con la etapa de su servicio y, al final, una encuesta.
    No muestra precios ni datos internos. Cambiar el link apaga el anterior. */
+/* El link se arma siempre con el dominio público (ahí está el proxy /s/:token), aunque la oficina abra la app desde otro lado. */
+const URL_PUBLICA = (import.meta.env?.VITE_URL_PUBLICA || "https://dmov2-ixgf.vercel.app").replace(/\/$/, "");
 function LinkCliente({ s, despacho, avisar }){
   const [ocupado, setOcupado] = useState(false);
   if(!despacho || s.estado === "Cancelada") return null;
-  const url = s.seguimientoToken ? `${window.location.origin}/s/${s.seguimientoToken}` : "";
+  const url = s.seguimientoToken ? `${URL_PUBLICA}/s/${s.seguimientoToken}` : "";
   const pedir = async nuevo => {
     if(nuevo && !window.confirm("El link anterior dejará de funcionar. ¿Crear uno nuevo?")) return;
     setOcupado(true);
-    try { const r = await despacho.linkSeguimiento(s.id, nuevo); const u = `${window.location.origin}/s/${r.token}`; try { await navigator.clipboard.writeText(u); avisar("Link copiado. Pégalo en el correo o WhatsApp del cliente."); } catch { avisar("Link listo"); } }
+    try { const r = await despacho.linkSeguimiento(s.id, nuevo); const u = `${URL_PUBLICA}/s/${r.token}`; try { await navigator.clipboard.writeText(u); avisar("Link copiado. Pégalo en el correo o WhatsApp del cliente."); } catch { avisar("Link listo"); } }
     catch(e){ avisar("No se pudo: " + (e?.message || e), true); } finally { setOcupado(false); }
   };
   const copiar = async () => { try { await navigator.clipboard.writeText(url); avisar("Link copiado"); } catch { avisar("Cópialo a mano: " + url, true); } };
@@ -247,10 +249,12 @@ function LinkCliente({ s, despacho, avisar }){
 /* Factura: cuando el servicio se entregó, un botón pide la factura en Facturación. */
 function FacturaServicio({ s, store, usuario, avisar }){
   const [ocupado, setOcupado] = useState(false);
-  if(!store.pedirFactura || !["Entregada", "Cerrada", "Conciliada", "Facturada", "Cobrada"].includes(s.estado)) return null;
+  const PUEDE = ["Entregada", "Cerrada", "Conciliada"], cancelada = ["Cancelada", "Borrada"].includes(s.facturaEstado);
+  if(!store.pedirFactura || ![...PUEDE, "Facturada", "Cobrada"].includes(s.estado)) return null;
+  if(!s.facturaId && !PUEDE.includes(s.estado)) return <Seccion titulo="Factura"><div style={{ fontSize: 13, color: MUTED }}>Este servicio ya se marcó como {s.estado.toLowerCase()} sin factura ligada aquí.</div></Seccion>;
   return (
     <Seccion titulo="Factura">
-      {s.facturaId ? <div style={{ fontSize: 14 }}>Factura <b style={{ fontFamily: MONO }}>{s.facturaFolio || s.facturaId}</b>: <Chip color={s.facturaEstado === "Pagada" ? GREEN : s.facturaEstado === "Cancelada" ? ROSE : BLUE}>{s.facturaEstado === "Solicitada a Katia" || !s.facturaEstado ? "pedida, falta emitirla" : s.facturaEstado === "Pagada" ? "pagada" : s.facturaEstado.toLowerCase()}</Chip></div>
+      {s.facturaId && !cancelada ? <div style={{ fontSize: 14 }}>Factura <b style={{ fontFamily: MONO }}>{s.facturaFolio || s.facturaId}</b>: <Chip color={s.facturaEstado === "Pagada" ? GREEN : s.facturaEstado === "Cancelada" ? ROSE : BLUE}>{s.facturaEstado === "Solicitada a Katia" || !s.facturaEstado ? "pedida, falta emitirla" : s.facturaEstado === "Pagada" ? "pagada" : s.facturaEstado.toLowerCase()}</Chip></div>
         : !(Number(s.precio) > 0) ? <div style={{ fontSize: 13, color: AMBER, fontWeight: 700 }}>Para pedir la factura, primero un administrador aprueba el precio.</div>
         : <><button onClick={async () => { setOcupado(true); try { const r = await store.pedirFactura(usuario, s); avisar("Factura pedida: " + r.folio + ". Ya aparece en Facturación."); } catch(e){ avisar("No se pudo: " + e.message, true); } finally { setOcupado(false); } }}
             disabled={ocupado} style={boton(A)}>{ocupado ? "Pidiendo…" : `Pedir factura por ${dinero(s.precio)} + IVA`}</button>

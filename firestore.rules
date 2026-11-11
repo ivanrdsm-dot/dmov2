@@ -118,6 +118,8 @@ service cloud.firestore {
       let c = get(/databases/$(database)/documents/cotizaciones_logistica/$(d.cotizacionId)).data;
       return !('precioAprobadoEn' in d)
         && c.estado == 'Aceptada'
+        && !('servicioId' in c)
+        && c.empresa == d.empresa
         && c.folio == d.cotizacionFolio
         && c.precioAprobado == d.precio
         && c.aprobadoPor == d.precioAprobadoPor;

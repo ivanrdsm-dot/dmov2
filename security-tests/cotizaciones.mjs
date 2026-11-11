@@ -99,9 +99,11 @@ test('un servicio hereda el precio de la cotización aceptada solo si coincide e
   await assertFails(srv.crear(OPS, { ...base, precio: 3900, precioAprobadoPor: 'ops' }));    // otro aprobador
   const otra = await sOps.crear(OPS, datos);                                                  // propuesta sin aprobar
   await assertFails(srv.crear(OPS, { ...base, cotizacionId: otra.id, cotizacionFolio: otra.folio, precio: 3600 }));
+  await assertFails(srv.crear(OPS, { ...base, empresa: 'Otro cliente', precio: 3900 }));        // el precio de un cliente no pasa a otro
   const s = await assertSucceeds(srv.crear(OPS, { ...base, precio: 3900 }));
   assert.equal((await getDoc(doc(dbOps, 'servicios', s.id))).data().precio, 3900);
   await assertSucceeds(sOps.vincularServicio(OPS, d, s));
   assert.equal((await leer(dbOps, cot.id)).servicioFolio, s.folio);
   await assertFails(updateDoc(doc(dbOps, COL, cot.id), { servicioId: 'otro' }));             // se liga una sola vez
+  await assertFails(srv.crear(OPS, { ...base, precio: 3900 }));                               // ya ligada: no se crea un segundo servicio con su precio
 });

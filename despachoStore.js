@@ -13,7 +13,9 @@ export function crearDespachoStore(db, app){
     suscribirUbicaciones: cb => lista(query(collection(db, "ubicaciones"), limit(300)), x => cb(Object.fromEntries(x.map(u => [u.id, u])))),
     suscribirServicios: cb => lista(query(collection(db, "servicios"), where("estado", "in", ["Asignada", "En ruta"]), limit(100)), cb),
     suscribirParadas: (servicioId, cb) => lista(query(collection(db, "servicios", servicioId, "paradas"), orderBy("orden")), cb),
-    suscribirAlertas: cb => lista(query(collection(db, "alertas"), orderBy("ts", "desc"), limit(25)), cb, d => ({ id: d.id, ...d.data(), ts: aMs(d.data({ serverTimestamps: "estimate" }).ts) })),
+    /* Todas las sin atender (un SOS nunca queda fuera por el límite), las más nuevas primero. */
+    suscribirAlertas: cb => lista(query(collection(db, "alertas"), where("atendida", "==", false), limit(300)), x => cb(x.sort((a, b) => (b.ts || 0) - (a.ts || 0))),
+      d => { const v = d.data({ serverTimestamps: "estimate" }); return { id: d.id, ...v, msg: v.msg || v.message || v.mensaje || "", ts: aMs(v.ts) ?? aMs(v.createdAt) }; }),
     vincularChofer: (choferId, correo) => llamar("oficinaVincularChofer", { choferId, correo }),
     liberarDispositivo: (choferId, motivo) => llamar("oficinaLiberarDispositivo", { choferId, motivo }),
     prepararRuta: (servicioId, choferId, ordenar = true) => llamar("oficinaPrepararRuta", { servicioId, choferId, ordenar }),

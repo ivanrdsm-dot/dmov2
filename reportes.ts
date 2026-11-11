@@ -158,7 +158,7 @@ export function conciliar(servicios: Reg[]){
   const fila = (s: Reg): FilaConc => ({ folio: String(s.folio ?? ""), empresa: String(s.empresa ?? ""), entregado: Number(s.estadoTs?.Entregada) || null,
     precio: n(s.precio), facturaFolio: String(s.facturaFolio ?? "") });
   const vivos = servicios.filter(s => ENTREGADO.includes(String(s.estado)));
-  const sinFactura = vivos.filter(s => !s.facturaId).map(fila).sort((a, b) => (a.entregado ?? 0) - (b.entregado ?? 0));
+  const sinFactura = vivos.filter(s => !s.facturaId || ["Cancelada", "Borrada"].includes(String(s.facturaEstado))).map(fila).sort((a, b) => (a.entregado ?? 0) - (b.entregado ?? 0));
   const porEmitir = vivos.filter(s => s.facturaId && (!s.facturaEstado || s.facturaEstado === "Solicitada a Katia")).map(fila);
   const suma = (xs: FilaConc[]) => Math.round(xs.reduce((a, x) => a + x.precio, 0) * 100) / 100;
   return { sinFactura, porEmitir, montoSinFactura: suma(sinFactura), montoPorEmitir: suma(porEmitir) };

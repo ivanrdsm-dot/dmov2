@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getStorage } from "firebase/storage";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc, runTransaction,
-  doc, onSnapshot, serverTimestamp, query, where, getDocs, setDoc, getDoc,
+  doc, onSnapshot, serverTimestamp, query, where, orderBy, getDocs, setDoc, getDoc,
   limit, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
 } from "firebase/firestore";
 import {
@@ -4064,11 +4064,12 @@ function QueFaltaHoy({setView,alertasAbiertas=0}){
   const [d,setD]=useState(null);
   useEffect(()=>{
     if(!FF_SERVICIOS){setD({});return;}
-    const hoy=fechaLocalISO(), out={}, listo=()=>{if(["sol","cot","srv"].every(k=>k in out)) setD({...out});};
+    const hoy=fechaLocalISO(), out={}, listo=()=>{if(["sol","cot","srv","fac"].every(k=>k in out)) setD({...out});};
     const u1=onSnapshot(query(collection(db,"solicitudes"),where("estado","in",["Nueva","En revisión"]),limit(300)),x=>{out.sol=x.docs.map(y=>y.data());listo();},()=>{out.sol=[];listo();});
     const u2=onSnapshot(query(collection(db,"cotizaciones_logistica"),where("estado","in",["Propuesta","Aprobada","Enviada"]),limit(300)),x=>{out.cot=x.docs.map(y=>y.data());listo();},()=>{out.cot=[];listo();});
     const u3=onSnapshot(query(collection(db,"servicios"),where("fechaServicio","==",hoy),limit(300)),x=>{out.srv=x.docs.map(y=>y.data());listo();},()=>{out.srv=[];listo();});
-    return()=>{u1();u2();u3();};
+    const u4=onSnapshot(query(collection(db,"servicios"),where("estado","in",["Entregada","Cerrada","Conciliada"]),limit(300)),x=>{out.fac=x.docs.map(y=>y.data()).filter(y=>!y.facturaId);listo();},()=>{out.fac=[];listo();});
+    return()=>{u1();u2();u3();u4();};
   },[]);
   if(!d||!FF_SERVICIOS) return null;
   const sinResp=(d.sol||[]).filter(x=>!x.primeraRespuestaEn).length;
@@ -4079,6 +4080,7 @@ function QueFaltaHoy({setView,alertasAbiertas=0}){
     {n:porAprobar+porEnviar,t:porAprobar?"cotizaciones por aprobar":porEnviar?"cotizaciones por enviar":"cotizaciones por aprobar",sub:[porAprobar&&porAprobar+" por aprobar",porEnviar&&porEnviar+" por enviar",esperando&&esperando+" esperando al cliente"].filter(Boolean).join(" · "),v:"cotizaciones",c:porAprobar+porEnviar?AMBER:GREEN},
     {n:hoySrv.length,t:hoySrv.length===1?"servicio para hoy":"servicios para hoy",sub:sinChofer?sinChofer+" todavía sin chofer":"",v:"servicios",c:sinChofer?ROSE:hoySrv.length?BLUE:GREEN},
     {n:alertasAbiertas,t:alertasAbiertas===1?"alerta sin atender":"alertas sin atender",v:"alertas",c:alertasAbiertas?ROSE:GREEN},
+    {n:(d.fac||[]).length,t:(d.fac||[]).length===1?"servicio entregado sin factura":"servicios entregados sin factura",sub:(d.fac||[]).length?"Pídela desde el servicio":"",v:"reportesOperacion",c:(d.fac||[]).length?AMBER:GREEN},
   ];
   const todoBien=tarjetas.every(x=>!x.n);
   return(
@@ -4101,8 +4103,8 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const [alertasItems,setAlertas]=useState([]);
   useEffect(()=>{
     const u1=onSnapshot(collection(db,"gastosChofer"),s=>setGastosChofer(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u2=onSnapshot(query(collection(db,"jornadas"),limit(1000)),s=>setJornadas(s.docs.map(d=>normalizarJornada(d.id,d.data()))));
-    const u3=onSnapshot(query(collection(db,"alertas"),limit(500)),s=>setAlertas(s.docs.map(d=>normalizarAlerta(d.id,d.data()))));
+    const u2=suscribirJornadasDesde(fechaLocalISO(new Date(Date.now()-2*86400000)),setJornadas);   // activas = recientes
+    const u3=suscribirAlertas(setAlertas,{historial:0});   // Inicio solo cuenta las sin atender
     return()=>{u1();u2();u3();};
   },[]);
   const gastosPendientes = gastosChofer.filter(g=>g.estado==="pendiente").reduce((a,g)=>a+(g.monto||0),0);
@@ -4584,7 +4586,10 @@ function Cotizador({onSaved,usuario}){
   const sinPrecio=modo==="foraneo"?(fCiudades.length===0?"Agrega al menos un destino":fCiudades.some(c=>!(tarifaViva(c,fVeh)>0))?"Hay destinos sin tarifa para esta unidad":"")
     :modo==="masivo"?(mCiudades.length===0?"Agrega al menos una ciudad":mDist.faltantes[0]||"")
     :(!(lBase>0)?"Esta unidad no tiene tarifa local":"");
-  const canSave=!sinPrecio&&total>0;
+  /* Reglas del tarifario que este cálculo usa: si falta una, el precio saldría corto. */
+  const faltaRegla=(modo==="foraneo"&&fUrg&&!(REGLAS.urgente_pct>0))||(modo==="masivo"&&mUrg&&!(REGLAS.urgente_pct>0))?"Falta la regla de urgente en Precios → Reglas del cotizador"
+    :(modo==="foraneo"&&fMani&&!(REGLAS.ayudante_foraneo>0))?"Falta el precio del ayudante foráneo en Precios → Reglas del cotizador":"";
+  const canSave=!sinPrecio&&!faltaRegla&&total>0;
 
   const buildQ=()=>{
     const folio="COT-"+uid();
@@ -4635,7 +4640,7 @@ function Cotizador({onSaved,usuario}){
   const [guardando,setGuardando]=useState(false);
   const guardar=async()=>{
     if(!cliente.trim()){showT("Escribe el nombre del cliente","err");return;}
-    if(!canSave){showT(sinPrecio||"El total está en $0","err");return;}
+    if(!canSave){showT(sinPrecio||faltaRegla||"El total está en $0","err");return;}
     if(!usuario?.uid){showT("No se encontró tu sesión: vuelve a entrar","err");return;}
     setGuardando(true);
     try{
@@ -5313,7 +5318,7 @@ function Cotizador({onSaved,usuario}){
           <button onClick={guardar} disabled={guardando||!canSave||!cliente.trim()} className="btn" style={{background:canSave&&cliente.trim()?"linear-gradient(135deg,"+A+",#fb923c)":"#e0e0e0",color:canSave&&cliente.trim()?"#fff":"#aaa",borderRadius:13,padding:"14px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:canSave&&cliente.trim()?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:canSave&&cliente.trim()?"0 6px 20px "+A+"40":"none"}}>
             <Send size={15}/>Guardar cotización{recurrente?" (recurrente)":""}
           </button>
-          {(!canSave||!cliente.trim())&&<div style={{fontSize:11,color:AMBER,fontWeight:700,textAlign:"center",marginTop:-4}}>{!canSave?(sinPrecio||"El total está en $0"):"Escribe el cliente para guardar"}</div>}
+          {(!canSave||!cliente.trim())&&<div style={{fontSize:11,color:AMBER,fontWeight:700,textAlign:"center",marginTop:-4}}>{!canSave?(sinPrecio||faltaRegla||"El total está en $0"):"Escribe el cliente para guardar"}</div>}
           <div style={{fontSize:11,color:MUTED,textAlign:"center",lineHeight:1.4}}>El PDF para el cliente sale en <b>Mis cotizaciones</b>, cuando apruebes el precio. Lleva un solo importe, sin desglose.</div>
         </div>
       </div>
@@ -11279,6 +11284,21 @@ const normalizarAlerta=(id,d)=>{
     data:(lat!=null&&lng!=null&&Number.isFinite(Number(lat))&&Number.isFinite(Number(lng)))?{...(d.data||{}),lat:Number(lat),lng:Number(lng)}:d.data,
     ts:d.ts||d.createdAt||null};
 };
+/* Lectura de alertas que no pierde las recientes: TODAS las sin atender + las últimas N
+   con hora (un límite sin orden devolvía las primeras por id y podía esconder un SOS nuevo). */
+function suscribirAlertas(cb,{historial=200}={}){
+  const m={sin:[],rec:[]}, emitir=()=>{const map={};[...m.sin,...m.rec].forEach(a=>{map[a.id]=a;});cb(Object.values(map).sort((a,b)=>(b.ts?.seconds||0)-(a.ts?.seconds||0)));};
+  const u1=onSnapshot(query(collection(db,"alertas"),where("atendida","==",false),limit(500)),x=>{m.sin=x.docs.map(d=>normalizarAlerta(d.id,d.data()));emitir();},()=>{});
+  const u2=historial>0?onSnapshot(query(collection(db,"alertas"),orderBy("ts","desc"),limit(historial)),x=>{m.rec=x.docs.map(d=>normalizarAlerta(d.id,d.data()));emitir();},()=>{}):()=>{};
+  return()=>{u1();u2();};
+}
+/* Jornadas desde una fecha: la app nueva guarda `fecha` y la vieja `fechaStr` (ambas AAAA-MM-DD). */
+function suscribirJornadasDesde(desde,cb){
+  const m={a:[],b:[]}, emitir=()=>{const map={};[...m.a,...m.b].forEach(j=>{map[j.id]=j;});cb(Object.values(map));};
+  const u1=onSnapshot(query(collection(db,"jornadas"),where("fecha",">=",desde),limit(1000)),x=>{m.a=x.docs.map(d=>normalizarJornada(d.id,d.data()));emitir();},()=>{});
+  const u2=onSnapshot(query(collection(db,"jornadas"),where("fechaStr",">=",desde),limit(1000)),x=>{m.b=x.docs.map(d=>normalizarJornada(d.id,d.data()));emitir();},()=>{});
+  return()=>{u1();u2();};
+}
 async function postAlert(rutaId, choferId, choferNombre, type, msg, extra={}){
   try{
     // El Centro de Alertas lee `message` y ordena por `ts`: se escriben ambos (y se conservan msg/createdAt por compatibilidad).
@@ -11300,7 +11320,7 @@ function LiveTracking(){
   useEffect(()=>{
     const u1=onSnapshot(collection(db,"driverLocations"),s=>setDriverLocs(s.docs.map(d=>({id:d.id,...d.data()}))));
     const u2=onSnapshot(collection(db,"rutas"),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()})).filter(r=>r.status==="En curso")));
-    const u3=onSnapshot(query(collection(db,"alertas"),limit(500)),s=>setAlerts(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0)).slice(0,50)));
+    const u3=suscribirAlertas(x=>setAlerts(x.slice(0,50)),{historial:50});
     return()=>{u1();u2();u3();};
   },[]);
 
@@ -13815,10 +13835,7 @@ function JornadasAdmin(){
   const [desde,setDesde]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return fechaLocalISO(d);});
   const [hasta,setHasta]=useState(()=>fechaLocalISO());
 
-  useEffect(()=>onSnapshot(query(collection(db,"jornadas"),limit(1000)),s=>{
-    setItems(s.docs.map(d=>normalizarJornada(d.id,d.data())).sort((a,b)=>(b.inTs?.seconds||0)-(a.inTs?.seconds||0)));
-    setLoad(false);
-  }),[]);
+  useEffect(()=>suscribirJornadasDesde(desde,x=>{setItems(x.sort((a,b)=>(b.inTs?.seconds||0)-(a.inTs?.seconds||0)));setLoad(false);}),[desde]);
 
   const choferes = [...new Set(items.map(j=>j.choferNombre).filter(Boolean))];
   const rangoIn = new Date(desde+"T00:00:00").getTime()/1000;
@@ -13963,10 +13980,7 @@ function AlertasCentro({setView}){
   const [items,setItems]=useState([]);
   const [load,setLoad]=useState(true);
   const [filtro,setFiltro]=useState("todas");
-  useEffect(()=>onSnapshot(query(collection(db,"alertas"),limit(500)),s=>{
-    setItems(s.docs.map(d=>normalizarAlerta(d.id,d.data())).sort((a,b)=>(b.ts?.seconds||0)-(a.ts?.seconds||0)));
-    setLoad(false);
-  }),[]);
+  useEffect(()=>suscribirAlertas(x=>{setItems(x);setLoad(false);},{historial:300}),[]);
 
   const ALERT_META = {
     sos:      {color:"#dc2626",icon:"🚨",label:"SOS EMERGENCIA",priority:1},

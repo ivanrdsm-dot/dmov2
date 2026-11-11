@@ -6,6 +6,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { alertasEsperadas, planVigilante, TIPOS_ALERTA } from "./lib/vigilante.js";
+import { enHorarioLaboral } from "./lib/solicitudes.js";
 
 const ms = v => (v && typeof v.toMillis === "function") ? v.toMillis() : (typeof v === "number" ? v : 0);
 const plano = (id, d, campos) => { const o = { id, ...d }; for(const k of campos) o[k] = ms(d[k]); return o; };
@@ -28,7 +29,14 @@ export const vigilante = onSchedule({ schedule: "every 5 minutes", timeZone: "Am
     servicios: srv.docs.map(d => ({ id: d.id, ...d.data() })),
     conectores,
   }, ahora);
-  const { crear, resolver } = planVigilante(esperadas, abiertas.docs.map(d => ({ id: d.id })));
+  const plan = planVigilante(esperadas, abiertas.docs.map(d => ({ id: d.id })));
+  /* Solo se crean las que no existen: una que alguien ya atendió no se vuelve a crear
+     (antes se intentaba, fallaba el lote completo y se reintentaba una por una). */
+  const refs = plan.crear.map(a => db.collection("alertas").doc(a.id));
+  const existen = refs.length ? await db.getAll(...refs) : [];
+  const crear = plan.crear.filter((a, i) => !existen[i].exists);
+  /* Fuera de horario no se calcula "servicio de hoy sin asignar": no se da por resuelta sola. */
+  const resolver = enHorarioLaboral(ahora) ? plan.resolver : plan.resolver.filter(id => !id.startsWith("vig-srv-"));
   const lote = db.batch();
   for(const a of crear){
     // create(): si otra corrida ya la creó, falla ese documento y no se duplica.

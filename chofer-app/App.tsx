@@ -56,7 +56,8 @@ export default function App(){
 
   const terminarJornada = () => Alert.alert("¿Terminar tu jornada?", "Operaciones verá tu hora de salida.", [
     { text: "Cancelar", style: "cancel" },
-    { text: "Terminar", onPress: async () => { const p = ultimaPosicion();
+    { text: "Terminar", onPress: async () => {
+        const p = await Promise.race([posicionAhora(), new Promise<null>(r => setTimeout(() => r(null), 5000))]) || ultimaPosicion();
         try { await llamar("choferTerminarJornada", { dispositivoId: await idDispositivo(), lat: p?.lat, lng: p?.lng });
           if("nombre" in estado) setEstado({ paso: "fin", choferId: estado.choferId, nombre: estado.nombre }); }
         catch(e){ Alert.alert("No se pudo", mensajeDe(e)); } } }]);
