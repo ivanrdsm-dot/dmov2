@@ -4,7 +4,10 @@
 import {
   collection, doc, onSnapshot, query, orderBy, limit, runTransaction, writeBatch, serverTimestamp, getDocs,
 } from "firebase/firestore";
-import { folioServicio, diffServicio } from "./servicios.ts";
+import { folioServicio, diffServicio, resumenRuta } from "./servicios.ts";
+import { billingFields } from "./billing.js";
+import { planDeFactura } from "./domain.ts";
+const MESES_FAC = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 
 const CAMPOS_PRECIO = ["precio", "precioAprobadoPor", "precioAprobadoEn"];
 const aMs = v => (v && typeof v.toMillis === "function") ? v.toMillis() : (typeof v === "number" ? v : null);
@@ -110,6 +113,33 @@ export function crearServiciosStore(db){
       lote.update(doc(ref, "costos", costo.id), { anulado: true, anuladoPor: usuario.uid, anuladoNombre: usuario.nombre || usuario.email || "", anuladoEn: serverTimestamp(), motivoAnulacion: m });
       lote.set(doc(collection(ref, "eventos")), { tipo: "costo_anulado", ...actor(usuario), ts: serverTimestamp(), motivo: m, datos: { concepto: costo.concepto, monto: costo.monto } });
       await lote.commit();
+    },
+    /* Servicio entregado → solicitud de factura en Facturación (una sola por servicio,
+       id determinista). Lleva el precio aprobado; la fecha de vencimiento la pone
+       quien emite. Servicio y factura quedan ligados y con evento. */
+    async pedirFactura(usuario, servicio){
+      const precio = Number(servicio.precio);
+      if(!(precio > 0)) throw new Error("Primero un administrador debe aprobar el precio");
+      if(!["Entregada", "Cerrada", "Conciliada"].includes(servicio.estado)) throw new Error("La factura se pide cuando el servicio ya se entregó");
+      const refS = doc(db, "servicios", servicio.id), refF = doc(db, "facturas", "servicio_" + servicio.id);
+      const f = /^\d{4}-\d{2}-\d{2}$/.test(String(servicio.fechaServicio || "")) ? new Date(servicio.fechaServicio + "T12:00:00") : new Date();
+      const r2 = n => Math.round(n * 100) / 100;
+      const subtotal = r2(precio), ivaAmt = r2(precio * 0.16);
+      const contacto = String(servicio.solicitanteContacto || "");
+      const folio = "FAC-" + Array.from(crypto.getRandomValues(new Uint8Array(4))).map(b => b.toString(36).padStart(2, "0")).join("").slice(0, 6).toUpperCase();
+      await runTransaction(db, async tx => {
+        if((await tx.get(refF)).exists()) throw new Error("Este servicio ya tiene su factura pedida");
+        tx.set(refF, { ...billingFields({ plan: servicio.plan || "" }), mesOp: MESES_FAC[f.getMonth()], anio: f.getFullYear(),
+          empresa: servicio.empresa || "", solicitante: servicio.solicitante || "", plan: servicio.plan || "",
+          planNumero: planDeFactura({ plan: servicio.plan, empresa: servicio.empresa }) || "",
+          servicio: `${servicio.folio} · ${resumenRuta(servicio)}`, subtotal, ivaAmt, total: r2(subtotal + ivaAmt), iva: true,
+          status: "Solicitada a Katia", notas: "Generada desde el servicio " + servicio.folio, fechaEmision: "", fechaVenc: "",
+          emailCliente: contacto.includes("@") ? contacto : "", servicioOrigenId: servicio.id, servicioOrigenFolio: servicio.folio,
+          cotizacionFolio: servicio.cotizacionFolio || "", folio, createdAt: serverTimestamp() });
+        tx.update(refS, { facturaId: refF.id, facturaFolio: folio, facturaPedidaEn: serverTimestamp(), actualizadoEn: serverTimestamp() });
+        tx.set(doc(collection(refS, "eventos")), { tipo: "factura_pedida", ...actor(usuario), ts: serverTimestamp(), datos: { facturaFolio: folio, total: r2(subtotal + ivaAmt) } });
+      });
+      return { folio };
     },
     async cambiarEstado(usuario, servicio, a, { motivo = "", faltantes = [] } = {}){
       const ref = doc(db, "servicios", servicio.id);
