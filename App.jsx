@@ -177,6 +177,9 @@ function ensureMapbox(){
   }
   return _mapboxPromise;
 }
+/* Para módulos en archivo propio (p. ej. Despacho): devuelve la librería ya cargada.
+   Función estable a nivel de módulo, para que el mapa no se reconstruya en cada render. */
+const cargarMapbox=()=>ensureMapbox().then(()=>{if(!MAPBOX_TOKEN) throw new Error("Sin token de Mapbox");return mapboxgl;});
 function useMapboxReady(){
   const [ready,setReady]=useState(!!mapboxgl);
   useEffect(()=>{
@@ -14309,7 +14312,7 @@ function TarifarioModulo({authUser,userProfile}){
 function DespachoModulo({authUser,userProfile}){
   const store=useMemo(()=>crearDespachoStore(db,fbApp),[]);
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
-  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando despacho…</div>}><DespachoVista store={store} usuario={usuario}/></Suspense>;
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando despacho…</div>}><DespachoVista store={store} usuario={usuario} cargarMapa={cargarMapbox}/></Suspense>;
 }
 function CatalogoModulo({tipo,authUser,userProfile}){
   const store=useMemo(()=>crearCatalogoStore(db,tipo==="puntos"?"puntos_entrega":"proveedores"),[tipo]);
