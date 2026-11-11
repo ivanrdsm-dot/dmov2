@@ -17,8 +17,9 @@ before(async () => {
   env = await initializeTestEnvironment({ projectId, firestore: { host: '127.0.0.1', port: 8087, rules: readFileSync('firestore.rules', 'utf8') } });
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async c => {
+    const db = c.firestore();                      // una sola instancia por contexto
     for(const [uid, rol, activo] of [['admin', 'admin', true], ['ops', 'operaciones', true], ['inactive', 'operaciones', false]])
-      await setDoc(doc(c.firestore(), 'dmov_usuarios', uid), { uid, rol, activo, email: uid + '@example.invalid', nombre: uid });
+      await setDoc(doc(db, 'dmov_usuarios', uid), { uid, rol, activo, email: uid + '@example.invalid', nombre: uid });
   });
 });
 after(async () => env?.cleanup());
