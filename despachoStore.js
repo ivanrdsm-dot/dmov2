@@ -16,7 +16,7 @@ export function crearDespachoStore(db, app){
     suscribirAlertas: cb => lista(query(collection(db, "alertas"), orderBy("ts", "desc"), limit(25)), cb, d => ({ id: d.id, ...d.data(), ts: aMs(d.data({ serverTimestamps: "estimate" }).ts) })),
     vincularChofer: (choferId, correo) => llamar("oficinaVincularChofer", { choferId, correo }),
     liberarDispositivo: (choferId, motivo) => llamar("oficinaLiberarDispositivo", { choferId, motivo }),
-    prepararRuta: (servicioId, choferId) => llamar("oficinaPrepararRuta", { servicioId, choferId }),
+    prepararRuta: (servicioId, choferId, ordenar = true) => llamar("oficinaPrepararRuta", { servicioId, choferId, ordenar }),
     autorizarExcepcion: (servicioId, paradaId, motivo) => llamar("oficinaAutorizarExcepcion", { servicioId, paradaId, motivo }),
     linkSeguimiento: (servicioId, nuevo = false) => llamar("oficinaLinkSeguimiento", { servicioId, nuevo }),
   };

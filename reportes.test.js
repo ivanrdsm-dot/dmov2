@@ -80,6 +80,19 @@ describe("reporte con operación", () => {
     expect(csvServicios(conCostos, P30, { conMargen: true }).split("\r\n")[1]).toContain(",2100,1400,40");
     expect(csvServicios(conCostos, P30)).not.toContain("Margen");
   });
+  it("conciliación: entregados sin factura y facturas pedidas sin emitir (no importa el periodo)", () => {
+    const sv = [
+      { folio: "SRV-1", estado: "Entregada", empresa: "A", precio: 3500, estadoTs: { Entregada: 2000 } },
+      { folio: "SRV-2", estado: "Cerrada", empresa: "B", precio: 1000, estadoTs: { Entregada: 1000 }, facturaId: "f2", facturaFolio: "FAC-2", facturaEstado: "Solicitada a Katia" },
+      { folio: "SRV-3", estado: "Entregada", empresa: "C", precio: 800, facturaId: "f3", facturaEstado: "Pagada" },
+      { folio: "SRV-4", estado: "En ruta", empresa: "D", precio: 500 },
+      { folio: "SRV-5", estado: "Cancelada", empresa: "E", precio: 900 },
+    ];
+    const c = reporteOperacion({ servicios: sv }, P30, AHORA).conciliacion;
+    expect(c.sinFactura.map(x => x.folio)).toEqual(["SRV-1"]);
+    expect(c.porEmitir.map(x => x.folio)).toEqual(["SRV-2"]);
+    expect(c).toMatchObject({ montoSinFactura: 3500, montoPorEmitir: 1000 });
+  });
   it("exporta CSV del periodo con acentos y sin fórmulas ejecutables", () => {
     expect(csvServicios(servicios, P30).split("\r\n")).toHaveLength(5);
     expect(csvCotizaciones(cotizaciones, P30)).toContain("COT-1,Aceptada,2026-11-09 10:30");

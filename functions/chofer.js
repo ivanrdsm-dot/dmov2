@@ -7,6 +7,7 @@ import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { validarLote, coordenadaValida, RADIO_GEOCERCA_DEFAULT_M } from "./lib/geo.js";
 import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA } from "./lib/paradas.js";
+import { ordenarParadas } from "./lib/rutas.js";
 
 const OPC = { region: "us-central1", maxInstances: 5, memory: "256MiB", timeoutSeconds: 30 };
 const db = () => getFirestore();
@@ -264,14 +265,19 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
   }
   if(sinPin.length > 0) throw falla("failed-precondition", "Estos puntos no tienen pin confirmado en el catálogo: " + sinPin.join("; "));
   if(paradas.length === 0) throw falla("failed-precondition", "El servicio no tiene orígenes ni destinos con dirección");
+  /* Por omisión se ordenan las entregas por cercanía (las cargas van primero); la oficina puede pedir el orden capturado. */
+  const ordenar = req.data?.ordenar !== false;
+  const o = ordenar ? ordenarParadas(paradas) : { paradas, kmAntes: null, kmDespues: null };
+  paradas.splice(0, paradas.length, ...o.paradas.map((p, i) => ({ ...p, orden: i + 1 })));
   const existentes = await db().collection(`servicios/${servicioId}/paradas`).limit(1).get();
   if(!existentes.empty) throw falla("already-exists", "La ruta de este servicio ya está armada");
   const lote = db().batch();
   for(const p of paradas) lote.set(db().collection(`servicios/${servicioId}/paradas`).doc("p" + String(p.orden).padStart(2, "0")), { ...p, creadaEn: ahora() });
   lote.update(refS, { choferId, choferNombre: c.data().nombre || servicio.choferNombre || "", rutaArmadaEn: ahora(), actualizadoEn: ahora() });
-  lote.set(db().collection(`servicios/${servicioId}/eventos`).doc(), { tipo: "ruta_armada", paradas: paradas.length, choferId, ...actorOficina(of), ts: ahora() });
+  lote.set(db().collection(`servicios/${servicioId}/eventos`).doc(), { tipo: "ruta_armada", paradas: paradas.length, choferId, ordenadaPorCercania: ordenar,
+    kmLineaRectaAntes: o.kmAntes, kmLineaRectaDespues: o.kmDespues, ...actorOficina(of), ts: ahora() });
   await lote.commit();
-  return { ok: true, paradas: paradas.length };
+  return { ok: true, paradas: paradas.length, ordenada: ordenar, kmAntes: o.kmAntes, kmDespues: o.kmDespues };
 });
 
 /** Autoriza cerrar una parada fuera de geocerca. Solo oficina, siempre con motivo, siempre auditado. */
