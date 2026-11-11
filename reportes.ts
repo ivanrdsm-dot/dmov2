@@ -4,6 +4,7 @@
    y la pantalla lo muestra como "sin datos". Las horas se inyectan (determinista). */
 // @ts-ignore: módulo JS compartido con las funciones del servidor (sin tipos)
 import { kpisSolicitudes, META_PRIMERA_RESPUESTA_MIN } from "./functions/lib/solicitudes.js";
+import { margenServicio } from "./costos.ts";
 
 export const UTC_OFFSET_MIN = -360;            // hora del centro de México, sin horario de verano
 export interface Periodo { clave: string; nombre: string; desdeMs: number; hastaMs: number; }
@@ -47,6 +48,9 @@ export interface Reporte {
     tasaCierrePct: number | null; montoPropuesto: number; montoAceptado: number; medianaMinSolicitudACotizacion: number | null; medianaMinAprobacion: number | null; };
   servicios: { creados: number; porEstado: Record<string, number>; cancelados: number; entregados: number; entregadosEnFecha: number; pctEnFecha: number | null;
     montoAprobado: number; sinPrecioAprobado: number; porCliente: { nombre: string; n: number; monto: number }[]; porUnidad: { nombre: string; n: number }[]; porAsignacion: { nombre: string; n: number }[]; };
+  /** Solo servicios con precio aprobado Y costos capturados; el resto se cuenta aparte. */
+  margen: { medidos: number; sinCostos: number; conPerdida: number; ingreso: number; costo: number; margen: number; margenPct: number | null;
+    porCliente: { nombre: string; n: number; ingreso: number; costo: number; margen: number; margenPct: number | null }[]; };
   embudo: { etapa: string; n: number }[];
   actividad: { dia: string; solicitudes: number; cotizaciones: number; servicios: number }[];
 }
@@ -98,6 +102,19 @@ export function reporteOperacion(datos: { solicitudes?: Reg[]; cotizaciones?: Re
       if(/^\d{4}-\d{2}-\d{2}$/.test(String(s.fechaServicio ?? "")) && diaLocal(ent, off) <= s.fechaServicio) enFecha++;
     }
   }
+  let mIng = 0, mCos = 0, medidos = 0, sinCostos = 0, conPerdida = 0;
+  const mCli: Record<string, { n: number; ingreso: number; costo: number }> = {};
+  for(const s of srv){
+    if(s.estado === "Cancelada") continue;
+    const m = margenServicio(s);
+    if(m.estado === "sin costos"){ sinCostos++; continue; }
+    if(m.estado === "sin precio") continue;
+    medidos++; if(m.estado === "pérdida") conPerdida++;
+    mIng += m.precio!; mCos += m.costo!;
+    const cli = String(s.empresa ?? "").trim() || "Sin cliente";
+    mCli[cli] = { n: (mCli[cli]?.n ?? 0) + 1, ingreso: (mCli[cli]?.ingreso ?? 0) + m.precio!, costo: (mCli[cli]?.costo ?? 0) + m.costo! };
+  }
+  const r2 = (x: number) => Math.round(x * 100) / 100, pct1 = (a: number, b: number) => b > 0 ? Math.round(a / b * 1000) / 10 : null;
   const conFecha = srv.filter(s => s.estado !== "Cancelada" && Number(s.estadoTs?.Entregada) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(s.fechaServicio ?? ""))).length;
 
   const dias: Record<string, { solicitudes: number; cotizaciones: number; servicios: number }> = {};
@@ -117,6 +134,9 @@ export function reporteOperacion(datos: { solicitudes?: Reg[]; cotizaciones?: Re
       montoAprobado, sinPrecioAprobado: sinPrecio,
       porCliente: Object.entries(clientes).map(([nombre, v]) => ({ nombre, ...v })).sort((a, b) => b.n - a.n || b.monto - a.monto || a.nombre.localeCompare(b.nombre, "es")),
       porUnidad: contar(unidades), porAsignacion: contar(asignaciones) },
+    margen: { medidos, sinCostos, conPerdida, ingreso: r2(mIng), costo: r2(mCos), margen: r2(mIng - mCos), margenPct: pct1(mIng - mCos, mIng),
+      porCliente: Object.entries(mCli).map(([nombre, v]) => ({ nombre, n: v.n, ingreso: r2(v.ingreso), costo: r2(v.costo), margen: r2(v.ingreso - v.costo), margenPct: pct1(v.ingreso - v.costo, v.ingreso) }))
+        .sort((a, b) => b.margen - a.margen || a.nombre.localeCompare(b.nombre, "es")) },
     embudo: [{ etapa: "Solicitudes recibidas", n: reales.length }, { etapa: "Cotizaciones emitidas", n: cot.length }, { etapa: "Cotizaciones aceptadas", n: aceptadas },
       { etapa: "Servicios registrados", n: srv.length - (porEstadoS.Cancelada ?? 0) }, { etapa: "Servicios entregados", n: entregados }],
     actividad: Object.entries(dias).map(([dia, v]) => ({ dia, ...v })),
@@ -135,10 +155,13 @@ export function aCsv(columnas: string[], filas: unknown[][]): string {
 }
 const fecha = (ms: unknown, off = UTC_OFFSET_MIN): string => Number(ms) > 0 ? local(Number(ms), off).toISOString().slice(0, 16).replace("T", " ") : "";
 
-export function csvServicios(servicios: Reg[], periodo: Periodo): string {
-  return aCsv(["Folio", "Estado", "Alta", "Cliente", "Solicitante", "Fecha de servicio", "Cotización", "Precio propuesto", "Precio aprobado", "Asignación", "Unidad", "Chofer", "Proveedor", "Entregado"],
-    servicios.filter(s => dentro(s.creadoEn, periodo)).map(s => [s.folio, s.estado, fecha(s.creadoEn), s.empresa, s.solicitante, s.fechaServicio, s.cotizacionFolio,
-      n(s.precioPropuesto) || "", n(s.precio) || "", s.asignacionTipo, s.unidadPlaca, s.choferNombre, s.proveedor, fecha(s.estadoTs?.Entregada)]));
+export function csvServicios(servicios: Reg[], periodo: Periodo, opts: { conMargen?: boolean } = {}): string {
+  const extra = opts.conMargen ? ["Costo real", "Margen", "Margen %"] : [];
+  return aCsv(["Folio", "Estado", "Alta", "Cliente", "Solicitante", "Fecha de servicio", "Cotización", "Precio propuesto", "Precio aprobado", "Asignación", "Unidad", "Chofer", "Proveedor", "Entregado", ...extra],
+    servicios.filter(s => dentro(s.creadoEn, periodo)).map(s => { const m = margenServicio(s);
+      return [s.folio, s.estado, fecha(s.creadoEn), s.empresa, s.solicitante, s.fechaServicio, s.cotizacionFolio,
+        n(s.precioPropuesto) || "", n(s.precio) || "", s.asignacionTipo, s.unidadPlaca, s.choferNombre, s.proveedor, fecha(s.estadoTs?.Entregada),
+        ...(opts.conMargen ? [m.costo ?? "", m.margen ?? "", m.margenPct ?? ""] : [])]; }));
 }
 export function csvCotizaciones(cotizaciones: Reg[], periodo: Periodo): string {
   return aCsv(["Folio", "Estado", "Emitida", "Cliente", "Solicitud", "Unidad", "Unidades", "Tarimas", "Peso kg", "Precio propuesto", "Precio aprobado", "Aprobó", "Servicio", "Motivo"],

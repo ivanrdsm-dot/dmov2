@@ -11280,7 +11280,8 @@ function Prospeccion(){
    "alerts" (inglés) y los SOS nunca llegaban al panel. Unificado F0. */
 async function postAlert(rutaId, choferId, choferNombre, type, msg, extra={}){
   try{
-    await addDoc(collection(db,"alertas"),{rutaId,choferId,choferNombre,type,msg,read:false,atendida:false,createdAt:serverTimestamp(),...extra});
+    // El Centro de Alertas lee `message` y ordena por `ts`: se escriben ambos (y se conservan msg/createdAt por compatibilidad).
+    await addDoc(collection(db,"alertas"),{rutaId,choferId,choferNombre,type,msg,message:msg,read:false,atendida:false,createdAt:serverTimestamp(),ts:serverTimestamp(),...extra});
   }catch(e){console.warn("alert fail",e);}
 }
 
@@ -14281,11 +14282,11 @@ function CotizacionesModulo({authUser,userProfile,onCrearServicio,onNueva}){
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
   return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando cotizaciones…</div>}><CotizacionesVista store={store} usuario={usuario} onCrearServicio={onCrearServicio} onNueva={onNueva}/></Suspense>;
 }
-function ReportesOperacionModulo(){
+function ReportesOperacionModulo({userProfile}){
   const solicitudesStore=useMemo(()=>crearSolicitudesStore(db),[]);
   const cotizacionesStore=useMemo(()=>crearCotizacionesStore(db),[]);
   const serviciosStore=useMemo(()=>crearServiciosStore(db),[]);
-  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando reportes…</div>}><ReportesOperacionVista solicitudesStore={solicitudesStore} cotizacionesStore={cotizacionesStore} serviciosStore={serviciosStore}/></Suspense>;
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando reportes…</div>}><ReportesOperacionVista solicitudesStore={solicitudesStore} cotizacionesStore={cotizacionesStore} serviciosStore={serviciosStore} esAdmin={userProfile?.rol==="admin"}/></Suspense>;
 }
 function TarifarioModulo({authUser,userProfile}){
   const store=useMemo(()=>crearTarifarioStore(db),[]);
@@ -15040,7 +15041,7 @@ export default function App(){
       despacho:<DespachoModulo authUser={authUser} userProfile={userProfile}/>,
       cotizadorAuto:<CotizadorAutoModulo authUser={authUser} userProfile={userProfile} solicitud={solicitudACotizar} onGuardada={()=>{setSolicitudACotizar(null);setView("cotizaciones");}}/>,
       cotizaciones:<CotizacionesModulo authUser={authUser} userProfile={userProfile} onNueva={()=>{setSolicitudACotizar(null);setView("cotizadorAuto");}} onCrearServicio={c=>{setSolicitudAServicio(null);setCotizacionAServicio(c);setView("servicios");}}/>,
-      reportesOperacion:<ReportesOperacionModulo/>,
+      reportesOperacion:<ReportesOperacionModulo userProfile={userProfile}/>,
       tarifario:<TarifarioModulo authUser={authUser} userProfile={userProfile}/>,
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,

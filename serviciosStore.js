@@ -17,7 +17,7 @@ export const normalizarServicio = (id, d) => {
 const limpio = datos => {
   const out = {};
   for(const [k, v] of Object.entries(datos)){
-    if(v === undefined || ["id", "folio", "estado", "estadoTs", "creadoEn", "creadoPor", "creadoPorNombre", "actualizadoEn"].includes(k)) continue;
+    if(v === undefined || ["id", "folio", "estado", "estadoTs", "creadoEn", "creadoPor", "creadoPorNombre", "actualizadoEn", "costoTotal", "costosN", "costosPorConcepto", "costosActualizadosEn"].includes(k)) continue;
     out[k] = v;
   }
   return out;
@@ -87,6 +87,28 @@ export function crearServiciosStore(db){
       lote.update(ref, { precio, precioAprobadoPor: usuario.nombre || usuario.email || usuario.uid, precioAprobadoEn: serverTimestamp(), actualizadoEn: serverTimestamp() });
       lote.set(doc(collection(ref, "eventos")), { tipo: "precio_aprobado", ...actor(usuario), ts: serverTimestamp(),
         cambios: [{ campo: "precio", antes: servicio.precio ?? "", despues: precio }] });
+      await lote.commit();
+    },
+    /* Costos reales del servicio: se agregan con su evento; nunca se editan ni borran. */
+    suscribirCostos(id, cb, onErr){
+      return onSnapshot(query(collection(db, "servicios", id, "costos"), orderBy("ts", "asc"), limit(300)),
+        s => cb(s.docs.map(d => { const c = d.data({ serverTimestamps: "estimate" }); return { id: d.id, ...c, ts: aMs(c.ts), anuladoEn: aMs(c.anuladoEn) }; })), onErr);
+    },
+    async agregarCosto(usuario, servicio, { concepto, monto, nota = "" }){
+      const n = Number(String(monto ?? "").replace(/[$,\s]/g, ""));
+      const ref = doc(db, "servicios", servicio.id);
+      const lote = writeBatch(db);
+      lote.set(doc(collection(ref, "costos")), { concepto, monto: Math.round(n * 100) / 100, nota: String(nota).trim().slice(0, 500), actorUid: usuario.uid, actorNombre: usuario.nombre || usuario.email || "", ts: serverTimestamp() });
+      lote.set(doc(collection(ref, "eventos")), { tipo: "costo", ...actor(usuario), ts: serverTimestamp(), datos: { concepto, monto: Math.round(n * 100) / 100 } });
+      await lote.commit();
+    },
+    async anularCosto(usuario, servicio, costo, motivo){
+      const m = String(motivo ?? "").trim().slice(0, 500);
+      if(!m) throw new Error("Escribe el motivo");
+      const ref = doc(db, "servicios", servicio.id);
+      const lote = writeBatch(db);
+      lote.update(doc(ref, "costos", costo.id), { anulado: true, anuladoPor: usuario.uid, anuladoNombre: usuario.nombre || usuario.email || "", anuladoEn: serverTimestamp(), motivoAnulacion: m });
+      lote.set(doc(collection(ref, "eventos")), { tipo: "costo_anulado", ...actor(usuario), ts: serverTimestamp(), motivo: m, datos: { concepto: costo.concepto, monto: costo.monto } });
       await lote.commit();
     },
     async cambiarEstado(usuario, servicio, a, { motivo = "", faltantes = [] } = {}){

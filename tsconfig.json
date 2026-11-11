@@ -11,7 +11,7 @@
   },
   "include": [
     "catalogos.ts",
-    "cotizacionAuto.ts", "cotizaciones.ts", "cotizacionCliente.ts", "reportes.ts",
+    "costos.ts", "cotizacionAuto.ts", "cotizaciones.ts", "cotizacionCliente.ts", "reportes.ts",
     "despacho.ts",
     "dimensionamiento.ts",
     "domain.ts",

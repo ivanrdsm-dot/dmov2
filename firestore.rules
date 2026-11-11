@@ -122,6 +122,7 @@ service cloud.firestore {
         && c.precioAprobado == d.precio
         && c.aprobadoPor == d.precioAprobadoPor;
     }
+    function camposDeCostoServidor() { return ['costoTotal','costosN','costosPorConcepto','costosActualizadosEn']; }
     match /servicios/{id} {
       allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId());
       allow create: if esOficina()
@@ -131,13 +132,37 @@ service cloud.firestore {
         && request.resource.data.folio is string
         && request.resource.data.folio.matches('SRV-20[0-9]{2}-[0-9]{4,}')
         && folioRecienEmitido('servicios', request.resource.data.folio)
+        && !request.resource.data.keys().hasAny(camposDeCostoServidor())
         && (!tocaPrecio(request.resource.data.keys()) || esAdmin() || precioDeCotizacionAceptada(request.resource.data));
       allow update: if esOficina()
         && request.resource.data.folio == resource.data.folio
         && request.resource.data.creadoPor == resource.data.creadoPor
         && request.resource.data.creadoEn == resource.data.creadoEn
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(camposDeCostoServidor())
         && (!tocaPrecio(request.resource.data.diff(resource.data).affectedKeys()) || esAdmin());
       allow delete: if false;
+      /* Costos reales: la oficina los captura; nadie los edita ni borra. Uno mal
+         capturado se anula una sola vez, con motivo. El total lo escribe el servidor. */
+      match /costos/{costoId} {
+        allow read: if esOficina();
+        allow create: if esOficina()
+          && request.resource.data.keys().hasOnly(['concepto','monto','nota','actorUid','actorNombre','ts'])
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.ts == request.time
+          && request.resource.data.concepto in ['Proveedor / flete externo','Combustible','Casetas','Viáticos','Ayudantes / maniobra','Chofer','Otro']
+          && request.resource.data.monto is number
+          && request.resource.data.monto > 0 && request.resource.data.monto < 10000000
+          && (request.resource.data.concepto != 'Otro' || (request.resource.data.nota is string && request.resource.data.nota.size() > 0))
+          && exists(/databases/$(database)/documents/servicios/$(id));
+        allow update: if esOficina()
+          && !('anulado' in resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['anulado','anuladoPor','anuladoNombre','anuladoEn','motivoAnulacion'])
+          && request.resource.data.anulado == true
+          && request.resource.data.anuladoPor == request.auth.uid
+          && request.resource.data.anuladoEn == request.time
+          && request.resource.data.motivoAnulacion is string && request.resource.data.motivoAnulacion.size() > 0;
+        allow delete: if false;
+      }
       /* Ruta del servicio: paradas y posiciones las escribe SOLO el servidor. */
       match /paradas/{paradaId} {
         allow read: if esOficina()
