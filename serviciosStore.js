@@ -17,7 +17,7 @@ export const normalizarServicio = (id, d) => {
 const limpio = datos => {
   const out = {};
   for(const [k, v] of Object.entries(datos)){
-    if(v === undefined || ["id", "folio", "estado", "estadoTs", "creadoEn", "creadoPor", "creadoPorNombre", "actualizadoEn", "costoTotal", "costosN", "costosPorConcepto", "costosActualizadosEn"].includes(k)) continue;
+    if(v === undefined || ["id", "folio", "estado", "estadoTs", "creadoEn", "creadoPor", "creadoPorNombre", "actualizadoEn", "costoTotal", "costosN", "costosPorConcepto", "costosActualizadosEn", "seguimientoToken", "seguimientoCreadoEn", "encuestaRespondida", "encuestaCalificacion"].includes(k)) continue;
     out[k] = v;
   }
   return out;

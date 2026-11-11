@@ -117,3 +117,6 @@ export { vigilante } from "./vigilante.js";
 
 /* Fase 6 · costos reales por servicio: el total lo recalcula el servidor */
 export { recalcularCostos } from "./costos.js";
+
+/* Fase 3 · link de seguimiento para el cliente y encuesta */
+export { seguimiento, oficinaLinkSeguimiento } from "./seguimiento.js";

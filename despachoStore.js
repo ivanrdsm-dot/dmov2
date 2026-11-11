@@ -18,5 +18,6 @@ export function crearDespachoStore(db, app){
     liberarDispositivo: (choferId, motivo) => llamar("oficinaLiberarDispositivo", { choferId, motivo }),
     prepararRuta: (servicioId, choferId) => llamar("oficinaPrepararRuta", { servicioId, choferId }),
     autorizarExcepcion: (servicioId, paradaId, motivo) => llamar("oficinaAutorizarExcepcion", { servicioId, paradaId, motivo }),
+    linkSeguimiento: (servicioId, nuevo = false) => llamar("oficinaLinkSeguimiento", { servicioId, nuevo }),
   };
 }

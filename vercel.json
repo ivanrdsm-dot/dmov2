@@ -3,21 +3,46 @@
     {
       "source": "/sw.js",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
-        { "key": "Service-Worker-Allowed", "value": "/" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
       ]
     },
     {
       "source": "/manifest.json",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=3600" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600"
+        }
       ]
     }
   ],
   "rewrites": [
-    { "source": "/chofer/(.*)", "destination": "/" },
-    { "source": "/chofer", "destination": "/" },
-    { "source": "/track/(.*)", "destination": "/" },
-    { "source": "/track", "destination": "/" }
+    {
+      "source": "/s/:token",
+      "destination": "https://us-central1-salesflow-crm-13c4a.cloudfunctions.net/seguimiento?t=:token"
+    },
+    {
+      "source": "/chofer/(.*)",
+      "destination": "/"
+    },
+    {
+      "source": "/chofer",
+      "destination": "/"
+    },
+    {
+      "source": "/track/(.*)",
+      "destination": "/"
+    },
+    {
+      "source": "/track",
+      "destination": "/"
+    }
   ]
 }
