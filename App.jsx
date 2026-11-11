@@ -33,6 +33,7 @@ const CatalogosVista = lazy(()=>import("./Catalogos.jsx"));
 import { crearDespachoStore } from "./despachoStore.js";
 const DespachoVista = lazy(()=>import("./Despacho.jsx"));
 import { crearTarifarioStore } from "./tarifarioStore.js";
+import { tablasPro, puntoAdicionalSugerido } from "./tarifarioPro.ts";
 const TarifarioVista = lazy(()=>import("./Tarifario.jsx"));
 const CotizadorAutoVista = lazy(()=>import("./CotizadorAuto.jsx"));
 import { crearCotizacionesStore } from "./cotizacionesStore.js";
@@ -590,399 +591,43 @@ button:focus-visible{outline:2px solid ${A};outline-offset:2px;border-radius:8px
 @media print{.noprint{display:none!important}body{background:#fff}}
 `;
 
-/* ─── TARIFARIO LOCAL 2026 (hoja "locales" TARIFARIOS DMOVIMIENTO 2026-2) ── */
-const LOC = {
-  eur:{ normal:2500,ayudante:3000,urgente:2500,urgente_ay:3000,resguardo:1800,renta_dia:1600,renta_chofer:3500,renta_mes:36000 },
-  cam:{ normal:3200,ayudante:4300,urgente:3200,urgente_ay:4300,resguardo:3200,renta_dia:2800,renta_chofer:5800,renta_mes:63000 },
-  kra:{ normal:3600,ayudante:5000,urgente:3600,urgente_ay:5000,resguardo:3600 },
-  rab:{ normal:6000,ayudante:8000,urgente:6000,urgente_ay:8000,resguardo:6000 },
-  mud:{ normal:8000,ayudante:10000,urgente:8000,urgente_ay:10000,resguardo:8000 },
-};
-/* Ayudante = +$500 sobre tarifa base en todos los vehículos */
-const AYUD_EXTRA = 500;
-
-/* ─── ENTREGA ADICIONAL (punto extra en destino) ─────────────────────────────
-   Base CDMX por vehículo. En otras ciudades aumenta por factor de distancia.
-   El precio siempre es editable en el cotizador; esto es el sugerido.
-   Descuento por volumen: cada 20 puntos → 5% (tope 20%). */
-const PUNTO_ADIC = { eur:2000, kra:2200, cam:2500, rab:3500, mud:4500 };
-const puntoFactor = km => !km||km<=60?1 : km<250?1.05 : km<700?1.15 : km<1300?1.25 : 1.40;
-const sugerirPunto = (veh,km)=>Math.round(((PUNTO_ADIC[veh]||2000)*puntoFactor(km))/50)*50;
+/* ─── TARIFAS DEL COTIZADOR PRO · fuente única: el módulo Tarifario (Firestore) ──
+   Aquí ya no hay precios escritos. Antes había 214 ciudades con precio por fórmula,
+   resguardo, entrega adicional y rabón/mudancero estimados que no venían del Excel.
+   TAR (ciudades) y LOC (precios locales por unidad) se llenan en vivo con el
+   tarifario; lo que no está ahí no tiene precio y se captura a mano. */
+let TAR = [];
+let LOC = {};
+let ENTREGA_ADIC_LOCAL = null;
+const tarifarioPro = { estado:{cargado:false,faltantes:[],error:""}, subs:new Set(), unsub:null };
+function useTarifarioPro(){
+  const [,refrescar]=useState(0);
+  useEffect(()=>{
+    const f=()=>refrescar(x=>x+1);
+    tarifarioPro.subs.add(f);
+    if(!tarifarioPro.unsub){
+      tarifarioPro.unsub=crearTarifarioStore(db).suscribir(lista=>{
+        const t=tablasPro(lista);
+        TAR=t.ciudades; LOC=t.local; ENTREGA_ADIC_LOCAL=t.entregaAdicionalLocal;
+        /* El tarifario escribe algunos nombres sin acento: se les asigna su estado. */
+        for(const c of TAR) if(!CIUDAD_ESTADO[c.c]){ const k=Object.keys(CIUDAD_ESTADO).find(x=>normTxt(x)===normTxt(c.c)); if(k) CIUDAD_ESTADO[c.c]=CIUDAD_ESTADO[k]; }
+        tarifarioPro.estado={cargado:true,faltantes:t.faltantes,error:""};
+        tarifarioPro.subs.forEach(g=>g());
+      },e=>{
+        tarifarioPro.unsub=null;
+        tarifarioPro.estado={...tarifarioPro.estado,error:e.message};
+        tarifarioPro.subs.forEach(g=>g());
+      });
+    }
+    return()=>{tarifarioPro.subs.delete(f);};
+  },[]);
+  return tarifarioPro.estado;
+}
+/* Punto adicional: el tarifario solo tiene el de ruta local. Fuera de la zona local
+   no hay sugerido (0): el precio por punto se captura en cada ciudad. */
+const sugerirPunto = (veh,km)=>puntoAdicionalSugerido({entregaAdicionalLocal:ENTREGA_ADIC_LOCAL},km)??0;
+/* Descuento por volumen (regla del Cotizador Pro, no del tarifario): cada 20 puntos −5 %, tope −20 %. */
 const descPuntos = n => Math.min(0.20, Math.floor((n||0)/20)*0.05);
-
-/* ─── TARIFARIO FORÁNEO 2026 ─────────────────────────────────────────────── */
-/* Helper: calcula tarifas por km basado en estructura promedio del tarifario.
-   Usado para las ciudades que se agregan masivamente sin precio publicado.
-   - Local zone (<50km): usa estructura urbana CDMX
-   - Foráneo: tarifa = base + km * factor
-   Los precios pueden ajustarse manualmente después en el módulo de admin. */
-const _T = (km,zona="foraneo")=>{
-  if(zona==="local-edomex"){
-    // Zona conurbada CDMX/EdoMex (<50km) — usa estructura local CDMX con pequeño extra por km
-    return {km,eur:2500+km*30,cam:3200+km*45,kra:3600+km*50,rab:6000+km*70,mud:8000+km*90};
-  }
-  if(zona==="metro-edomex"){
-    // Edomex zona metro extendida 50-120km
-    return {km,eur:Math.round(2500+km*38),cam:Math.round(3200+km*60),kra:Math.round(3600+km*68),rab:Math.round(6000+km*85),mud:Math.round(8000+km*105)};
-  }
-  if(km<200){
-    // Foráneo cercano
-    return {km,eur:Math.round(2500+km*32),cam:Math.round(3500+km*55),kra:Math.round(4000+km*62)};
-  }
-  if(km<500){
-    return {km,eur:Math.round(km*32),cam:Math.round(km*48),kra:Math.round(km*54)};
-  }
-  if(km<1000){
-    return {km,eur:Math.round(km*30),cam:Math.round(km*42),kra:Math.round(km*46)};
-  }
-  // Largo
-  return {km,eur:Math.round(km*28),cam:Math.round(km*38),kra:Math.round(km*42)};
-};
-
-const TAR = [
-  /* ═══ CDMX Y ZONA METROPOLITANA ═══ */
-  {c:"Ciudad de México",km:0,eur:2500,cam:3200,kra:3600,rab:6000,mud:8000,local:true},
-  {c:"Estado de México",km:30,eur:3400,cam:4500,kra:5100,rab:7500,mud:9800,local:true},
-  // Municipios EdoMex zona conurbada (servicio local extendido)
-  {c:"Naucalpan",...{..._T(15,"local-edomex"),km:15},local:true},
-  {c:"Tlalnepantla",...{..._T(18,"local-edomex"),km:18},local:true},
-  {c:"Atizapán de Zaragoza",...{..._T(25,"local-edomex"),km:25},local:true},
-  {c:"Cuautitlán Izcalli",...{..._T(30,"local-edomex"),km:30},local:true},
-  {c:"Cuautitlán",...{..._T(33,"local-edomex"),km:33},local:true},
-  {c:"Tultitlán",...{..._T(28,"local-edomex"),km:28},local:true},
-  {c:"Coacalco",...{..._T(28,"local-edomex"),km:28},local:true},
-  {c:"Ecatepec",...{..._T(20,"local-edomex"),km:20},local:true},
-  {c:"Nezahualcóyotl",...{..._T(15,"local-edomex"),km:15},local:true},
-  {c:"Chimalhuacán",...{..._T(22,"local-edomex"),km:22},local:true},
-  {c:"Los Reyes La Paz",...{..._T(23,"local-edomex"),km:23},local:true},
-  {c:"Ixtapaluca",...{..._T(35,"local-edomex"),km:35},local:true},
-  {c:"Chalco",...{..._T(38,"local-edomex"),km:38},local:true},
-  {c:"Valle de Chalco",...{..._T(32,"local-edomex"),km:32},local:true},
-  {c:"Texcoco",...{..._T(42,"local-edomex"),km:42},local:true},
-  {c:"Nicolás Romero",...{..._T(28,"local-edomex"),km:28},local:true},
-  {c:"Tepotzotlán",..._T(38,"metro-edomex")},
-  {c:"Huehuetoca",..._T(50,"metro-edomex")},
-  {c:"Zumpango",..._T(55,"metro-edomex")},
-  {c:"Tecámac",..._T(38,"metro-edomex")},
-  {c:"Lerma",..._T(55,"metro-edomex")},
-  {c:"Metepec",..._T(70,"metro-edomex")},
-  {c:"Atlacomulco",..._T(110,"metro-edomex")},
-  {c:"Tenancingo",..._T(95,"metro-edomex")},
-  {c:"Valle de Bravo",..._T(140,"metro-edomex")},
-  {c:"Ixtlahuaca",..._T(95,"metro-edomex")},
-  {c:"Tejupilco",..._T(160,"metro-edomex")},
-  // CDMX original cities ya en el tarifario
-  {c:"Acapulco",km:395,eur:13310,cam:20086,kra:22082,rab:26741,mud:32561},
-  {c:"Aguascalientes",km:513,eur:15178,cam:22215,kra:24437,rab:30356,mud:36566},
-  {c:"Apizaco",km:145,eur:6899,cam:11540,kra:12858,rab:17399,mud:22103},
-  {c:"Campeche",km:1155,eur:29667,cam:40241,kra:44657,rab:50678,mud:61817},
-  {c:"Cancún",km:1649,eur:40204,cam:58455,kra:64476,rab:73571,mud:88059},
-  {c:"Cd. Juárez",km:1863,eur:47542,cam:60437,kra:67612,rab:83418,mud:92449},
-  {c:"Cd. Obregón",km:1671,eur:41119,cam:53952,kra:59347,rab:74511,mud:81912},
-  {c:"Cd. Victoria",km:721,eur:20560,cam:28977,kra:31874,rab:37256,mud:43741},
-  {c:"Celaya",km:263,eur:8279,cam:12695,kra:13964,rab:18628,mud:24147},
-  {c:"Chetumal",km:1345,eur:30356,cam:46225,kra:50847,rab:55884,mud:64852},
-  {c:"Chiapas",km:1015,eur:23206,cam:31485,kra:35123,rab:42022,mud:50051},
-  {c:"Chihuahua",km:1487,eur:33806,cam:49674,kra:54642,rab:64852,mud:74511},
-  {c:"Chilpancingo",km:278,eur:9659,cam:15178,kra:16696,rab:22077,mud:26907},
-  {c:"Coatzacoalcos",km:601,eur:17938,cam:24561,kra:27017,rab:29391,mud:35876},
-  {c:"Colima",km:744,eur:19732,cam:28839,kra:31723,rab:35876,mud:42775},
-  {c:"Cozumel",km:1550,eur:48922,cam:69996,kra:77008,rab:83292,mud:101983},
-  {c:"Cuernavaca",km:89,eur:3864,cam:6899,kra:7589,rab:10763,mud:15454},
-  {c:"Culiacán",km:1262,eur:29805,cam:46225,kra:50847,rab:55884,mud:64602},
-  {c:"Durango",km:915,eur:23043,cam:28977,kra:31874,rab:38636,mud:44845},
-  {c:"Ensenada",km:2961,eur:59333,cam:75891,kra:83480,rab:89690,mud:107628},
-  {c:"Gómez Palacio",km:985,eur:22767,cam:33116,kra:36428,rab:45535,mud:52434},
-  {c:"Guadalajara",km:542,eur:15178,cam:22215,kra:24437,rab:30356,mud:36566},
-  {c:"Hermosillo",km:1959,eur:48018,cam:63887,kra:70275,rab:74386,mud:84170},
-  {c:"Iguala",km:203,eur:8279,cam:13108,kra:14419,rab:21388,mud:23871},
-  {c:"Irapuato",km:323,eur:12419,cam:18628,kra:20491,rab:25527,mud:32313},
-  {c:"Jalapa/Xalapa",km:322,eur:12419,cam:18628,kra:20491,rab:25527,mud:29805},
-  {c:"La Paz BCS",km:4312,eur:77271,cam:104868,kra:115355,rab:124186,mud:135224},
-  {c:"Laredo",km:1117,eur:26493,cam:37394,kra:41133,rab:49536,mud:59935},
-  {c:"León",km:387,eur:13798,cam:20823,kra:22893,rab:27722,mud:33756},
-  {c:"Los Mochis",km:1442,eur:33806,cam:48984,kra:53883,rab:59333,mud:68302},
-  {c:"Matamoros",km:975,eur:23871,cam:34220,kra:37642,rab:46225,mud:53124},
-  {c:"Mazatlán",km:1042,eur:26631,cam:37394,kra:41133,rab:50502,mud:60023},
-  {c:"Mérida",km:1332,eur:32991,cam:47604,kra:52622,rab:62532,mud:71990},
-  {c:"Mexicali",km:2661,eur:56573,cam:73132,kra:80445,rab:91069,mud:106248},
-  {c:"Minatitlán",km:579,eur:17938,cam:24561,kra:27017,rab:29391,mud:35876},
-  {c:"Monclova",km:1021,eur:26970,cam:38636,kra:42524,rab:50301,mud:58580},
-  {c:"Monterrey",km:933,eur:21325,cam:28475,kra:31423,rab:43904,mud:54566},
-  {c:"Morelia",km:302,eur:12419,cam:18628,kra:20491,rab:25527,mud:32313},
-  {c:"Oaxaca",km:470,eur:12419,cam:18628,kra:20491,rab:25527,mud:32313},
-  {c:"Orizaba",km:269,eur:11039,cam:18628,kra:20491,rab:24147,mud:28977},
-  {c:"Pachuca",km:95,eur:4390,cam:7777,kra:8655,rab:12293,mud:16934},
-  {c:"Piedras Negras",km:1286,eur:34621,cam:51807,kra:58204,rab:69556,mud:80633},
-  {c:"Poza Rica",km:273,eur:12419,cam:17938,kra:19732,rab:25527,mud:32313},
-  {c:"Puebla",km:123,eur:5080,cam:7727,kra:8718,rab:13610,mud:16809},
-  {c:"Puerto Vallarta",km:875,eur:21450,cam:30218,kra:34496,rab:44218,mud:49737},
-  {c:"Querétaro",km:211,eur:6899,cam:11917,kra:12143,rab:17800,mud:22767},
-  {c:"Reynosa",km:1002,eur:25251,cam:35600,kra:39160,rab:43189,mud:51769},
-  {c:"Río Blanco",km:279,eur:11039,cam:18628,kra:20491,rab:24147,mud:28977},
-  {c:"Saltillo",km:849,eur:17938,cam:25527,kra:28080,rab:35600,mud:42085},
-  {c:"San Juan del Río",km:162,eur:5519,cam:10211,kra:11232,rab:16006,mud:20284},
-  {c:"San Luis Potosí",km:415,eur:13108,cam:18628,kra:20491,rab:25113,mud:30231},
-  {c:"Tampico",km:486,eur:16558,cam:25251,kra:27776,rab:34220,mud:42085},
-  {c:"Tapachula",km:1157,eur:29102,cam:42900,kra:47291,rab:56385,mud:67863},
-  {c:"Taxco",km:187,eur:8279,cam:13108,kra:14419,rab:19732,mud:25251},
-  {c:"Tepic",km:756,eur:21939,cam:28839,kra:31723,rab:39739,mud:50991},
-  {c:"Tijuana",km:2848,eur:63347,cam:81787,kra:90066,rab:104993,mud:120548},
-  {c:"Tlaxcala",km:118,eur:5381,cam:9659,kra:10625,rab:12419,mud:16420},
-  {c:"Toluca",km:66,eur:3808,cam:6944,kra:7952,rab:11415,mud:16182},
-  {c:"Torreón",km:1012,eur:22767,cam:31184,kra:34303,rab:43465,mud:51368},
-  {c:"Tuxpan",km:324,eur:13108,cam:20284,kra:22312,rab:25665,mud:34822},
-  {c:"Tuxtla Gutiérrez",km:1015,eur:25966,cam:35261,kra:39338,rab:48445,mud:62344},
-  {c:"Veracruz",km:402,eur:14676,cam:22705,kra:25025,rab:29478,mud:37331},
-  {c:"Villahermosa",km:768,eur:20698,cam:31874,kra:35062,rab:40843,mud:49147},
-  {c:"Zacatecas",km:605,eur:19318,cam:26217,kra:28839,rab:36497,mud:45535},
-  {c:"Zamora",km:430,eur:13108,cam:18628,kra:20491,rab:24561,mud:33116},
-
-  /* ═══ NUEVOS DESTINOS NACIONALES ═══ */
-  // Bajío y Centro
-  {c:"San Miguel de Allende",..._T(280)},
-  {c:"Dolores Hidalgo",..._T(290)},
-  {c:"Guanajuato (capital)",..._T(360)},
-  {c:"Salamanca",..._T(303)},
-  {c:"Pénjamo",..._T(345)},
-  {c:"Acámbaro",..._T(245)},
-  {c:"La Piedad",..._T(395)},
-  {c:"Lagos de Moreno",..._T(465)},
-  {c:"Tepatitlán",..._T(513)},
-  {c:"Ocotlán",..._T(515)},
-  {c:"Ciudad Guzmán",..._T(615)},
-  {c:"Tequila",..._T(605)},
-  // Morelos
-  {c:"Cuautla",..._T(106)},
-  {c:"Yautepec",..._T(105)},
-  {c:"Jojutla",..._T(125)},
-  {c:"Temixco",..._T(95)},
-  // Puebla
-  {c:"Cholula",..._T(125)},
-  {c:"Atlixco",..._T(150)},
-  {c:"Tehuacán",..._T(245)},
-  {c:"Teziutlán",..._T(235)},
-  {c:"Huejotzingo",..._T(110)},
-  // Hidalgo
-  {c:"Tula",..._T(85)},
-  {c:"Tulancingo",..._T(125)},
-  {c:"Actopan",..._T(140)},
-  {c:"Huejutla",..._T(345)},
-  // Querétaro adicional
-  {c:"El Marqués",..._T(220)},
-  {c:"Corregidora",..._T(215)},
-  {c:"Tequisquiapan",..._T(180)},
-  {c:"San Juan del Río Oeste",..._T(165)},
-  // Tlaxcala
-  {c:"Apetatitlán",..._T(118)},
-  {c:"Calpulalpan",..._T(145)},
-  // Veracruz
-  {c:"Córdoba",..._T(265)},
-  {c:"Cardel",..._T(385)},
-  {c:"Catemaco",..._T(495)},
-  {c:"Tuxtepec",..._T(530)},
-  {c:"Coatepec",..._T(335)},
-  // Oaxaca
-  {c:"Tehuantepec",..._T(720)},
-  {c:"Salina Cruz",..._T(740)},
-  {c:"Pinotepa Nacional",..._T(660)},
-  {c:"Huatulco",..._T(795)},
-  {c:"Puerto Escondido",..._T(745)},
-  {c:"Juchitán",..._T(735)},
-  // Chiapas
-  {c:"San Cristóbal de las Casas",..._T(1095)},
-  {c:"Comitán",..._T(1170)},
-  {c:"Palenque",..._T(1100)},
-  {c:"Tonalá",..._T(1095)},
-  // Guerrero
-  {c:"Zihuatanejo",..._T(645)},
-  {c:"Ixtapa",..._T(650)},
-  {c:"Cuajinicuilapa",..._T(540)},
-  // Michoacán
-  {c:"Uruapan",..._T(420)},
-  {c:"Pátzcuaro",..._T(370)},
-  {c:"Lázaro Cárdenas",..._T(625)},
-  {c:"Apatzingán",..._T(480)},
-  {c:"Sahuayo",..._T(465)},
-  {c:"Zitácuaro",..._T(155)},
-  // Jalisco adicional
-  {c:"Zapopan",..._T(545)},
-  {c:"Tlaquepaque",..._T(540)},
-  {c:"Tonalá Jal.",..._T(548)},
-  {c:"Chapala",..._T(595)},
-  // Colima adicional
-  {c:"Manzanillo",..._T(840)},
-  {c:"Tecomán",..._T(795)},
-  // Nayarit
-  {c:"Bahía de Banderas",..._T(885)},
-  {c:"Compostela",..._T(815)},
-  {c:"Acaponeta",..._T(900)},
-  // Sinaloa
-  {c:"Guasave",..._T(1395)},
-  {c:"Escuinapa",..._T(1015)},
-  {c:"El Rosario",..._T(1075)},
-  // Sonora
-  {c:"Navojoa",..._T(1735)},
-  {c:"Guaymas",..._T(1815)},
-  {c:"Empalme",..._T(1820)},
-  {c:"Nogales",..._T(2185)},
-  {c:"Agua Prieta",..._T(2100)},
-  {c:"Caborca",..._T(2295)},
-  {c:"San Luis Río Colorado",..._T(2470)},
-  // Baja California
-  {c:"Rosarito",..._T(2865)},
-  {c:"Tecate",..._T(2790)},
-  {c:"San Felipe",..._T(2845)},
-  // Baja California Sur
-  {c:"Cabo San Lucas",..._T(4360)},
-  {c:"San José del Cabo",..._T(4385)},
-  {c:"Loreto",..._T(3865)},
-  // Coahuila
-  {c:"Nueva Rosita",..._T(1120)},
-  {c:"Sabinas",..._T(1140)},
-  {c:"Acuña",..._T(1300)},
-  {c:"Frontera",..._T(1015)},
-  {c:"Parras",..._T(880)},
-  // Nuevo León adicional
-  {c:"San Pedro Garza García",..._T(940)},
-  {c:"San Nicolás",..._T(940)},
-  {c:"Guadalupe NL",..._T(940)},
-  {c:"Apodaca",..._T(950)},
-  {c:"Santa Catarina",..._T(945)},
-  {c:"Linares",..._T(1100)},
-  {c:"Sabinas Hidalgo",..._T(1015)},
-  {c:"Cadereyta NL",..._T(975)},
-  // Tamaulipas adicional
-  {c:"Nuevo Laredo",..._T(1120)},
-  {c:"Río Bravo",..._T(990)},
-  {c:"Altamira",..._T(485)},
-  {c:"Mante",..._T(635)},
-  {c:"Madero",..._T(490)},
-  {c:"Soto la Marina",..._T(800)},
-  // San Luis Potosí adicional
-  {c:"Ciudad Valles",..._T(625)},
-  {c:"Matehuala",..._T(615)},
-  {c:"Río Verde",..._T(545)},
-  // Zacatecas adicional
-  {c:"Fresnillo",..._T(660)},
-  {c:"Jerez",..._T(665)},
-  {c:"Sombrerete",..._T(770)},
-  // Chihuahua adicional
-  {c:"Cuauhtémoc",..._T(1640)},
-  {c:"Delicias",..._T(1430)},
-  {c:"Parral",..._T(1235)},
-  {c:"Camargo",..._T(1290)},
-  // Durango adicional
-  {c:"Santiago Papasquiaro",..._T(1075)},
-  {c:"El Salto",..._T(975)},
-  {c:"Lerdo",..._T(990)},
-  // Aguascalientes adicional
-  {c:"Jesús María",..._T(525)},
-  {c:"Calvillo",..._T(545)},
-  {c:"Rincón de Romos",..._T(550)},
-  // Yucatán
-  {c:"Progreso",..._T(1365)},
-  {c:"Valladolid",..._T(1480)},
-  {c:"Tizimín",..._T(1530)},
-  {c:"Umán",..._T(1340)},
-  // Quintana Roo
-  {c:"Playa del Carmen",..._T(1580)},
-  {c:"Tulum",..._T(1605)},
-  {c:"Bacalar",..._T(1395)},
-  {c:"Mahahual",..._T(1455)},
-  {c:"Holbox",..._T(1715)},
-  {c:"Isla Mujeres",..._T(1660)},
-  // Tabasco
-  {c:"Cárdenas",..._T(815)},
-  {c:"Comalcalco",..._T(845)},
-  {c:"Macuspana",..._T(810)},
-  {c:"Paraíso",..._T(820)},
-  // Campeche
-  {c:"Ciudad del Carmen",..._T(1075)},
-  {c:"Champotón",..._T(1110)},
-  {c:"Escárcega",..._T(1075)},
-
-  /* ═══ DESTINOS ADICIONALES COMPLETADOS ═══ */
-  // Nuevo León metro (fuera de Monterrey)
-  {c:"General Escobedo",km:940,..._T(940)},
-  {c:"García NL",km:950,..._T(950)},
-  {c:"Juárez NL",km:938,..._T(938)},
-  // Sinaloa
-  {c:"Guamúchil",km:1380,..._T(1380)},
-  // Sonora
-  {c:"Puerto Peñasco",km:2350,..._T(2350)},
-  {c:"Cananea",km:2210,..._T(2210)},
-  // Chihuahua
-  {c:"Nuevo Casas Grandes",km:1710,..._T(1710)},
-  {c:"Jiménez Chih.",km:1220,..._T(1220)},
-  // Coahuila
-  {c:"Ramos Arizpe",km:852,..._T(852)},
-  // San Luis Potosí
-  {c:"Soledad de Graciano",km:417,..._T(417)},
-  {c:"Tamazunchale",km:420,..._T(420)},
-  // Guanajuato
-  {c:"Silao",km:365,..._T(365)},
-  {c:"San Francisco del Rincón",km:380,..._T(380)},
-  {c:"Villagrán",km:280,..._T(280)},
-  // Jalisco
-  {c:"Ameca",km:600,..._T(600)},
-  {c:"Autlán",km:680,..._T(680)},
-  {c:"San Juan de los Lagos",km:480,..._T(480)},
-  // Michoacán
-  {c:"Jiquilpan",km:440,..._T(440)},
-  {c:"Los Reyes Mich.",km:470,..._T(470)},
-  {c:"Tacámbaro",km:385,..._T(385)},
-  // Morelos
-  {c:"Jiutepec",km:93,..._T(93)},
-  {c:"Zacatepec",km:120,..._T(120)},
-  // Puebla
-  {c:"San Martín Texmelucan",km:85,..._T(85)},
-  {c:"Izúcar de Matamoros",km:195,..._T(195)},
-  {c:"Acatzingo",km:145,..._T(145)},
-  {c:"Tecamachalco",km:155,..._T(155)},
-  // Hidalgo
-  {c:"Tizayuca",km:55,..._T(55)},
-  {c:"Tepeji del Río",km:72,..._T(72)},
-  {c:"Ixmiquilpan",km:145,..._T(145)},
-  // Tlaxcala
-  {c:"Huamantla",km:148,..._T(148)},
-  {c:"Chiautempan",km:119,..._T(119)},
-  // Veracruz
-  {c:"Papantla",km:265,..._T(265)},
-  {c:"Martínez de la Torre",km:245,..._T(245)},
-  {c:"Alvarado",km:440,..._T(440)},
-  {c:"Tierra Blanca",km:350,..._T(350)},
-  // Guerrero
-  {c:"Tecpán de Galeana",km:355,..._T(355)},
-  {c:"Ometepec",km:540,..._T(540)},
-  {c:"Tlapa de Comonfort",km:440,..._T(440)},
-  // Oaxaca
-  {c:"Tlacolula",km:498,..._T(498)},
-  {c:"Miahuatlán",km:545,..._T(545)},
-  // Chiapas
-  {c:"Arriaga",km:1040,..._T(1040)},
-  {c:"Ocosingo",km:1100,..._T(1100)},
-  {c:"Cintalapa",km:1055,..._T(1055)},
-  // Tabasco
-  {c:"Tenosique",km:1020,..._T(1020)},
-  // Nayarit
-  {c:"Santiago Ixcuintla",km:825,..._T(825)},
-  {c:"Ixtlán del Río",km:730,..._T(730)},
-  // Quintana Roo
-  {c:"Felipe Carrillo Puerto",km:1620,..._T(1620)},
-  // Baja California Sur (corredor completo)
-  {c:"Guerrero Negro",km:3310,..._T(3310)},
-  {c:"Santa Rosalía",km:3500,..._T(3500)},
-  {c:"Mulegé",km:3600,..._T(3600)},
-  {c:"Ciudad Constitución",km:3880,..._T(3880)},
-];
-/* Normalización: toda ciudad sin tarifa explícita de Rabón/Mudancero recibe
-   un estimado a partir de la Camioneta 3.5 (razón promedio del tarifario 2026).
-   Los 65 destinos oficiales del Excel ya traen el valor exacto. */
-TAR.forEach(t=>{
-  if(t.rab==null) t.rab = Math.round((t.cam||0)*1.38);
-  if(t.mud==null) t.mud = Math.round((t.cam||0)*1.65);
-});
 
 /* ── Mapa ciudad → estado (para filtro por estado en cotizador) ── */
 const CIUDAD_ESTADO = {
@@ -3033,7 +2678,7 @@ function CitySearch({value,onChange,onSelect,veh,exclude=[],estadoFilter="(Todos
                   {pxkm&&<span style={{color:VIOLET}}>≈${pxkm}/km</span>}
                 </div>
               </div>
-              {veh&&<span style={{fontFamily:MONO,fontSize:12,color:A,fontWeight:700}}>{fmt(t[veh])}</span>}
+              {veh&&(t[veh]>0?<span style={{fontFamily:MONO,fontSize:12,color:A,fontWeight:700}}>{fmt(t[veh])}</span>:<span style={{fontSize:10,color:AMBER,fontWeight:700}}>sin tarifa</span>)}
             </button>
           );
           })}
@@ -4789,6 +4434,7 @@ function S({children}){return <div style={{background:"#fff",border:"1px solid "
 function SH({children}){return <div style={{fontSize:10,fontWeight:800,color:MUTED,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:13}}>{children}</div>;}
 
 function Cotizador({onSaved}){
+  const tarPro=useTarifarioPro();   // precios en vivo del módulo Tarifario
   // ── shared
   const [modo,setModo]=useState("local");
   const [cliente,setCliente]=useState("");
@@ -4907,14 +4553,14 @@ function Cotizador({onSaved}){
   const fIva=fSub*.16;const fTot=fSub+fIva;
 
   // ── CALC LOCAL
-  const lD=LOC[lVeh]||LOC.cam;
-  let lBase=lD.normal;
-  if(lUrg&&lAyud) lBase=lD.urgente_ay;
-  else if(lAyud)  lBase=lD.ayudante;
-  else if(lUrg)   lBase=lD.urgente;
+  const lD=LOC[lVeh]||{};
+  let lBase=lD.normal||0;
+  if(lUrg&&lAyud) lBase=lD.urgente_ay||0;
+  else if(lAyud)  lBase=lD.ayudante||0;
+  else if(lUrg)   lBase=lD.urgente||0;
   const lNumPuntos=lPuntos.filter(p=>p.dir.trim()).length;
   const lPuntosExtra=Math.max(0,lNumPuntos-1);
-  const lPPef=lPP!=null?lPP:(PUNTO_ADIC[lVeh]||ADIC);
+  const lPPef=lPP!=null?lPP:(ENTREGA_ADIC_LOCAL||0);
   const lDesc=descPuntos(lNumPuntos);
   const lXP=Math.round(lPuntosExtra*lPPef*(1-lDesc));
   const lXR=lRes?(lD.resguardo||0):0;
@@ -5093,20 +4739,22 @@ function Cotizador({onSaved}){
     if(modo==="local"){
       const n = lPuntos.filter(p=>p.dir.trim()).length;
       return VEHK.map(v=>{
-        const d = LOC[v.k];
+        const d = LOC[v.k]||{};
         let base = d.normal;
         if(lUrg&&lAyud) base = d.urgente_ay;
         else if(lAyud) base = d.ayudante;
         else if(lUrg) base = d.urgente;
+        if(!(base>0)) return null;                       // sin tarifa para esa unidad: no se compara
         const pe = Math.max(0,n-1);
-        const xp = Math.round(pe*(PUNTO_ADIC[v.k]||ADIC)*(1-descPuntos(n)));
+        const xp = Math.round(pe*(ENTREGA_ADIC_LOCAL||0)*(1-descPuntos(n)));
         const xr = lRes?(d.resguardo||0):0;
         const sub = base+xp+xr;
         return {veh:v.k,label:v.label,total:sub*1.16,subtotal:sub};
-      }).sort((a,b)=>a.total-b.total);
+      }).filter(Boolean).sort((a,b)=>a.total-b.total);
     }else if(modo==="foraneo"&&fCiudades.length>0){
       return VEHK.map(v=>{
         const k = v.k;
+        if(fCiudades.some(c=>!(c[k]>0))) return null;     // alguna ciudad sin tarifa para esa unidad
         const baseTotal = fCiudades.reduce((a,c)=>a+(c[k]||0),0);
         const ptsTotal = fCiudades.reduce((a,c)=>{
           const nPts=Math.max(1,c.puntos||1);
@@ -5119,7 +4767,7 @@ function Cotizador({onSaved}){
         const xr = fRes?(LOC[k]?.resguardo||0):0;
         const sub = baseTotal+ptsTotal+xu+xm+xr+xv;
         return {veh:k,label:v.label,total:sub*1.16,subtotal:sub};
-      }).sort((a,b)=>a.total-b.total);
+      }).filter(Boolean).sort((a,b)=>a.total-b.total);
     }
     return [];
   },[modo,lVeh,lUrg,lAyud,lRes,lPuntos,fCiudades,fUrg,fMani,fNumAyud,fRes,fPersonas,fComida,fHotel,fDias,fNoches]);
@@ -5132,7 +4780,10 @@ function Cotizador({onSaved}){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div>
             <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:26,color:TEXT,letterSpacing:"-0.03em"}}>Cotizador Pro</h1>
-            <p style={{color:MUTED,fontSize:12,marginTop:2}}>Tarifario 2026 · 5 vehículos · Puntos con desc. volumen · Viáticos $1,100 hotel + $700 comida · Casetas TAG incluidas</p>
+            <p style={{color:MUTED,fontSize:12,marginTop:2}}>Precios del módulo Tarifario · {TAR.filter(c=>!c.local).length} destinos · Puntos con desc. volumen · Viáticos $1,100 hotel + $700 comida · Casetas TAG incluidas</p>
+            {!tarPro.cargado&&!tarPro.error&&<p style={{color:AMBER,fontSize:12,fontWeight:700,marginTop:4}}>Cargando el tarifario…</p>}
+            {tarPro.error&&<p style={{color:ROSE,fontSize:12,fontWeight:700,marginTop:4}}>No se pudo leer el tarifario: {tarPro.error}. Sin tarifario no hay precios.</p>}
+            {tarPro.cargado&&tarPro.faltantes.length>0&&<p style={{color:AMBER,fontSize:11,marginTop:4}}>Falta en el tarifario: {tarPro.faltantes.join(" · ")}</p>}
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <button onClick={()=>setShowPlantillas(true)} className="btn" style={{display:"flex",alignItems:"center",gap:6,padding:"7px 13px",background:"#fff",border:"1.5px solid "+VIOLET+"40",color:VIOLET,borderRadius:11,fontWeight:700,fontSize:12}}>
@@ -5234,7 +4885,7 @@ function Cotizador({onSaved}){
                 <span style={{fontSize:11,color:MUTED}}>Primer punto incluido · Cada adicional:</span>
                 <input type="number" value={lPPef} onChange={e=>setLPP(Number(e.target.value)||0)}
                   style={{width:90,background:"#fff",border:"1.5px solid "+A+"35",borderRadius:8,padding:"5px 9px",fontFamily:MONO,fontSize:13,fontWeight:700,color:A}}/>
-                {lPP!=null&&lPP!==(PUNTO_ADIC[lVeh]||ADIC)&&<button onClick={()=>setLPP(null)} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline"}}>↺ sugerido {fmt(PUNTO_ADIC[lVeh]||ADIC)}</button>}
+                {lPP!=null&&lPP!==(ENTREGA_ADIC_LOCAL||0)&&<button onClick={()=>setLPP(null)} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline"}}>↺ tarifario {ENTREGA_ADIC_LOCAL?fmt(ENTREGA_ADIC_LOCAL):"sin tarifa"}</button>}
                 {lDesc>0&&<span style={{fontSize:10,fontWeight:800,color:GREEN,background:GREEN+"12",borderRadius:6,padding:"2px 8px"}}>🎉 Desc. volumen −{Math.round(lDesc*100)}% ({lNumPuntos} puntos)</span>}
                 {lDesc===0&&lNumPuntos>=10&&<span style={{fontSize:10,color:MUTED}}>💡 A partir de 20 puntos: −5% · 40: −10% · 60: −15% (tope −20%)</span>}
               </div>
@@ -5313,6 +4964,7 @@ function Cotizador({onSaved}){
                         <span>{(c.km||0).toLocaleString()} km</span>
                         <span style={{color:dias<=1?"#16a34a":dias<=2?"#d97706":"#dc2626",fontWeight:700}}>⏱ {dias}d tránsito</span>
                         <span style={{color:GREEN,fontWeight:600}}>🛣️ casetas TAG incluidas</span>
+                        {!(c.base>0)&&<span style={{color:AMBER,fontWeight:800}}>⚠ sin tarifa para esta unidad</span>}
                       </div>
                     </div>
                     <div style={{textAlign:"right",marginRight:6}}>
@@ -5334,8 +4986,8 @@ function Cotizador({onSaved}){
                       <input type="number" min="0" value={c.pp!=null?c.pp:ppSug} onChange={e=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,pp:Number(e.target.value)||0}:x))}
                         style={{width:"100%",background:"#fff",border:"1.5px solid "+A+"35",borderRadius:8,padding:"8px 11px",fontFamily:MONO,fontSize:15,fontWeight:700,color:A,textAlign:"center"}}/>
                       {c.pp!=null&&c.pp!==ppSug
-                        ?<button onClick={()=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,pp:null}:x))} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline",marginTop:3}}>↺ sugerido {fmt(ppSug)}</button>
-                        :<div style={{fontSize:9,color:MUTED,marginTop:3}}>sugerido por distancia</div>}
+                        ?<button onClick={()=>setFCiudades(p=>p.map(x=>x.id===c.id?{...x,pp:null}:x))} className="btn" style={{fontSize:9,color:VIOLET,fontWeight:700,textDecoration:"underline",marginTop:3}}>↺ {ppSug?"tarifa "+fmt(ppSug):"sin tarifa"}</button>
+                        :<div style={{fontSize:9,color:ppSug?MUTED:AMBER,fontWeight:ppSug?400:700,marginTop:3}}>{ppSug?"tarifa de ruta local":"sin tarifa: captúralo"}</div>}
                     </div>
                     <div>
                       <div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>Días en ciudad</div>
@@ -5710,6 +5362,7 @@ function Cotizador({onSaved}){
 }
 /* ─── IMPORTACIÓN MASIVA CSV/Excel ──────────────────────────────────────── */
 function ImportRutasModal({onClose,choferes,showT}){
+  useTarifarioPro();
   const [file,setFile]=useState(null);
   const [rows,setRows]=useState([]);
   const [grouped,setGrouped]=useState({});
@@ -6046,6 +5699,7 @@ function RouteMapPreview({stops,height=280}){
 }
 
 function PlanificadorRutas(){
+  useTarifarioPro();
   const [nombre,setNombre]=useState("");
   const [cliente,setCliente]=useState("");
   const [clienteTel,setClienteTel]=useState("");
