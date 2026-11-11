@@ -4302,7 +4302,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
                 <div style={{fontSize:11,color:MUTED,marginTop:2}}>Registrado vs cobrado</div>
               </div>
               <div style={{display:"flex",gap:12}}>
-                {[[A,"Registrado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
+                {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
               </div>
             </div>
             <div style={{display:"flex",alignItems:"flex-end",gap:4,height:130}}>
@@ -7298,7 +7298,8 @@ function Facturas({rol="admin"}){
   const cobrado=filt.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0);
   const pendiente=filt.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
   const vencido=filt.filter(f=>facturaVencida(f,Date.now())).reduce((a,f)=>a+(f.total||0),0);
-  const porMes=MESES.map(m=>{const its=items.filter(f=>f.mesOp===m);return{m,fac:its.reduce((a,f)=>a+(f.total||0),0),cob:its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0),n:its.length};});
+  // Solo el año del título y solo facturas emitidas (antes sumaba todos los años y las canceladas).
+  const porMes=MESES.map(m=>{const its=items.filter(f=>f.mesOp===m&&String(f.anio||ANIO)===String(ANIO)&&facturaEmitida(f));return{m,fac:its.reduce((a,f)=>a+(f.total||0),0),cob:its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0),n:its.length};});
   const maxV=Math.max(...porMes.map(m=>m.fac),1);
   const proyAnual=porMes.reduce((a,m)=>a+m.fac,0);
   const avgMes=porMes.filter(m=>m.fac>0).reduce((a,m,_,arr)=>a+m.fac/arr.length,0)||0;
@@ -7524,7 +7525,7 @@ function Facturas({rol="admin"}){
       {tab==="proyecciones"&&<>
         <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:15,padding:24,marginBottom:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-            <div><div style={{fontFamily:DISP,fontWeight:700,fontSize:16}}>Facturación mensual {ANIO}</div><div style={{fontSize:12,color:MUTED,marginTop:2}}>Registrado vs cobrado</div></div>
+            <div><div style={{fontFamily:DISP,fontWeight:700,fontSize:16}}>Facturación mensual {ANIO}</div><div style={{fontSize:12,color:MUTED,marginTop:2}}>Facturado vs cobrado</div></div>
             <div style={{display:"flex",gap:14}}>
               {[[A,"Registrado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontSize:11,color:MUTED}}>{l}</span></div>)}
               <div style={{fontFamily:MONO,fontSize:13,fontWeight:700,color:VIOLET}}>Anual: {fmtK(proyAnual)}</div>
@@ -7544,9 +7545,9 @@ function Facturas({rol="admin"}){
           </div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
-          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}><div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Proyección anual</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:VIOLET}}>{fmt(proyAnual)}</div></div>
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}><div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Facturado en {ANIO}</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:VIOLET}}>{fmt(proyAnual)}</div></div>
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}><div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Promedio mensual</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:BLUE}}>{fmt(avgMes)}</div></div>
-          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}><div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>% cobrado global</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:GREEN}}>{proyAnual>0?Math.round(porMes.reduce((a,m)=>a+m.cob,0)/proyAnual*100):0}%</div></div>
+          <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:12,padding:"14px 16px"}}><div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>% cobrado en {ANIO}</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:GREEN}}>{proyAnual>0?Math.round(porMes.reduce((a,m)=>a+m.cob,0)/proyAnual*100):0}%</div></div>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
           {porMes.filter(m=>m.fac>0).map(m=>(
@@ -9528,7 +9529,14 @@ function PagosProveedores({userProfile}){
 
       {/* Aviso anti-duplicado */}
       <div style={{background:BLUE+"08",border:"1px solid "+BLUE+"25",borderRadius:11,padding:"9px 14px",marginBottom:16,fontSize:11.5,color:BLUE,display:"flex",alignItems:"center",gap:8}}>
-        <Shield size={13}/><span>Los pagos con <strong>📘</strong> vienen de la balanza contable (Ene–May, 245 movimientos) y <strong>no duplican el P&L</strong> — esos meses ya están conciliados. Los pagos que captures aquí (junio en adelante) sí afectan Estado de Resultados y Reportes automáticamente.</span>
+        <Shield size={13}/><span>{(()=>{
+          // Se calcula de los datos: antes decía "Ene–May, 245" fijo y se quedó atrás al cargar junio.
+          const M=["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+          const bal=pagos.filter(p=>p.enBalanza), fs=bal.map(p=>String(p.fechaPago||p.fechaFactura||"").slice(0,7)).filter(f=>/^\d{4}-\d{2}$/.test(f)).sort();
+          if(!bal.length||!fs.length) return <>Los pagos que captures aquí sí afectan Estado de Resultados y Reportes automáticamente.</>;
+          const nom=f=>M[Number(f.slice(5,7))-1]+" "+f.slice(0,4), ult=fs[fs.length-1], sig=Number(ult.slice(5,7))===12?(Number(ult.slice(0,4))+1)+"-01":ult.slice(0,4)+"-"+String(Number(ult.slice(5,7))+1).padStart(2,"0");
+          return <>Los pagos con <strong>📘</strong> vienen de la contabilidad ({nom(fs[0])} a {nom(ult)}, {bal.length} movimientos) y <strong>no se suman dos veces</strong>. Los pagos que captures aquí ({nom(sig)} en adelante) sí afectan Estado de Resultados y Reportes automáticamente.</>;
+        })()}</span>
       </div>
 
       {/* KPIs */}
@@ -11106,7 +11114,7 @@ function Prospeccion(){
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
   const statuses=["Contacto inicial","En negociación","Propuesta enviada","Ganado","Perdido"];
   const sc={"Contacto inicial":MUTED,"En negociación":BLUE,"Propuesta enviada":AMBER,Ganado:GREEN,Perdido:ROSE};
-  const empty={empresa:"",contacto:"",servicio:"",monto:"",mes:"May",anio:2026,probabilidad:50,status:"Contacto inicial",notas:""};
+  const empty={empresa:"",contacto:"",servicio:"",monto:"",mes:["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"][new Date().getMonth()],anio:new Date().getFullYear(),probabilidad:50,status:"Contacto inicial",notas:""};
   const [form,setForm]=useState(empty);
 
   useEffect(()=>onSnapshot(collection(db,"prospeccion"),s=>{
