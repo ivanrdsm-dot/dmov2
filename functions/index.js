@@ -105,3 +105,9 @@ export const conectorSolicitudes = onRequest(
       res.status(status).json({ ok: false, error: status >= 500 ? "Error interno" : e.message });
     }
   });
+
+/* Fase 1 · chofer rastreado y verificado */
+export {
+  choferRegistrarDispositivo, choferCheckIn, choferIniciarRuta, choferSubirPosiciones, choferCerrarParada, choferSOS,
+  oficinaVincularChofer, oficinaLiberarDispositivo, oficinaPrepararRuta, oficinaAutorizarExcepcion,
+} from "./chofer.js";

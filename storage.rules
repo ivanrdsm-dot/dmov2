@@ -36,8 +36,31 @@ service firebase.storage {
         && firestore.exists(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid)).data.activo == true;
     }
+    /* Chofer con cuenta propia ligada por la oficina. Solo SUBE a su propia carpeta,
+       solo imágenes de hasta 5 MB, y nunca sobrescribe ni borra. */
+    function choferDueno(choferId) {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && firestore.exists(/databases/(default)/documents/choferes_auth/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/choferes_auth/$(request.auth.uid)).data.choferId == choferId;
+    }
+    function imagenNueva() {
+      return resource == null
+        && request.resource.size > 0 && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+    match /evidencias/{choferId}/{servicioId}/{archivo} {
+      allow read: if oficina() || choferDueno(choferId);
+      allow create: if choferDueno(choferId) && imagenNueva();
+      allow update, delete: if false;
+    }
+    match /jornadas/{choferId}/{archivo} {
+      allow read: if oficina() || choferDueno(choferId);
+      allow create: if choferDueno(choferId) && imagenNueva();
+      allow update, delete: if false;
+    }
     // Evidencia operativa: solo oficina. Sin sesión anónima (RBAC v4).
-    match /evidencias/{allPaths=**} {
+    match /evidencias/{archivo} {
       allow read: if oficina();
       allow write: if oficina()
         && request.resource.size < 5 * 1024 * 1024
@@ -45,7 +68,7 @@ service firebase.storage {
     }
     // El resto: lectura de oficina (nunca el archivo fiscal), sin escritura.
     match /{first}/{rest=**} {
-      allow read: if first != 'cfdi' && oficina();
+      allow read: if first != 'cfdi' && first != 'jornadas' && first != 'evidencias' && oficina();
       allow write: if false;
     }
   }
