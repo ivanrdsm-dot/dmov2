@@ -152,8 +152,8 @@ export default function Despacho({ store, usuario, cargarMapa = null }){
           {activos.length === 0 && <tr><td style={{ padding: 16, color: MUTED }}>No hay choferes activos.</td></tr>}
         </tbody></table></div>
       </Seccion>
-      <Seccion titulo="Alertas recientes">
-        {alertas.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Sin alertas.</div> : alertas.slice(0, 12).map(a => (
+      <Seccion titulo="Alertas por atender">
+        {alertas.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>✓ Nada por atender. Las ya atendidas están en la pestaña Alertas.</div> : alertas.slice(0, 12).map(a => (
           <div key={a.id} style={{ fontSize: 13, padding: "7px 0", borderBottom: "1px solid " + BORDER, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Chip color={a.type === "sos" ? ROSE : ["ubicacion_simulada", "cierre_fuera_de_punto", "velocidad_imposible"].includes(a.type) ? ROSE : AMBER}>{TIPO_ALERTA[a.type] || a.type}</Chip>
             <b>{a.choferNombre || ""}</b><span>{a.message || a.msg || a.mensaje || ""}</span><span style={{ marginLeft: "auto", fontSize: 11, color: MUTED }}>{haceCuanto(a.ts, ahora)}</span>
