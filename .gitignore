@@ -12,3 +12,5 @@ operacion-mayo-junio-2026/backup-*.json
 operacion-mayo-junio-2026/import-log-*.json
 operacion-mayo-junio-2026/_servicios.json
 serviceAccount.json
+# Claves de servicio de Firebase con su nombre original de descarga
+*firebase-adminsdk*.json
