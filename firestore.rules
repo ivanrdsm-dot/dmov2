@@ -123,7 +123,7 @@ service cloud.firestore {
         && c.aprobadoPor == d.precioAprobadoPor;
     }
     /* Campos que solo escribe el servidor: totales de costos, link de seguimiento y encuesta del cliente. */
-    function camposDeCostoServidor() { return ['costoTotal','costosN','costosPorConcepto','costosActualizadosEn','seguimientoToken','seguimientoCreadoEn','encuestaRespondida','encuestaCalificacion']; }
+    function camposDeCostoServidor() { return ['costoTotal','costosN','costosPorConcepto','costosActualizadosEn','seguimientoToken','seguimientoCreadoEn','encuestaRespondida','encuestaCalificacion','facturaEstado','facturaActualizadaEn']; }
     match /servicios/{id} {
       allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId());
       allow create: if esOficina()
