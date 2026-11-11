@@ -230,7 +230,7 @@ service cloud.firestore {
        La oficina guarda la propuesta que calculó el cotizador; el precio que ve
        el cliente lo fija SOLO un admin. El cálculo guardado es inmutable, las
        transiciones de estado son las únicas válidas y nadie borra. */
-    function cotPrecio() { return ['precioAprobado','aprobadoPor','aprobadoEn']; }
+    function cotPrecio() { return ['precioAprobado','aprobadoPor','aprobadoPorUid','aprobadoEn']; }
     function cotInmutables() {
       return ['folio','creadoPor','creadoPorNombre','creadoEn','entrada','resultado','precioPropuesto',
               'solicitudId','solicitudFolio','solicitudCanal','solicitudRecibidaEn','sustituyeA','empresa'];
@@ -264,7 +264,8 @@ service cloud.firestore {
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(cotPrecio())
             || (esAdmin() && resource.data.estado == 'Propuesta' && request.resource.data.estado == 'Aprobada'
                 && request.resource.data.precioAprobado is number && request.resource.data.precioAprobado > 0
-                && request.resource.data.aprobadoEn == request.time))
+                && request.resource.data.aprobadoEn == request.time
+                && request.resource.data.aprobadoPorUid == request.auth.uid))
         && (request.resource.data.estado != 'Aprobada' || resource.data.estado == 'Aprobada'
             || request.resource.data.diff(resource.data).affectedKeys().hasAll(cotPrecio()))
         // Solo una cotización aceptada se liga a un servicio, y una sola vez.

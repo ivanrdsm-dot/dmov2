@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, getDocs, updateDoc, deleteDoc, collection } from 'firebase/firestore';
-import { setDoc } from 'firebase/firestore';
+import { setDoc, serverTimestamp } from 'firebase/firestore';
 import { crearCotizacionesStore, COLECCION_COTIZACIONES as COL } from '../cotizacionesStore.js';
 import { crearServiciosStore } from '../serviciosStore.js';
 
@@ -68,9 +68,11 @@ test('el cálculo guardado y el folio no se pueden cambiar, ni por un admin; nad
 
 test('admin aprueba con su precio; después cualquiera de oficina la envía y registra la respuesta', async () => {
   await assertFails(updateDoc(doc(dbAdmin, COL, cot.id), { estado: 'Aprobada' }));          // aprobar sin precio no existe
+  await assertFails(updateDoc(doc(dbAdmin, COL, cot.id), { estado: 'Aprobada', precioAprobado: 3900, aprobadoPor: 'otro',
+    aprobadoPorUid: 'otro', aprobadoEn: serverTimestamp() }));                                // nadie aprueba a nombre de otro
   await assertSucceeds(sAdmin.aprobar(ADMIN, await leer(dbAdmin, cot.id), 3900, 'Ajuste por temporada'));
   let d = await leer(dbOps, cot.id);
-  assert.equal(d.estado, 'Aprobada'); assert.equal(d.precioAprobado, 3900); assert.equal(d.aprobadoPor, 'admin');
+  assert.equal(d.estado, 'Aprobada'); assert.equal(d.precioAprobado, 3900); assert.equal(d.aprobadoPor, 'admin'); assert.equal(d.aprobadoPorUid, 'admin');
   await assertFails(updateDoc(doc(dbAdmin, COL, cot.id), { precioAprobado: 5000 }));         // ya aprobada: el precio no se mueve
   await assertFails(updateDoc(doc(dbOps, COL, cot.id), { servicioId: 's', servicioFolio: 'SRV-2026-0001' }));   // aún no aceptada
   await assertSucceeds(sOps.cambiarEstado(OPS, d, 'Enviada'));

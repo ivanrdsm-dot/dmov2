@@ -4062,15 +4062,18 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
 /* INICIO · "¿Qué falta hoy?" en palabras simples, con un botón para cada cosa. */
 function QueFaltaHoy({setView,alertasAbiertas=0}){
   const [d,setD]=useState(null);
+  // "Hoy" cambia solo a medianoche aunque la pantalla se quede abierta.
+  const [hoy,setHoy]=useState(()=>fechaLocalISO());
+  useEffect(()=>{const t=setInterval(()=>setHoy(h=>{const n=fechaLocalISO();return n===h?h:n;}),60000);return()=>clearInterval(t);},[]);
   useEffect(()=>{
     if(!FF_SERVICIOS){setD({});return;}
-    const hoy=fechaLocalISO(), out={}, listo=()=>{if(["sol","cot","srv","fac"].every(k=>k in out)) setD({...out});};
+    const out={}, listo=()=>{if(["sol","cot","srv","fac"].every(k=>k in out)) setD({...out});};
     const u1=onSnapshot(query(collection(db,"solicitudes"),where("estado","in",["Nueva","En revisión"]),limit(300)),x=>{out.sol=x.docs.map(y=>y.data());listo();},()=>{out.sol=[];listo();});
     const u2=onSnapshot(query(collection(db,"cotizaciones_logistica"),where("estado","in",["Propuesta","Aprobada","Enviada"]),limit(300)),x=>{out.cot=x.docs.map(y=>y.data());listo();},()=>{out.cot=[];listo();});
     const u3=onSnapshot(query(collection(db,"servicios"),where("fechaServicio","==",hoy),limit(300)),x=>{out.srv=x.docs.map(y=>y.data());listo();},()=>{out.srv=[];listo();});
     const u4=onSnapshot(query(collection(db,"servicios"),where("estado","in",["Entregada","Cerrada","Conciliada"]),limit(300)),x=>{out.fac=x.docs.map(y=>y.data()).filter(y=>!y.facturaId);listo();},()=>{out.fac=[];listo();});
     return()=>{u1();u2();u3();u4();};
-  },[]);
+  },[hoy]);
   if(!d||!FF_SERVICIOS) return null;
   const sinResp=(d.sol||[]).filter(x=>!x.primeraRespuestaEn).length;
   const porAprobar=(d.cot||[]).filter(x=>x.estado==="Propuesta").length, porEnviar=(d.cot||[]).filter(x=>x.estado==="Aprobada").length, esperando=(d.cot||[]).filter(x=>x.estado==="Enviada").length;
@@ -10251,7 +10254,9 @@ function Viaticos(){
   const save=async()=>{
     if(!form.concepto||!form.monto){showT("Concepto y monto requeridos","err");return;}
     try{
-      await addDoc(collection(db,"viaticos"),{...form,monto:parseFloat(form.monto)||0,folio:"GAS-"+uid(),createdAt:serverTimestamp()});
+      // origen:"manual" separa lo capturado aquí de lo que llega de la contabilidad (balanzaImport),
+      // para que al cargar la balanza del mes se vea qué gastos podrían estar dos veces.
+      await addDoc(collection(db,"viaticos"),{...form,monto:parseFloat(form.monto)||0,folio:"GAS-"+uid(),origen:"manual",creadoPorUid:auth.currentUser?.uid||"",createdAt:serverTimestamp()});
       setModal(false);setForm(empty);showT("✓ Gasto registrado");
     }catch(e){showT(e.message,"err");}
   };
@@ -10270,6 +10275,8 @@ function Viaticos(){
   const maxMes=Math.max(...porMes.map(d=>d.total),1);
 
   const tipoInfo=k=>TIPOS.find(t=>t.k===k)||{label:k,color:MUTED};
+  const mesesConBalanza=new Set(items.filter(g=>g.balanzaImport).map(g=>g.mes+" "+g.anio));
+  const mesConContabilidad=items.some(g=>g.balanzaImport&&g.mes===form.mes&&String(g.anio)===String(form.anio));
   // Registros con estimado:true (cierre sep-2026: jul+ago repartido 50/50)
   const est=resumenEstimados(items);
   const estFilt=resumenEstimados(filt);
@@ -10375,7 +10382,7 @@ function Viaticos(){
                     <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:10,color:MUTED}}>{g.folio||"—"}</td>
                     <td style={{padding:"10px 14px"}}><span style={{background:AMBER+"12",color:AMBER,borderRadius:6,padding:"2px 7px",fontSize:11,fontWeight:700}}>{g.mes||"—"} {g.anio||""}</span></td>
                     <td style={{padding:"10px 14px"}}><span style={{background:ti.color+"14",color:ti.color,borderRadius:7,padding:"3px 9px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{ti.label}</span></td>
-                    <td style={{padding:"10px 14px",fontWeight:600,fontSize:13}}>{g.concepto||"—"}{g.estimado===true&&<EstimadoTag title={g.cierreSep2026?NOTA_ESTIMADO_SEP26:undefined}/>}</td>
+                    <td style={{padding:"10px 14px",fontWeight:600,fontSize:13}}>{g.concepto||"—"}{g.estimado===true&&<EstimadoTag title={g.cierreSep2026?NOTA_ESTIMADO_SEP26:undefined}/>}{g.origen==="manual"&&mesesConBalanza.has(g.mes+" "+g.anio)&&<span title="Se capturó a mano y este mes ya tiene la contabilidad: revisa que no esté dos veces" style={{marginLeft:6,background:AMBER+"16",color:AMBER,border:"1px dashed "+AMBER+"70",borderRadius:6,padding:"0 6px",fontSize:9.5,fontWeight:800,whiteSpace:"nowrap"}}>¿doble?</span>}</td>
                     <td style={{padding:"10px 14px",fontSize:12,color:MUTED}}>{g.operador||"—"}</td>
                     <td style={{padding:"10px 14px",fontSize:12,color:MUTED}}>{g.ruta||"—"}</td>
                     <td style={{padding:"10px 14px",fontFamily:MONO,fontSize:14,fontWeight:800,color:ROSE}}>{fmt(g.monto||0)}</td>
@@ -10448,6 +10455,9 @@ function Viaticos(){
             </select>
           </div>
           <div style={{gridColumn:"1/-1"}}><Txt label="Notas / Referencia del ticket" value={form.notas} onChange={sf("notas")} placeholder="Número de ticket, observaciones…"/></div>
+          {mesConContabilidad&&<div style={{gridColumn:"1/-1",background:AMBER+"12",border:"1.5px solid "+AMBER+"55",borderRadius:10,padding:"10px 13px",fontSize:13,color:TEXT}}>
+            ⚠️ <b>{form.mes} {form.anio}</b> ya tiene la contabilidad cargada. Si este gasto ya viene ahí, no lo captures: contaría dos veces.
+          </div>}
           <button onClick={save} className="btn" style={{gridColumn:"1/-1",background:"linear-gradient(135deg,"+AMBER+",#f59e0b)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:16,cursor:"pointer"}}>
             Guardar gasto
           </button>
