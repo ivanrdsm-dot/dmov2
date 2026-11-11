@@ -8,5 +8,8 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["domain.ts"]
+  "include": [
+    "domain.ts",
+    "servicios.ts"
+  ]
 }

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, Component } from "react";
+import { useState, useRef, useEffect, useMemo, Component, lazy, Suspense } from "react";
 import { initializeApp } from "firebase/app";
 import { getStorage } from "firebase/storage";
 import {
@@ -24,6 +24,11 @@ import {
 } from "lucide-react";
 import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO, PL_ORDEN_DIRECTOS, PLANES, planPorNumero, etiquetaPlan, normalizarPlan, planDeFactura, planearNormalizacionPlanes, etapaFactura, ETAPAS_FACTURA, facturasLigadas, buscarCotizaciones, rangoPeriodo, etiquetaPeriodo, filasPorPeriodo, ingresosPorColumna, pctGuardado, kpisCierre, resumenEstimados, conciliarIngresos, conciliarCxC, coincideAlias, fechaLocalISO, mismaEmpresa, clienteIdCorrecto, catalogoPlanes, setCatalogoPlanes, fusionarCatalogoPlanes } from "./domain";
 import CfdiArchive from "./CfdiArchive.jsx";
+import { crearServiciosStore } from "./serviciosStore.js";
+/* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
+const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
+/* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
+const FF_SERVICIOS = import.meta.env.VITE_FF_SERVICIOS !== "off";
 import { invoiceArchiveFingerprint } from "./cfdiArchiveStore.js";
 import { billingFields, billingSnapshot } from "./billing.js";
 /* mapbox-gl (1.77MB) es LAZY: ver ensureMapbox()/useMapboxReady() más abajo.
@@ -3475,6 +3480,7 @@ function getNavSections(rol){
       {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
     ]},
     {section:"OPERACIONES",items:[
+      ...(FF_SERVICIOS?[{id:"servicios", label:"Servicios", icon:ClipboardList, badge:"NEW"}]:[]),
       {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
       {id:"rutas",    label:"Planificador Rutas",    icon:Map},
       {id:"choferes", label:"Choferes",              icon:Users},
@@ -14525,6 +14531,13 @@ function SOSGlobalBanner({onGo}){
 }
 
 /* ── Error boundary para capturar errores de render ── */
+/* Módulo Servicios: arma el store y el usuario y delega en Servicios.jsx. */
+function ServiciosModulo({authUser,userProfile,choferes}){
+  useCatalogos();
+  const store=useMemo(()=>crearServiciosStore(db),[]);
+  const usuario=useMemo(()=>({uid:authUser?.uid||"",nombre:userProfile?.nombre||authUser?.displayName||"",email:authUser?.email||"",rol:userProfile?.rol||"operaciones"}),[authUser,userProfile]);
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando servicios…</div>}><ServiciosVista store={store} usuario={usuario} clientes={CLIENTES_REGISTRADOS} choferes={choferes}/></Suspense>;
+}
 class ErrorBoundary extends Component{
   constructor(p){super(p);this.state={err:null,info:null};}
   static getDerivedStateFromError(err){return{err};}
@@ -15234,6 +15247,7 @@ export default function App(){
     cotizador:isAdmin?<Cotizador onSaved={()=>setView("dashboard")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    ...(FF_SERVICIOS?{servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes}/>}:{}),
     choferes:<Choferes/>,
     unidades:<Unidades/>,
     tracking:<LiveTracking/>,
