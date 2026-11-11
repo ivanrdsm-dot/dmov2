@@ -23,6 +23,15 @@ service cloud.firestore {
     function esAdmin() {
       return esOficina() && perfil().rol == "admin";
     }
+    /* CHOFER = cuenta propia (no anónima) ligada por la oficina en choferes_auth/{uid}.
+       Solo LEE lo suyo. No escribe nada directo: todo pasa por Cloud Functions,
+       que validan identidad, equipo, ubicación y geocerca en el servidor. */
+    function esChofer() {
+      return noAnon() && exists(/databases/$(database)/documents/choferes_auth/$(request.auth.uid));
+    }
+    function miChoferId() {
+      return get(/databases/$(database)/documents/choferes_auth/$(request.auth.uid)).data.choferId;
+    }
 
     /* ── Operación (rutas, choferes, ubicaciones) · CERRADO a oficina ─────────
        Antes: rutas y ubicaciones se leían sin login y cualquier sesión anónima
@@ -34,7 +43,7 @@ service cloud.firestore {
     match /driverLocations/{choferId}{ allow read: if esOficina(); allow create, update, delete: if esAdmin(); }
     match /choferes/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
     match /gastosChofer/{id}         { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /jornadas/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /jornadas/{id}             { allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId()); allow create, update: if esOficina(); allow delete: if esAdmin(); }
     match /mensajes/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
     match /alertas/{id}              { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
     match /alerts/{id} {                          // legacy migrada — congelada
@@ -104,7 +113,7 @@ service cloud.firestore {
         && (!exists(ruta) || getAfter(ruta).data.n == get(ruta).data.n + 1);
     }
     match /servicios/{id} {
-      allow read: if esOficina();
+      allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId());
       allow create: if esOficina()
         && request.resource.data.creadoPor == request.auth.uid
         && request.resource.data.creadoEn == request.time
@@ -119,6 +128,16 @@ service cloud.firestore {
         && request.resource.data.creadoEn == resource.data.creadoEn
         && (!tocaPrecio(request.resource.data.diff(resource.data).affectedKeys()) || esAdmin());
       allow delete: if false;
+      /* Ruta del servicio: paradas y posiciones las escribe SOLO el servidor. */
+      match /paradas/{paradaId} {
+        allow read: if esOficina()
+          || (esChofer() && get(/databases/$(database)/documents/servicios/$(id)).data.choferId == miChoferId());
+        allow write: if false;
+      }
+      match /posiciones/{loteId} {
+        allow read: if esOficina();
+        allow write: if false;
+      }
       match /eventos/{eventoId} {
         allow read: if esOficina();
         allow create: if esOficina()
@@ -191,6 +210,15 @@ service cloud.firestore {
         allow update, delete: if false;
       }
     }
+    /* ── Fase 1: identidad y rastreo del chofer (todo lo escribe el servidor) ── */
+    match /choferes_auth/{uid} {
+      allow read: if esOficina() || (noAnon() && request.auth.uid == uid);
+      allow write: if false;
+    }
+    match /ubicaciones/{choferId} {
+      allow read: if esOficina();
+      allow write: if false;
+    }
     /* Contadores de folio: solo avanzan de uno en uno. */
     match /contadores/{id} {
       allow read: if esOficina();
@@ -239,7 +267,7 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores']);
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones']);
     }
   }
 }
