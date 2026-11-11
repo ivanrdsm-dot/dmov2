@@ -53,6 +53,20 @@ export function precioDeTarifa(t: Tarifa | null | undefined, unidad: UnidadTarif
   return { tarifa: Math.round(v * 100) / 100, redondeado, iva, total: Math.round((redondeado + iva) * 100) / 100, bloque, unidad };
 }
 
+/** Precio para cotizar: parte del precio BASE y agrega el porcentaje de ganancia indicado (0 = precio base).
+ *  El porcentaje lo decide quien cotiza; el bloque "cliente" del tarifario queda solo como referencia. */
+export function precioConGanancia(t: Tarifa | null | undefined, unidad: UnidadTarifa, gananciaPct: unknown): (Precio & { base: number; gananciaPct: number; ganancia: number }) | null {
+  const b = num(t?.base?.[unidad]);
+  if(!(b > 0)) return null;
+  const pct = num(gananciaPct);
+  const g = Number.isFinite(pct) && pct > 0 ? Math.min(pct, 300) : 0;
+  const tarifa = Math.round(b * (1 + g / 100) * 100) / 100;
+  const redondeado = redondearDecenasArriba(tarifa);
+  const iva = Math.round(redondeado * IVA_PCT) / 100;
+  return { base: Math.round(b * 100) / 100, gananciaPct: g, ganancia: Math.round((redondeado - b) * 100) / 100, tarifa, redondeado, iva,
+    total: Math.round((redondeado + iva) * 100) / 100, bloque: "base", unidad };
+}
+
 /** Relación entre el bloque cliente y el base de una tarifa (1.12 = +12 %). Sirve para auditar el tarifario. */
 export function factorCliente(t: Tarifa): number | null {
   const fs = UNIDADES_TARIFA.map(u => { const b = num(t.base?.[u.k]), c = num(t.cliente?.[u.k]); return b > 0 && c > 0 ? Math.round(c / b * 1000) / 1000 : null; }).filter((x): x is number => x !== null);
