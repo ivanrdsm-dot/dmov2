@@ -112,6 +112,16 @@ service cloud.firestore {
       return getAfter(ruta).data.ultimoFolio == folio
         && (!exists(ruta) || getAfter(ruta).data.n == get(ruta).data.n + 1);
     }
+    /* El precio de un servicio nuevo puede venir de una cotización que un admin ya
+       aprobó y el cliente aceptó: debe coincidir exacto con lo aprobado. */
+    function precioDeCotizacionAceptada(d) {
+      let c = get(/databases/$(database)/documents/cotizaciones_logistica/$(d.cotizacionId)).data;
+      return !('precioAprobadoEn' in d)
+        && c.estado == 'Aceptada'
+        && c.folio == d.cotizacionFolio
+        && c.precioAprobado == d.precio
+        && c.aprobadoPor == d.precioAprobadoPor;
+    }
     match /servicios/{id} {
       allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId());
       allow create: if esOficina()
@@ -121,7 +131,7 @@ service cloud.firestore {
         && request.resource.data.folio is string
         && request.resource.data.folio.matches('SRV-20[0-9]{2}-[0-9]{4,}')
         && folioRecienEmitido('servicios', request.resource.data.folio)
-        && (!tocaPrecio(request.resource.data.keys()) || esAdmin());
+        && (!tocaPrecio(request.resource.data.keys()) || esAdmin() || precioDeCotizacionAceptada(request.resource.data));
       allow update: if esOficina()
         && request.resource.data.folio == resource.data.folio
         && request.resource.data.creadoPor == resource.data.creadoPor
@@ -175,6 +185,59 @@ service cloud.firestore {
         // La primera respuesta se fija una sola vez y con la hora del servidor.
         && (!('primeraRespuestaEn' in request.resource.data.diff(resource.data).affectedKeys())
             || (!('primeraRespuestaEn' in resource.data) && request.resource.data.primeraRespuestaEn == request.time));
+      allow delete: if false;
+      match /eventos/{eventoId} {
+        allow read: if esOficina();
+        allow create: if esOficina()
+          && request.resource.data.actorUid == request.auth.uid
+          && request.resource.data.ts == request.time;
+        allow update, delete: if false;
+      }
+    }
+    /* ── Cotizaciones de logística ───────────────────────────────────────────
+       La oficina guarda la propuesta que calculó el cotizador; el precio que ve
+       el cliente lo fija SOLO un admin. El cálculo guardado es inmutable, las
+       transiciones de estado son las únicas válidas y nadie borra. */
+    function cotPrecio() { return ['precioAprobado','aprobadoPor','aprobadoEn']; }
+    function cotInmutables() {
+      return ['folio','creadoPor','creadoPorNombre','creadoEn','entrada','resultado','precioPropuesto',
+              'solicitudId','solicitudFolio','solicitudRecibidaEn','sustituyeA','empresa'];
+    }
+    function cotTransicion(de, a) {
+      return de == a
+        || (de == 'Propuesta' && a == 'Aprobada' && esAdmin())
+        || (de == 'Aprobada' && a == 'Enviada')
+        || (de == 'Enviada' && a in ['Aceptada','Rechazada'])
+        || (de in ['Propuesta','Aprobada','Enviada'] && a == 'Cancelada');
+    }
+    match /cotizaciones_logistica/{id} {
+      allow read: if esOficina();
+      allow create: if esOficina()
+        && request.resource.data.creadoPor == request.auth.uid
+        && request.resource.data.creadoEn == request.time
+        && request.resource.data.estado == 'Propuesta'
+        && request.resource.data.precioPropuesto is number
+        && request.resource.data.precioPropuesto > 0
+        && request.resource.data.resultado is map
+        && request.resource.data.entrada is map
+        && !request.resource.data.keys().hasAny(cotPrecio())
+        && !request.resource.data.keys().hasAny(['servicioId','servicioFolio'])
+        && request.resource.data.folio is string
+        && request.resource.data.folio.matches('COT-20[0-9]{2}-[0-9]{4,}')
+        && folioRecienEmitido('cotizaciones_logistica', request.resource.data.folio);
+      allow update: if esOficina()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(cotInmutables())
+        && cotTransicion(resource.data.estado, request.resource.data.estado)
+        // El precio aprobado solo se fija al aprobar, por un admin y con la hora del servidor.
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(cotPrecio())
+            || (esAdmin() && resource.data.estado == 'Propuesta' && request.resource.data.estado == 'Aprobada'
+                && request.resource.data.precioAprobado is number && request.resource.data.precioAprobado > 0
+                && request.resource.data.aprobadoEn == request.time))
+        && (request.resource.data.estado != 'Aprobada' || resource.data.estado == 'Aprobada'
+            || request.resource.data.diff(resource.data).affectedKeys().hasAll(cotPrecio()))
+        // Solo una cotización aceptada se liga a un servicio, y una sola vez.
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['servicioId','servicioFolio'])
+            || (resource.data.estado == 'Aceptada' && !('servicioId' in resource.data)));
       allow delete: if false;
       match /eventos/{eventoId} {
         allow read: if esOficina();
@@ -279,7 +342,7 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','tarifario']);
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','tarifario','cotizaciones_logistica']);
     }
   }
 }

@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, etiqueta, rejilla, boton, Campo, Chip, Seccion } from "./uiBasico.jsx";
 import { cotizar } from "./cotizacionAuto.ts";
+import { resumirCalculo, validarCotizacion } from "./cotizaciones.ts";
 import { tiposParaCotizar, TIPOS_UNIDAD } from "./tiposUnidad.ts";
 
 const pesos = n => n === null || n === undefined ? "—" : "$" + Number(n).toLocaleString("es-MX", { maximumFractionDigits: 2 });
@@ -18,8 +19,11 @@ const Lista = ({ titulo, items, color }) => items.length === 0 ? null : <div sty
 const Marca = ({ checked, onChange, children }) => <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14, cursor: "pointer", minHeight: 42 }}>
   <input type="checkbox" checked={!!checked} onChange={e => onChange(e.target.checked)} style={{ width: 20, height: 20 }}/>{children}</label>;
 
-export default function CotizadorAuto({ tarifarioStore, serviciosStore }){
+export default function CotizadorAuto({ tarifarioStore, serviciosStore, cotizacionesStore = null, usuario = null, solicitud: origen = null, onGuardada = null }){
   const [f, setF] = useState(VACIO);
+  const [g, setG] = useState({ empresa: "", solicitante: "", contacto: "", notas: "" }), [guardando, setGuardando] = useState(false), [aviso, setAviso] = useState(null);
+  /* Viene de la bandeja: la cotización queda ligada a esa solicitud. */
+  useEffect(() => { if(origen) setG(x => ({ ...x, solicitante: origen.remitenteNombre || "", contacto: origen.remitenteCorreo || "", notas: origen.asunto || "" })); }, [origen]);
   const [tarifas, setTarifas] = useState([]), [unidades, setUnidades] = useState([]), [verCatalogo, setVerCatalogo] = useState(false);
   useEffect(() => tarifarioStore.suscribir(setTarifas, () => setTarifas([])), [tarifarioStore]);
   useEffect(() => serviciosStore.suscribirCatalogo("unidades", setUnidades), [serviciosStore]);
@@ -38,12 +42,27 @@ export default function CotizadorAuto({ tarifarioStore, serviciosStore }){
   const hayCarga = [f.cajas, f.tarimas, f.pesoKg, f.volumenM3].some(v => String(v).trim());
   const c = useMemo(() => hayCarga ? cotizar(solicitud, tipos, tarifas) : null, [hayCarga, solicitud, tipos, tarifas]);
   const u = c?.unidad;
+  const sg = k => e => setG(x => ({ ...x, [k]: e.target.value }));
+  const resumen = useMemo(() => c ? resumirCalculo(c) : null, [c]);
+  const faltaParaGuardar = validarCotizacion({ empresa: g.empresa, resultado: resumen });
+  const guardar = async () => {
+    setGuardando(true); setAviso(null);
+    try {
+      const r = await cotizacionesStore.crear(usuario, { ...g, entrada: f, resultado: resumen, solicitud: origen });
+      setAviso({ msg: `Cotización ${r.folio} guardada. Falta que un administrador apruebe el precio.` });
+      if(onGuardada) await onGuardada(r);
+      setF(VACIO); setG({ empresa: "", solicitante: "", contacto: "", notas: "" });
+    } catch(e){ setAviso({ msg: "No se pudo guardar: " + e.message, mal: true }); }
+    finally { setGuardando(false); }
+  };
   const barra = (nombre, pct) => pct === null ? null : <div key={nombre} style={{ marginTop: 6 }}><div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: MUTED }}><span>{nombre}</span><b style={{ color: pct > 90 ? AMBER : TEXT }}>{pct} %</b></div>
     <div style={{ height: 8, background: BORDER, borderRadius: 6, overflow: "hidden" }}><div style={{ width: Math.min(100, pct) + "%", height: "100%", background: pct > 90 ? AMBER : GREEN }}/></div></div>;
   return (
     <div style={{ padding: "22px 20px", maxWidth: 1280, margin: "0 auto" }}>
       <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 24, margin: 0 }}>Cotizador automático</h1>
       <div style={{ fontSize: 13, color: MUTED, marginBottom: 16 }}>Escribe lo que pide el cliente. El sistema calcula tarimas, si se apilan, si hace falta maniobra, qué unidad va y cuánto cuesta. Lo que falta lo pregunta.</div>
+      {origen && <div style={{ background: BLUE + "10", border: "1px solid " + BLUE + "50", borderRadius: 12, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}>Cotizando la solicitud <b style={{ fontFamily: MONO }}>{origen.folio}</b>{origen.asunto ? ` · ${origen.asunto}` : ""}. El texto del correo es solo referencia: captura aquí la carga.</div>}
+      {aviso && <div role="status" style={{ background: (aviso.mal ? ROSE : GREEN) + "10", border: "1px solid " + (aviso.mal ? ROSE : GREEN) + "50", color: aviso.mal ? ROSE : GREEN, borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 700, marginBottom: 14 }}>{aviso.msg}</div>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16, alignItems: "start" }}>
         <div>
           <Seccion titulo="Ruta">
@@ -123,6 +142,17 @@ export default function CotizadorAuto({ tarifarioStore, serviciosStore }){
               <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Al cliente se le presenta un solo precio. Este desglose no sale en la cotización.</div>
             </Seccion>
             <Lista titulo="Supuestos usados en el cálculo" items={c.supuestos} color={BLUE}/>
+            {cotizacionesStore && usuario && <Seccion titulo="Guardar como cotización">
+              <div style={rejilla}>
+                <Campo label="Cliente o empresa" value={g.empresa} onChange={sg("empresa")}/>
+                <Campo label="Quién la pide" value={g.solicitante} onChange={sg("solicitante")}/>
+                <Campo label="Correo o teléfono" value={g.contacto} onChange={sg("contacto")}/>
+              </div>
+              <div style={{ marginTop: 12 }}><Campo label="Notas" area value={g.notas} onChange={sg("notas")}/></div>
+              {faltaParaGuardar.length > 0 && <div style={{ fontSize: 12, color: AMBER, marginTop: 8 }}>Para guardar falta: {faltaParaGuardar.join(" · ")}</div>}
+              <div style={{ marginTop: 12 }}><button onClick={guardar} disabled={guardando || faltaParaGuardar.length > 0} style={{ ...boton(A), opacity: guardando || faltaParaGuardar.length > 0 ? .5 : 1 }}>{guardando ? "Guardando…" : "Guardar cotización con folio"}</button></div>
+              <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Se guarda como propuesta{c.pendientes.length ? `, con ${c.pendientes.length} dato(s) por confirmar` : ""}. El precio que ve el cliente lo aprueba un administrador.</div>
+            </Seccion>}
           </>}
         </div>
       </div>

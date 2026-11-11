@@ -49,7 +49,11 @@ export function crearServiciosStore(db){
       const refContador = doc(db, "contadores", "servicios-" + anio);
       const refServicio = doc(col);
       const cuerpo = limpio(datos);
-      if(usuario.rol !== "admin") for(const k of CAMPOS_PRECIO) delete cuerpo[k];
+      /* El precio solo entra al crear si lo fija un admin o si viene de una cotización
+         aceptada; en ese caso las reglas lo comparan contra la cotización en el servidor. */
+      const deCotizacion = !!cuerpo.cotizacionId && Number(cuerpo.precio) > 0 && !!cuerpo.precioAprobadoPor;
+      if(deCotizacion) delete cuerpo.precioAprobadoEn;
+      else if(usuario.rol !== "admin") for(const k of CAMPOS_PRECIO) delete cuerpo[k];
       const folio = await runTransaction(db, async tx => {
         const snap = await tx.get(refContador);
         const n = (snap.exists() ? Number(snap.data().n) || 0 : 0) + 1;
@@ -58,7 +62,8 @@ export function crearServiciosStore(db){
         tx.set(refServicio, { ...cuerpo, folio: f, estado: "Solicitud", estadoTs: { Solicitud: serverTimestamp() },
           creadoEn: serverTimestamp(), creadoPor: usuario.uid, creadoPorNombre: usuario.nombre || usuario.email || "" });
         tx.set(doc(collection(refServicio, "eventos")), { tipo: "creado", a: "Solicitud", ...actor(usuario), ts: serverTimestamp(),
-          datos: { canal: cuerpo.canal || "", recibidaEn: cuerpo.recibidaEn || "", empresa: cuerpo.empresa || "" } });
+          datos: { canal: cuerpo.canal || "", recibidaEn: cuerpo.recibidaEn || "", empresa: cuerpo.empresa || "",
+            ...(deCotizacion ? { cotizacionFolio: cuerpo.cotizacionFolio || "", precio: cuerpo.precio } : {}) } });
         return f;
       });
       return { id: refServicio.id, folio };
