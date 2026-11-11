@@ -30,16 +30,22 @@ service firebase.storage {
           && request.resource.metadata.sha256 == reservation().pdf.sha256));
       allow update, delete: if false;
     }
-    // Existing operational image evidence stays unchanged.
+    function oficina() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && firestore.exists(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid)).data.activo == true;
+    }
+    // Evidencia operativa: solo oficina. Sin sesión anónima (RBAC v4).
     match /evidencias/{allPaths=**} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null
+      allow read: if oficina();
+      allow write: if oficina()
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
-    // Exclude fiscal archive from this overlapping legacy read grant.
+    // El resto: lectura de oficina (nunca el archivo fiscal), sin escritura.
     match /{first}/{rest=**} {
-      allow read: if first != 'cfdi' && request.auth != null;
+      allow read: if first != 'cfdi' && oficina();
       allow write: if false;
     }
   }

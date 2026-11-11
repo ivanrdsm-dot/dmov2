@@ -29,6 +29,23 @@ import { crearServiciosStore } from "./serviciosStore.js";
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
 const FF_SERVICIOS = import.meta.env.VITE_FF_SERVICIOS !== "off";
+/* RBAC v4: no hay acceso anónimo. La app web de chofer y el rastreo público quedan
+   apagados hasta que exista la versión con identidad real (Fase 1). */
+const FF_ACCESO_PUBLICO = import.meta.env.VITE_FF_ACCESO_PUBLICO === "on";
+function AvisoAccesoCerrado({tipo}){
+  const chofer=tipo==="chofer";
+  return(
+    <main style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#042552",color:"#fff",fontFamily:"'Plus Jakarta Sans',system-ui,sans-serif",padding:24}}>
+      <div style={{maxWidth:420,textAlign:"center"}}>
+        <div style={{fontFamily:"'Bricolage Grotesque',sans-serif",fontWeight:800,fontSize:26,marginBottom:12}}>D Movimiento</div>
+        <h1 style={{fontSize:20,fontWeight:700,margin:"0 0 10px"}}>{chofer?"La app de chofer se está renovando":"El rastreo en línea se está renovando"}</h1>
+        <p style={{fontSize:15,lineHeight:1.5,color:"#ffffffcc",margin:0}}>{chofer
+          ?"Por ahora reporta tu ruta directamente con operaciones. Te avisaremos cuando la nueva app esté lista."
+          :"Para conocer el estado de tu entrega, escribe a tu contacto de logística en D Movimiento."}</p>
+      </div>
+    </main>
+  );
+}
 import { invoiceArchiveFingerprint } from "./cfdiArchiveStore.js";
 import { billingFields, billingSnapshot } from "./billing.js";
 /* mapbox-gl (1.77MB) es LAZY: ver ensureMapbox()/useMapboxReady() más abajo.
@@ -15044,9 +15061,9 @@ export default function App(){
   // Rutas públicas sin auth — deben estar antes de cualquier hook
   // ErrorBoundary también aquí: antes solo cubría el panel — un error de render
   // dejaba al chofer en ruta (o al cliente rastreando) con pantalla blanca.
-  if(path.startsWith("/chofer")) return <><style>{CSS}</style><ErrorBoundary><ChoferApp/></ErrorBoundary></>;
+  if(path.startsWith("/chofer")) return FF_ACCESO_PUBLICO?<><style>{CSS}</style><ErrorBoundary><ChoferApp/></ErrorBoundary></>:<AvisoAccesoCerrado tipo="chofer"/>;
   const trackMatch = path.match(/^\/track\/([A-Z0-9]+)/i);
-  if(trackMatch) return <><style>{CSS}</style><ErrorBoundary><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></ErrorBoundary></>;
+  if(trackMatch) return FF_ACCESO_PUBLICO?<><style>{CSS}</style><ErrorBoundary><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></ErrorBoundary></>:<AvisoAccesoCerrado tipo="rastreo"/>;
 
   /* ── TODOS los hooks siempre se llaman en el mismo orden ── */
 
