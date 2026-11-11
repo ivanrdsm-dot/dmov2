@@ -2720,8 +2720,7 @@ function SkeletonRows({n=5}){
   return <div style={{display:"flex",flexDirection:"column",gap:10,padding:16}}>{Array.from({length:n}).map((_,i)=><div key={i} style={{display:"flex",gap:12,alignItems:"center"}}><Skeleton w={40} h={40} r={10}/><div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}><Skeleton h={12} w="60%"/><Skeleton h={10} w="40%"/></div><Skeleton w={80} h={14}/></div>)}</div>;
 }
 function TopBar({view,setView,sidebarOpen,setSidebarOpen,setSearchOpen}){
-  const nav=getNavSections("admin").flatMap(s=>s.items);
-  const cur=nav.find(n=>n.id===view)||{label:"Dashboard",icon:LayoutDashboard};
+  const cur=grupoDeVista(view,"admin")||{label:"Inicio",icon:LayoutDashboard};
   const Icon=cur.icon;
   return(
     <div className="glass noprint" style={{position:"sticky",top:0,zIndex:100,minHeight:56,display:"flex",alignItems:"center",gap:10,padding:"0 16px",borderBottom:"1px solid "+BORDER+"80"}}>
@@ -2736,7 +2735,7 @@ function TopBar({view,setView,sidebarOpen,setSidebarOpen,setSearchOpen}){
         <span style={{fontSize:10,fontFamily:MONO,color:BD2,background:"#f5f7fc",padding:"2px 8px",borderRadius:6,fontWeight:700}}>⌘K</span>
       </button>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
-        <button onClick={()=>setView("cotizador")} className="btn hide-mobile" style={{display:"flex",alignItems:"center",gap:6,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,boxShadow:"0 3px 12px "+A+"30"}}><Plus size={13}/>Cotizar</button>
+        <button onClick={()=>setView(FF_SERVICIOS?"cotizadorAuto":"cotizador")} className="btn hide-mobile" style={{display:"flex",alignItems:"center",gap:6,background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:10,padding:"8px 16px",fontSize:12,fontWeight:700,boxShadow:"0 3px 12px "+A+"30"}}><Plus size={13}/>Cotizar</button>
         <div style={{width:34,height:34,borderRadius:10,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:12,color:"#fff",cursor:"default",flexShrink:0}}>DM</div>
       </div>
     </div>
@@ -3153,45 +3152,75 @@ function MiniBar({pct,color=A,h=4}){
   return <div style={{background:BORDER,borderRadius:4,height:h,overflow:"hidden"}}><div style={{background:color,width:Math.min(100,pct)+"%",height:"100%",borderRadius:4,transition:"width .4s"}}/></div>;
 }
 /* ─── SIDEBAR ────────────────────────────────────────────────────────────── */
+/* ═══ MENÚ · regla del dueño: tan simple que un niño lo use ═══════════════════
+   13 opciones agrupadas por lo que la persona quiere hacer. Las pantallas que se
+   parecen viven juntas como pestañas dentro de una sola opción; nada se borró. */
+const MENU=[
+  {section:"Hoy",items:[
+    {label:"Inicio",icon:LayoutDashboard,tabs:[{id:"dashboard",label:"Inicio"}]},
+  ]},
+  {section:"Trabajo",items:[
+    {label:"Pedidos",icon:Bell,tabs:[{id:"solicitudes",label:"Pedidos que llegan",ff:true}]},
+    {label:"Cotizar",icon:DollarSign,tabs:[
+      {id:"cotizadorAuto",label:"Cotizar",ff:true},
+      {id:"cotizaciones",label:"Mis cotizaciones",ff:true},
+      {id:"cotizador",label:"Por destino",adminOnly:true},
+      {id:"presupuestos",label:"Presupuestos",adminOnly:true}]},
+    {label:"Servicios",icon:ClipboardList,tabs:[
+      {id:"servicios",label:"Servicios",ff:true},
+      {id:"nacional",label:"Proyectos nacionales",adminOnly:true},
+      {id:"rutas",label:"Rutas (anterior)"},
+      {id:"entregas",label:"Entregas (anterior)"}]},
+    {label:"En vivo",icon:Radio,tabs:[
+      {id:"despacho",label:"Choferes en ruta",ff:true},
+      {id:"alertas",label:"Alertas"},
+      {id:"tracking",label:"Mapa (anterior)"},
+      {id:"chat",label:"Chat"}]},
+  ]},
+  {section:"Mis datos",items:[
+    {label:"Clientes",icon:Building2,adminOnly:true,tabs:[{id:"clientes",label:"Clientes"},{id:"prospeccion",label:"Prospectos"}]},
+    {label:"Lugares",icon:MapPin,tabs:[{id:"puntos",label:"Lugares de carga y entrega",ff:true}]},
+    {label:"Choferes y unidades",icon:Truck,tabs:[{id:"choferes",label:"Choferes"},{id:"unidades",label:"Unidades"},{id:"jornadas",label:"Jornadas"}]},
+    {label:"Proveedores",icon:Users,tabs:[{id:"proveedores",label:"Proveedores",ff:true}]},
+  ]},
+  {section:"Dinero",items:[
+    {label:"Precios",icon:Hash,tabs:[{id:"tarifario",label:"Precios",ff:true}]},
+    {label:"Facturación",icon:FileText,tabs:[{id:"facturas",label:"Facturación"}]},
+    {label:"Pagos y gastos",icon:CreditCard,tabs:[{id:"pagos",label:"Pagos a proveedores",adminOnly:true},{id:"viaticos",label:"Viáticos y gastos",adminOnly:true},{id:"gastosAdmin",label:"Gastos de choferes"}]},
+    {label:"Reportes",icon:BarChart2,tabs:[
+      {id:"reportesOperacion",label:"Operación",ff:true},
+      {id:"reportes",label:"Dinero",adminOnly:true},
+      {id:"ejecutivo",label:"Resumen ejecutivo",adminOnly:true},
+      {id:"finanzas",label:"Portal financiero",adminOnly:true},
+      {id:"cierre",label:"Cierre contable",adminOnly:true}]},
+  ]},
+  {section:"Configuración",items:[
+    {label:"Usuarios",icon:Shield,adminOnly:true,tabs:[{id:"usuarios",label:"Usuarios"}]},
+  ]},
+];
+/** Menú visible para un rol: cada opción con sus pestañas permitidas; `id` = primera pestaña. */
 function getNavSections(rol){
   const isAdmin = rol==="admin";
-  const all=[
-    {section:"CORE",items:[
-      {id:"dashboard",    label:"Dashboard",         icon:LayoutDashboard},
-      {id:"ejecutivo",    label:"Dashboard Ejecutivo", icon:TrendingUp, badge:"★", adminOnly:true},
-      {id:"finanzas",     label:"Portal Financiero",  icon:BarChart2, badge:"CFO", adminOnly:true},
-      {id:"cierre",       label:"Cierre contable",    icon:FolderOpen, badge:"NEW", adminOnly:true},
-      {id:"cotizador",    label:"Cotizador Pro",     icon:DollarSign, badge:"★",  adminOnly:true},
-      {id:"presupuestos", label:"Presupuestos",      icon:ClipboardList,           adminOnly:true},
-      {id:"prospeccion",  label:"Prospección",       icon:Target, badge:"NEW",     adminOnly:true},
-    ]},
-    {section:"OPERACIONES",items:[
-      ...(FF_SERVICIOS?[{id:"solicitudes", label:"Solicitudes", icon:Bell, badge:"NEW"},{id:"servicios", label:"Servicios", icon:ClipboardList, badge:"NEW"},{id:"despacho", label:"Despacho y torre", icon:Radio, badge:"NEW"},{id:"cotizadorAuto", label:"Cotizador automático", icon:Zap, badge:"NEW"},{id:"cotizaciones", label:"Cotizaciones", icon:FileText, badge:"NEW"},{id:"reportesOperacion", label:"Reportes de operación", icon:BarChart2, badge:"NEW"},{id:"tarifario", label:"Tarifario", icon:DollarSign, badge:"NEW"}]:[]),
-      {id:"tracking", label:"Live Tracking",         icon:Radio, badge:"LIVE"},
-      {id:"rutas",    label:"Planificador Rutas",    icon:Map},
-      {id:"choferes", label:"Choferes",              icon:Users},
-      {id:"unidades", label:"Flota",                 icon:Truck, badge:"NEW"},
-      {id:"nacional", label:"Proyectos Nacionales",  icon:Target, adminOnly:true},
-      ...(FF_SERVICIOS?[{id:"puntos", label:"Puntos de entrega", icon:MapPin, badge:"NEW"},{id:"proveedores", label:"Proveedores", icon:Users, badge:"NEW"}]:[]),
-      {id:"entregas", label:"Entregas",              icon:Package},
-    ]},
-    {section:"ADMINISTRACIÓN",items:[
-      {id:"facturas",    label:isAdmin?"Facturación":"Registrar Servicio", icon:FileText},
-      {id:"pagos",       label:"Pagos a Proveedores", icon:CreditCard, adminOnly:true, badge:"NEW"},
-      {id:"reportes",    label:"Reportes & KPIs",   icon:BarChart2, adminOnly:true, badge:"NEW"},
-      {id:"viaticos",    label:"Viáticos & Gastos", icon:Zap,       adminOnly:true},
-      {id:"gastosAdmin", label:"Gastos Choferes",   icon:DollarSign, badge:"NEW"},
-      {id:"jornadas",    label:"Jornadas & Horas",  icon:Clock,      badge:"NEW"},
-      {id:"chat",        label:"Chat interno",      icon:Send,       badge:"NEW"},
-      {id:"alertas",     label:"Centro de Alertas", icon:Bell,       badge:"NEW"},
-      {id:"clientes",    label:"Clientes",          icon:Building2,  adminOnly:true},
-      {id:"usuarios",    label:"Usuarios & Roles",  icon:Shield,     adminOnly:true},
-    ]},
-  ];
-  return all.map(s=>({
-    ...s,
-    items:s.items.filter(item=>isAdmin||!item.adminOnly)
-  })).filter(s=>s.items.length>0);
+  const ve = t => (isAdmin||!t.adminOnly)&&(FF_SERVICIOS||!t.ff);
+  return MENU.map(s=>({section:s.section,items:s.items.filter(it=>isAdmin||!it.adminOnly)
+    .map(it=>({...it,tabs:it.tabs.filter(ve)})).filter(it=>it.tabs.length>0).map(it=>({...it,id:it.tabs[0].id}))}))
+    .filter(s=>s.items.length>0);
+}
+/** Opción del menú a la que pertenece una pantalla. */
+function grupoDeVista(view,rol){
+  for(const s of getNavSections(rol)) for(const it of s.items) if(it.tabs.some(t=>t.id===view)) return it;
+  return null;
+}
+/* Pestañas de la opción actual (solo si tiene más de una). */
+function BarraPestanas({view,setView,rol}){
+  const g=grupoDeVista(view,rol);
+  if(!g||g.tabs.length<2) return null;
+  return(
+    <div className="noprint" role="tablist" aria-label={g.label} style={{display:"flex",gap:6,flexWrap:"wrap",padding:"12px 20px 0",background:"#f1f4fb"}}>
+      {g.tabs.map(t=>{const a=t.id===view;return(
+        <button key={t.id} role="tab" aria-selected={a} onClick={()=>setView(t.id)} className="btn"
+          style={{padding:"8px 14px",borderRadius:999,border:"1.5px solid "+(a?A:BD2),background:a?A+"14":"#fff",color:a?A:TEXT,fontWeight:a?800:600,fontSize:13}}>{t.label}</button>);})}
+    </div>);
 }
 function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout,onBuscar}){
   const isMobile = typeof window!=="undefined"&&window.innerWidth<768;
@@ -3214,8 +3243,8 @@ function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout,onBus
               <span style={{fontSize:10.5,fontWeight:900,color:"#fdba74",letterSpacing:"0.14em",textTransform:"uppercase"}}>{section}</span>
               <span style={{flex:1,height:1,background:"rgba(255,255,255,.08)"}}/>
             </div>}
-            {items.map(({id,label,icon:Icon,badge})=>{
-              const a=view===id;
+            {items.map(({id,label,icon:Icon,badge,tabs})=>{
+              const a=(tabs||[]).some(t=>t.id===view);
               return(
                 <button key={id} onClick={()=>setView(id)} className="btn" title={showFull?"":label} style={{width:"100%",display:"flex",alignItems:"center",gap:showFull?9:0,padding:showFull?"10px 10px":"10px 0",borderRadius:9,marginBottom:1,cursor:"pointer",transition:"all .15s",background:a?A+"22":"transparent",justifyContent:showFull?"flex-start":"center",position:"relative"}}>
                   {a&&<div style={{position:"absolute",left:0,top:"20%",bottom:"20%",width:3,borderRadius:4,background:A,transition:"all .15s"}}/>}
@@ -15041,6 +15070,7 @@ export default function App(){
           <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
             <TopBar view={view} setView={setView} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} setSearchOpen={setSearchOpen}/>
             <main style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
+              <BarraPestanas view={view} setView={setView} rol={rol}/>
               {VIEWS[view]||VIEWS.dashboard}
             </main>
           </div>
