@@ -69,3 +69,10 @@ test('el total de costos del servicio solo lo escribe el servidor', async () => 
   const actual = { id: srv.id, ...(await getDoc(doc(dbOps, 'servicios', srv.id))).data() };
   await assertSucceeds(sOps.actualizar(OPS, actual, { ...actual, notas: 'otra nota', costoTotal: 1 }));
 });
+
+test('el link de seguimiento y la encuesta solo los escribe el servidor', async () => {
+  const ref = doc(dbOps, 'servicios', srv.id);
+  await assertFails(updateDoc(ref, { seguimientoToken: 'x'.repeat(43) }));
+  await assertFails(updateDoc(doc(dbAdmin, 'servicios', srv.id), { encuestaCalificacion: 5 }));
+  await assertFails(setDoc(doc(dbOps, 'servicios', srv.id, 'encuesta', 'respuesta'), { calificacion: 5 }));
+});

@@ -122,7 +122,8 @@ service cloud.firestore {
         && c.precioAprobado == d.precio
         && c.aprobadoPor == d.precioAprobadoPor;
     }
-    function camposDeCostoServidor() { return ['costoTotal','costosN','costosPorConcepto','costosActualizadosEn']; }
+    /* Campos que solo escribe el servidor: totales de costos, link de seguimiento y encuesta del cliente. */
+    function camposDeCostoServidor() { return ['costoTotal','costosN','costosPorConcepto','costosActualizadosEn','seguimientoToken','seguimientoCreadoEn','encuestaRespondida','encuestaCalificacion']; }
     match /servicios/{id} {
       allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId());
       allow create: if esOficina()
@@ -143,6 +144,10 @@ service cloud.firestore {
       allow delete: if false;
       /* Costos reales: la oficina los captura; nadie los edita ni borra. Uno mal
          capturado se anula una sola vez, con motivo. El total lo escribe el servidor. */
+      match /encuesta/{e} {
+        allow read: if esOficina();
+        allow write: if false;
+      }
       match /costos/{costoId} {
         allow read: if esOficina();
         allow create: if esOficina()

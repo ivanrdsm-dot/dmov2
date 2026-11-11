@@ -213,6 +213,34 @@ function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisa
     </Seccion>);
 }
 
+/* Link para el cliente: una página con la etapa de su servicio y, al final, una encuesta.
+   No muestra precios ni datos internos. Cambiar el link apaga el anterior. */
+function LinkCliente({ s, despacho, avisar }){
+  const [ocupado, setOcupado] = useState(false);
+  if(!despacho || s.estado === "Cancelada") return null;
+  const url = s.seguimientoToken ? `${window.location.origin}/s/${s.seguimientoToken}` : "";
+  const pedir = async nuevo => {
+    if(nuevo && !window.confirm("El link anterior dejará de funcionar. ¿Crear uno nuevo?")) return;
+    setOcupado(true);
+    try { const r = await despacho.linkSeguimiento(s.id, nuevo); const u = `${window.location.origin}/s/${r.token}`; try { await navigator.clipboard.writeText(u); avisar("Link copiado. Pégalo en el correo o WhatsApp del cliente."); } catch { avisar("Link listo"); } }
+    catch(e){ avisar("No se pudo: " + (e?.message || e), true); } finally { setOcupado(false); }
+  };
+  const copiar = async () => { try { await navigator.clipboard.writeText(url); avisar("Link copiado"); } catch { avisar("Cópialo a mano: " + url, true); } };
+  return (
+    <Seccion titulo="Link para el cliente">
+      {s.encuestaCalificacion ? <div style={{ fontSize: 14, marginBottom: 8 }}>El cliente calificó: <b style={{ color: A }}>{"★".repeat(s.encuestaCalificacion)}{"☆".repeat(5 - s.encuestaCalificacion)}</b></div> : null}
+      {url ? <>
+        <div style={{ fontFamily: MONO, fontSize: 12, wordBreak: "break-all", background: "#f8fafc", border: "1px solid " + BORDER, borderRadius: 10, padding: "8px 10px" }}>{url}</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <button onClick={copiar} style={boton(A)}>Copiar link</button>
+          <a href={url} target="_blank" rel="noreferrer" style={{ ...boton(BLUE, false), textDecoration: "none", lineHeight: "20px" }}>Ver como cliente</a>
+          <button onClick={() => pedir(true)} disabled={ocupado} style={boton(MUTED, false)}>Cambiar link</button>
+        </div></>
+        : <button onClick={() => pedir(false)} disabled={ocupado} style={boton(A)}>{ocupado ? "Creando…" : "Crear link para el cliente"}</button>}
+      <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>El cliente ve en qué etapa va su servicio y, al entregarse, puede calificarlo. No ve precios ni datos internos.</div>
+    </Seccion>);
+}
+
 function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = null, onEditar, onClose, avisar }){
   const esAdmin = usuario.rol === "admin";
   const [eventos, setEventos] = useState([]);
@@ -268,6 +296,7 @@ function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = nul
           <button onClick={aprobar} disabled={ocupado} style={boton(GREEN)}>Aprobar precio</button></div>}
       </Seccion>
       <ChoferYRuta s={s} store={store} usuario={usuario} unidades={unidades} choferesApp={choferesApp} despacho={despacho} avisar={avisar}/>
+      <LinkCliente s={s} despacho={despacho} avisar={avisar}/>
       <CostosServicio s={s} store={store} usuario={usuario} avisar={avisar}/>
       <Seccion titulo="Cambiar estado">
         {opciones.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Este servicio ya no cambia de estado.</div> : <>
@@ -283,7 +312,7 @@ function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = nul
         {eventos.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Sin eventos.</div> : eventos.map(e => (
           <div key={e.id} style={{ fontSize: 13, padding: "7px 0", borderBottom: "1px solid " + BORDER }}>
             <span style={{ fontFamily: MONO, fontSize: 11, color: MUTED }}>{fechaHora(e.ts)}</span> · <b>{e.actorNombre || e.actorUid}</b>{" "}
-            {e.tipo === "creado" ? "registró el servicio" : e.tipo === "costo" ? `agregó un costo: ${e.datos?.concepto} ${dinero(e.datos?.monto)}` : e.tipo === "costo_anulado" ? `anuló un costo (${e.datos?.concepto} ${dinero(e.datos?.monto)})` : e.tipo === "estado" ? `cambió de ${e.de} a ${e.a}` : e.tipo === "precio_aprobado" ? `aprobó el precio ${dinero(e.cambios?.[0]?.despues)}` : `editó ${(e.cambios || []).map(c => c.campo).join(", ")}`}
+            {e.tipo === "creado" ? "registró el servicio" : e.tipo === "link_seguimiento_creado" ? "creó el link para el cliente" : e.tipo === "link_seguimiento_cambiado" ? "cambió el link para el cliente" : e.tipo === "encuesta" ? `recibió la calificación del cliente: ${e.calificacion} de 5` : e.tipo === "costo" ? `agregó un costo: ${e.datos?.concepto} ${dinero(e.datos?.monto)}` : e.tipo === "costo_anulado" ? `anuló un costo (${e.datos?.concepto} ${dinero(e.datos?.monto)})` : e.tipo === "estado" ? `cambió de ${e.de} a ${e.a}` : e.tipo === "precio_aprobado" ? `aprobó el precio ${dinero(e.cambios?.[0]?.despues)}` : `editó ${(e.cambios || []).map(c => c.campo).join(", ")}`}
             {e.excepcion && <span style={{ color: ROSE }}> · sin {e.faltantes.join(", ")}</span>}{e.motivo && <span style={{ color: MUTED }}> · Motivo: {e.motivo}</span>}
           </div>))}
       </Seccion>
