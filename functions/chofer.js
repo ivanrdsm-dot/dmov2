@@ -185,6 +185,24 @@ export const choferCerrarParada = onCall(OPC, async req => {
   return { ok: true, pendientes: resultado.pendientes, porExcepcion: resultado.porExcepcion === true };
 });
 
+/** Fin de la jornada: deja la hora de salida (la pone el servidor). No se puede con una ruta a medias. */
+export const choferTerminarJornada = onCall(OPC, async req => {
+  const { chofer } = await choferDe(req);
+  const ref = db().doc(`jornadas/${chofer.id}_${fechaCDMX()}`);
+  const enRuta = await db().collection("servicios").where("choferId", "==", chofer.id).where("estado", "==", "En ruta").limit(1).get();
+  if(!enRuta.empty) throw falla("failed-precondition", "Primero termina tu ruta: aún tienes paradas pendientes");
+  const pos = { lat: Number(req.data?.lat), lng: Number(req.data?.lng) }, km = Number(req.data?.odometroKm);
+  const r = await db().runTransaction(async tx => {
+    const j = await tx.get(ref);
+    if(!j.exists) throw falla("failed-precondition", "Hoy no hiciste check-in");
+    if(j.data().estado === "Cerrada") return { yaEstaba: true };
+    tx.update(ref, { estado: "Cerrada", checkOutEn: ahora(), ubicacionSalida: coordenadaValida(pos) ? pos : null,
+      ...(Number.isFinite(km) && km > 0 ? { odometroFinalKm: km } : {}) });
+    return { yaEstaba: false };
+  });
+  return { ok: true, ...r };
+});
+
 /** Botón de emergencia. No exige check-in ni servicio: siempre debe pasar. */
 export const choferSOS = onCall(OPC, async req => {
   const { chofer } = await choferDe(req, { exigirDispositivo: false });

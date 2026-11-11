@@ -7,7 +7,7 @@ import { auth, db, esFallaDeRed, llamar, mensajeDe } from "./src/firebase";
 import { idDispositivo, modeloDispositivo } from "./src/dispositivo";
 import { alCambiarCola, pendientes, procesarCola, Tarea } from "./src/cola";
 import { subir } from "./src/fotos";
-import { ultimaPosicion } from "./src/rastreo";
+import { posicionAhora, ultimaPosicion } from "./src/rastreo";
 import { COLOR } from "./src/config";
 import { Boton, Nota, Titulo, s } from "./src/ui";
 import Login from "./src/pantallas/Login";
@@ -15,7 +15,7 @@ import CheckIn from "./src/pantallas/CheckIn";
 import Ruta from "./src/pantallas/Ruta";
 
 const fechaCDMX = () => new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
-type Estado = { paso: "cargando" } | { paso: "login" } | { paso: "bloqueado"; motivo: string } | { paso: "checkin"; choferId: string; nombre: string } | { paso: "ruta"; choferId: string; nombre: string };
+type Estado = { paso: "cargando" } | { paso: "login" } | { paso: "bloqueado"; motivo: string } | { paso: "checkin"; choferId: string; nombre: string } | { paso: "ruta"; choferId: string; nombre: string } | { paso: "fin"; choferId: string; nombre: string };
 
 export default function App(){
   const [estado, setEstado] = useState<Estado>({ paso: "cargando" });
@@ -40,7 +40,7 @@ export default function App(){
     try {
       const r = await llamar<{ ok: boolean; choferId: string; nombre: string }>("choferRegistrarDispositivo", { dispositivoId: await idDispositivo(), modelo: modeloDispositivo() });
       const jornada = await getDoc(doc(db, "jornadas", `${r.choferId}_${fechaCDMX()}`));
-      setEstado({ paso: jornada.exists() ? "ruta" : "checkin", choferId: r.choferId, nombre: r.nombre });
+      setEstado({ paso: !jornada.exists() ? "checkin" : jornada.data()?.estado === "Cerrada" ? "fin" : "ruta", choferId: r.choferId, nombre: r.nombre });
       vaciarCola();
     } catch(e){ setEstado({ paso: "bloqueado", motivo: mensajeDe(e) }); }
   }, [vaciarCola]);
@@ -48,9 +48,18 @@ export default function App(){
 
   const sos = () => Alert.alert("¿Enviar SOS?", "Operaciones recibirá una alerta de emergencia con tu ubicación.", [
     { text: "Cancelar", style: "cancel" },
-    { text: "Enviar SOS", style: "destructive", onPress: async () => { const p = ultimaPosicion();
+    { text: "Enviar SOS", style: "destructive", onPress: async () => {
+        /* Ubicación de este momento (máx. 5 s); si no llega, la última conocida. */
+        const p = await Promise.race([posicionAhora(), new Promise<null>(r => setTimeout(() => r(null), 5000))]) || ultimaPosicion();
         try { await llamar("choferSOS", { lat: p?.lat, lng: p?.lng }); Alert.alert("SOS enviado", "Operaciones ya fue avisada."); }
         catch { Alert.alert("No hay señal", "Llama directamente a operaciones."); } } }]);
+
+  const terminarJornada = () => Alert.alert("¿Terminar tu jornada?", "Operaciones verá tu hora de salida.", [
+    { text: "Cancelar", style: "cancel" },
+    { text: "Terminar", onPress: async () => { const p = ultimaPosicion();
+        try { await llamar("choferTerminarJornada", { dispositivoId: await idDispositivo(), lat: p?.lat, lng: p?.lng });
+          if("nombre" in estado) setEstado({ paso: "fin", choferId: estado.choferId, nombre: estado.nombre }); }
+        catch(e){ Alert.alert("No se pudo", mensajeDe(e)); } } }]);
 
   if(estado.paso === "login") return <><StatusBar style="light"/><Login/></>;
   return (
@@ -70,7 +79,8 @@ export default function App(){
         {estado.paso === "bloqueado" && <View style={s.contenido}><Titulo>No puedes entrar</Titulo><Nota color={COLOR.rojo}>{estado.motivo}</Nota>
           <Boton texto="Reintentar" onPress={() => preparar(auth.currentUser)}/><Boton texto="Salir de la cuenta" borde color={COLOR.gris} onPress={() => { signOut(auth); }}/></View>}
         {estado.paso === "checkin" && <CheckIn choferId={estado.choferId} onListo={() => setEstado({ ...estado, paso: "ruta" })}/>}
-        {estado.paso === "ruta" && <Ruta choferId={estado.choferId} alEncolar={vaciarCola}/>}
+        {estado.paso === "ruta" && <Ruta choferId={estado.choferId} alEncolar={vaciarCola} onTerminar={terminarJornada}/>}
+        {estado.paso === "fin" && <View style={s.contenido}><Titulo>Jornada terminada</Titulo><Nota>Gracias, {estado.nombre.split(" ")[0]}. Mañana empiezas con tu check-in.</Nota></View>}
       </View>
     </SafeAreaView>);
 }

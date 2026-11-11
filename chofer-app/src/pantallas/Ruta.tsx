@@ -11,7 +11,7 @@ import Parada, { ParadaDoc } from "./Parada";
 interface Servicio { id: string; folio: string; estado: string; empresa?: string; }
 
 /** Ruta del día: solo los servicios asignados a este chofer. Lo que cambia de estado lo decide el servidor. */
-export default function Ruta({ choferId, alEncolar }: { choferId: string; alEncolar: () => void }){
+export default function Ruta({ choferId, alEncolar, onTerminar }: { choferId: string; alEncolar: () => void; onTerminar?: () => void }){
   const [servicios, setServicios] = useState<Servicio[]>([]);
   const [paradas, setParadas] = useState<ParadaDoc[]>([]);
   const [abierta, setAbierta] = useState<ParadaDoc | null>(null);
@@ -66,5 +66,6 @@ export default function Ruta({ choferId, alEncolar }: { choferId: string; alEnco
             <Boton texto={p.tipo === "carga" ? "Ya cargué: cerrar parada" : "Ya llegué: entregar"} color={COLOR.verde} onPress={() => setAbierta(p)}/>
           </View>}
         </Tarjeta>); })}
+      {onTerminar && (!actual || actual.estado !== "En ruta") && <Boton texto="Terminar mi jornada" borde color={COLOR.gris} onPress={onTerminar}/>}
     </ScrollView>);
 }
