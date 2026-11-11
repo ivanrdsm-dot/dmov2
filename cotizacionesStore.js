@@ -39,7 +39,7 @@ export function crearCotizacionesStore(db){
       const cuerpo = {
         empresa: t(datos.empresa, 200), solicitante: t(datos.solicitante, 200), contacto: t(datos.contacto, 320), notas: t(datos.notas, 2000),
         entrada: plano(datos.entrada), resultado: plano(datos.resultado), precioPropuesto: Number(datos.resultado.precio),
-        ...(sol ? { solicitudId: sol.id, solicitudFolio: sol.folio || "", solicitudRecibidaEn: Number(sol.recibidaEn) || null } : {}),
+        ...(sol ? { solicitudId: sol.id, solicitudFolio: sol.folio || "", solicitudCanal: sol.canal || "", solicitudRecibidaEn: Number(sol.recibidaEn) || null } : {}),
         ...(datos.sustituyeA ? { sustituyeA: t(datos.sustituyeA, 40) } : {}),
       };
       const folio = await runTransaction(db, async tx => {

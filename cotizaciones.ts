@@ -21,7 +21,7 @@ export interface ResumenCalculo {
 export interface Cotizacion {
   id?: string; folio?: string; estado?: EstadoCotizacion;
   empresa?: string; solicitante?: string; contacto?: string; notas?: string;
-  solicitudId?: string; solicitudFolio?: string; solicitudRecibidaEn?: number | null;
+  solicitudId?: string; solicitudFolio?: string; solicitudCanal?: string; solicitudRecibidaEn?: number | null;
   servicioId?: string; servicioFolio?: string;
   entrada?: Record<string, unknown>; resultado?: ResumenCalculo;
   precioPropuesto?: number | null; precioAprobado?: number; aprobadoPor?: string; aprobadoEn?: number | null;
@@ -91,6 +91,7 @@ export function servicioDesdeCotizacion(c: Cotizacion): Record<string, unknown> 
     notas: c.notas ?? "",
   };
   if(c.solicitudId){ o.solicitudId = c.solicitudId; o.solicitudFolio = c.solicitudFolio ?? ""; }
+  if(c.solicitudCanal) o.canal = c.solicitudCanal;
   return o;
 }
 

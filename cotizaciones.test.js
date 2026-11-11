@@ -56,11 +56,11 @@ describe("validación y transiciones", () => {
 
 describe("de cotización a servicio", () => {
   const c = { id: "c1", folio: "COT-2026-0007", estado: "Aceptada", empresa: "Cliente", solicitante: "Ana", contacto: "ana@example.invalid",
-    solicitudId: "s1", solicitudFolio: "SOL-2026-0003", entrada: { modo: "Cajas", cajas: "120" }, precioPropuesto: 3200, precioAprobado: 3500,
+    solicitudId: "s1", solicitudFolio: "SOL-2026-0003", solicitudCanal: "Correo", entrada: { modo: "Cajas", cajas: "120" }, precioPropuesto: 3200, precioAprobado: 3500,
     resultado: { tarimas: 5, pesoKg: 1440, volumenM3: 7.2, maniobra: true, ayudantes: 2 } };
   it("lleva folio, precio aprobado, carga y la liga a la solicitud", () => {
     expect(servicioDesdeCotizacion(c)).toMatchObject({ empresa: "Cliente", cotizacionId: "c1", cotizacionFolio: "COT-2026-0007", precioPropuesto: 3500,
-      cajas: "120", tarimas: 5, pesoKg: 1440, maniobras: "Sí, 2 ayudante(s)", solicitudId: "s1", solicitudFolio: "SOL-2026-0003" });
+      cajas: "120", tarimas: 5, pesoKg: 1440, maniobras: "Sí, 2 ayudante(s)", solicitudId: "s1", solicitudFolio: "SOL-2026-0003", canal: "Correo" });
   });
   it("sin aprobación no hay precio para el cliente", () => {
     expect(precioCliente({ precioPropuesto: 3200 })).toBeNull();

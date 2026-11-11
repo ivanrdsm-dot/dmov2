@@ -201,7 +201,7 @@ service cloud.firestore {
     function cotPrecio() { return ['precioAprobado','aprobadoPor','aprobadoEn']; }
     function cotInmutables() {
       return ['folio','creadoPor','creadoPorNombre','creadoEn','entrada','resultado','precioPropuesto',
-              'solicitudId','solicitudFolio','solicitudRecibidaEn','sustituyeA','empresa'];
+              'solicitudId','solicitudFolio','solicitudCanal','solicitudRecibidaEn','sustituyeA','empresa'];
     }
     function cotTransicion(de, a) {
       return de == a

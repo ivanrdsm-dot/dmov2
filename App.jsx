@@ -14635,7 +14635,7 @@ function ServiciosModulo({authUser,userProfile,choferes,solicitud,onSolicitudUsa
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
   /* De una cotización aceptada: el servicio nace con el precio que ya aprobó un admin
      (las reglas del servidor lo comparan contra la cotización). */
-  const prefillCot=useMemo(()=>cotizacion?{...servicioDesdeCotizacion(cotizacion),precio:cotizacion.precioAprobado,precioAprobadoPor:cotizacion.aprobadoPor||""}:null,[cotizacion]);
+  const prefillCot=useMemo(()=>cotizacion?{...servicioDesdeCotizacion(cotizacion),recibidaEn:fechaLocalInput(cotizacion.solicitudRecibidaEn||cotizacion.creadoEn),precio:cotizacion.precioAprobado,precioAprobadoPor:cotizacion.aprobadoPor||""}:null,[cotizacion]);
   const prefillSol=useMemo(()=>solicitud?{canal:solicitud.canal,recibidaEn:fechaLocalInput(solicitud.recibidaEn),solicitante:solicitud.remitenteNombre||"",solicitanteContacto:solicitud.remitenteCorreo||"",notas:solicitud.asunto||"",solicitudId:solicitud.id,solicitudFolio:solicitud.folio}:null,[solicitud]);
   const prefill=prefillCot||prefillSol;
   const onCreado=async(servicio,datos)=>{
