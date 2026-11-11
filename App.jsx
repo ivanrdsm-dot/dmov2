@@ -25,8 +25,11 @@ import {
 import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO, PL_ORDEN_DIRECTOS, PLANES, planPorNumero, etiquetaPlan, normalizarPlan, planDeFactura, planearNormalizacionPlanes, etapaFactura, ETAPAS_FACTURA, facturasLigadas, buscarCotizaciones, rangoPeriodo, etiquetaPeriodo, filasPorPeriodo, ingresosPorColumna, pctGuardado, kpisCierre, resumenEstimados, conciliarIngresos, conciliarCxC, coincideAlias, fechaLocalISO, mismaEmpresa, clienteIdCorrecto, catalogoPlanes, setCatalogoPlanes, fusionarCatalogoPlanes } from "./domain";
 import CfdiArchive from "./CfdiArchive.jsx";
 import { crearServiciosStore } from "./serviciosStore.js";
+import { faltantesCapacidad } from "./dimensionamiento.ts";
 import { crearSolicitudesStore } from "./solicitudesStore.js";
 const SolicitudesVista = lazy(()=>import("./Solicitudes.jsx"));
+import { crearCatalogoStore } from "./catalogosStore.js";
+const CatalogosVista = lazy(()=>import("./Catalogos.jsx"));
 /* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
@@ -3505,6 +3508,7 @@ function getNavSections(rol){
       {id:"choferes", label:"Choferes",              icon:Users},
       {id:"unidades", label:"Flota",                 icon:Truck, badge:"NEW"},
       {id:"nacional", label:"Proyectos Nacionales",  icon:Target, adminOnly:true},
+      ...(FF_SERVICIOS?[{id:"puntos", label:"Puntos de entrega", icon:MapPin, badge:"NEW"},{id:"proveedores", label:"Proveedores", icon:Users, badge:"NEW"}]:[]),
       {id:"entregas", label:"Entregas",              icon:Package},
     ]},
     {section:"ADMINISTRACIÓN",items:[
@@ -11165,8 +11169,9 @@ function Unidades(){
   const [modal,setModal]=useState(false);const [editItem,setEditItem]=useState(null);
   const [toast,setToast]=useState(null);
   const showT=(m,t="ok")=>setToast({msg:m,type:t});
-  const TIPOS_U=["","Eurovan 1T","Camioneta 3.5T","Krafter","Rabón","Mudancero","Auto utilitario","Otro"];
-  const empty={placa:"",tipo:"",status:"Activa",seguroVence:"",verificacionVence:"",aseguradora:"",poliza:"",notas:""};
+  const TIPOS_U=["","VW Transporter","Peugeot Expert","Mercedes Sprinter","VW Crafter","Eurovan 1T","Camioneta 3.5T","Krafter","Rabón","Mudancero","Auto utilitario","Otro"];
+  const PROPIETARIOS=["","Propia","Rentada","Del grupo","Proveedor externo"];
+  const empty={placa:"",tipo:"",status:"Activa",propietario:"",capacidadKg:"",capacidadM3:"",capacidadTarimas:"",capacidadCajas:"",largoCm:"",anchoCm:"",altoCm:"",alturaPuertaCm:"",seguroVence:"",verificacionVence:"",aseguradora:"",poliza:"",notas:""};
   const [form,setForm]=useState(empty);
   const sf=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
 
@@ -11186,12 +11191,13 @@ function Unidades(){
   const alertas=items.filter(u=>u.status!=="Baja"&&(vencStatus(u.seguroVence).urgente||vencStatus(u.verificacionVence).urgente)).length;
 
   const openNew=()=>{setForm(empty);setEditItem(null);setModal(true);};
-  const openEdit=u=>{setForm({placa:u.placa||u.id,tipo:u.tipo||"",status:u.status||"Activa",seguroVence:u.seguroVence||"",verificacionVence:u.verificacionVence||"",aseguradora:u.aseguradora||"",poliza:u.poliza||"",notas:u.notas||""});setEditItem(u);setModal(true);};
+  const openEdit=u=>{setForm({...Object.fromEntries(Object.keys(empty).map(k=>[k,u[k]??empty[k]])),placa:u.placa||u.id});setEditItem(u);setModal(true);};
   const save=async()=>{
     const placa=(form.placa||"").trim().toUpperCase();
     if(!placa){showT("La placa es obligatoria","err");return;}
     try{
-      await setDoc(doc(db,"unidades",placa),{...form,placa,actualizadaEn:HOY},{merge:true});
+      const numeros={};for(const k of ["capacidadKg","capacidadM3","capacidadTarimas","capacidadCajas","largoCm","anchoCm","altoCm","alturaPuertaCm"]){const n=Number(String(form[k]??"").replace(/[,\s]/g,""));numeros[k]=Number.isFinite(n)&&n>0?n:"";}
+      await setDoc(doc(db,"unidades",placa),{...form,...numeros,placa,actualizadaEn:HOY},{merge:true});
       setModal(false);setForm(empty);setEditItem(null);showT("✓ Unidad guardada");
     }catch(e){showT(e.message,"err");}
   };
@@ -11228,6 +11234,7 @@ function Unidades(){
                   <span style={{background:(baja?MUTED:GREEN)+"14",color:baja?MUTED:GREEN,padding:"3px 10px",borderRadius:8,fontSize:11,fontWeight:800}}>{u.status||"Activa"}</span>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:12,fontSize:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",gap:8}}><span style={{color:MUTED}}>📐 Capacidad</span>{faltantesCapacidad(u).filter(x=>x!=="Tipo de unidad").length?<span style={{color:AMBER,fontWeight:800}}>PENDIENTE</span>:<span style={{fontFamily:MONO,fontWeight:700,textAlign:"right"}}>{Number(u.capacidadKg).toLocaleString("es-MX")} kg · {u.capacidadM3} m³ · {u.capacidadTarimas} tarimas</span>}</div>
                   <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MUTED}}>🛡️ Seguro</span><span style={{color:seg.color,fontWeight:700}}>{seg.label}</span></div>
                   <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MUTED}}>✅ Verificación</span><span style={{color:ver.color,fontWeight:700}}>{ver.label}</span></div>
                   <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:MUTED}}>📦 Servicios registrados</span><span style={{fontFamily:MONO,fontWeight:700}}>{u.serviciosVistos||0}</span></div>
@@ -11247,6 +11254,20 @@ function Unidades(){
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <Inp label="Placa *" value={form.placa} onChange={sf("placa")} placeholder="ABC123D" disabled={!!editItem} style={editItem?{background:"#f5f5f5"}:{}}/>
           <Sel label="Tipo de unidad" options={TIPOS_U.map(t=>t||"— Selecciona —")} value={form.tipo||"— Selecciona —"} onChange={e=>setForm(f=>({...f,tipo:e.target.value==="— Selecciona —"?"":e.target.value}))}/>
+          <Sel label="De quién es la unidad" options={PROPIETARIOS.map(t=>t||"— Selecciona —")} value={form.propietario||"— Selecciona —"} onChange={e=>setForm(f=>({...f,propietario:e.target.value==="— Selecciona —"?"":e.target.value}))}/>
+          <div style={{fontSize:11,fontWeight:800,color:MUTED,letterSpacing:"0.07em",textTransform:"uppercase",marginTop:4}}>Capacidad · de la tarjeta de circulación o ficha técnica, no estimada</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <Inp label="Carga útil (kg)" inputMode="decimal" value={form.capacidadKg} onChange={sf("capacidadKg")}/>
+            <Inp label="Volumen (m³)" inputMode="decimal" value={form.capacidadM3} onChange={sf("capacidadM3")}/>
+            <Inp label="Tarimas a piso" inputMode="numeric" value={form.capacidadTarimas} onChange={sf("capacidadTarimas")}/>
+            <Inp label="Cajas (opcional)" inputMode="numeric" value={form.capacidadCajas} onChange={sf("capacidadCajas")}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10}}>
+            <Inp label="Largo int. (cm)" inputMode="numeric" value={form.largoCm} onChange={sf("largoCm")}/>
+            <Inp label="Ancho int. (cm)" inputMode="numeric" value={form.anchoCm} onChange={sf("anchoCm")}/>
+            <Inp label="Alto int. (cm)" inputMode="numeric" value={form.altoCm} onChange={sf("altoCm")}/>
+            <Inp label="Puerta (cm)" inputMode="numeric" value={form.alturaPuertaCm} onChange={sf("alturaPuertaCm")}/>
+          </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
             <Inp label="Seguro vence" type="date" value={form.seguroVence} onChange={sf("seguroVence")}/>
             <Inp label="Verificación vence" type="date" value={form.verificacionVence} onChange={sf("verificacionVence")}/>
@@ -14560,6 +14581,11 @@ function SolicitudesModulo({authUser,userProfile,onCrearServicio}){
   const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
   return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando solicitudes…</div>}><SolicitudesVista store={store} usuario={usuario} onCrearServicio={onCrearServicio}/></Suspense>;
 }
+function CatalogoModulo({tipo,authUser,userProfile}){
+  const store=useMemo(()=>crearCatalogoStore(db,tipo==="puntos"?"puntos_entrega":"proveedores"),[tipo]);
+  const usuario=useMemo(()=>usuarioDe(authUser,userProfile),[authUser,userProfile]);
+  return <Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><CatalogosVista key={tipo} tipo={tipo} store={store} usuario={usuario}/></Suspense>;
+}
 function ServiciosModulo({authUser,userProfile,choferes,solicitud,onSolicitudUsada}){
   useCatalogos();
   const store=useMemo(()=>crearServiciosStore(db),[]);
@@ -15282,6 +15308,8 @@ export default function App(){
     presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     ...(FF_SERVICIOS?{solicitudes:<SolicitudesModulo authUser={authUser} userProfile={userProfile} onCrearServicio={x=>{setSolicitudAServicio(x);setView("servicios");}}/>,
+      puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
+      proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,
       servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)}/>}:{}),
     choferes:<Choferes/>,
     unidades:<Unidades/>,
