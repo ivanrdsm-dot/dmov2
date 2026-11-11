@@ -49,6 +49,7 @@ function Detalle({ c, store, usuario, onClose, onCrearServicio, avisar }){
         </div>
         {c.estado === "Propuesta" && (admin ? <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginTop: 12 }}>
           <div style={{ flex: "1 1 180px" }}><Campo label="Precio aprobado sin IVA" inputMode="decimal" value={precio} onChange={e => setPrecio(e.target.value)}/></div>
+          <div style={{ flex: "1 1 220px" }}><Campo label="Nota (opcional)" value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej. precio de temporada"/></div>
           <button onClick={() => correr(() => store.aprobar(usuario, c, Number(String(precio).replace(/[$,\s]/g, "")), nota), "Precio aprobado")} disabled={ocupado} style={boton(GREEN)}>Aprobar precio</button></div>
           : <p style={{ fontSize: 13, color: AMBER, margin: "10px 0 0" }}>Falta que un administrador apruebe el precio. Hasta entonces no se envía al cliente.</p>)}
         {r.pendientes?.length > 0 && c.estado === "Propuesta" && <p style={{ fontSize: 13, color: AMBER, margin: "10px 0 0" }}>El cálculo se guardó con {r.pendientes.length} dato(s) por confirmar: {r.pendientes.join(" · ")}</p>}
