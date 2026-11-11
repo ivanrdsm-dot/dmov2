@@ -112,7 +112,7 @@ export default function Despacho({ store, usuario }){
         {alertas.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Sin alertas.</div> : alertas.slice(0, 12).map(a => (
           <div key={a.id} style={{ fontSize: 13, padding: "7px 0", borderBottom: "1px solid " + BORDER, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <Chip color={a.type === "sos" ? ROSE : ["ubicacion_simulada", "cierre_fuera_de_punto", "velocidad_imposible"].includes(a.type) ? ROSE : AMBER}>{TIPO_ALERTA[a.type] || a.type}</Chip>
-            <b>{a.choferNombre || ""}</b><span>{a.msg || a.mensaje || ""}</span><span style={{ marginLeft: "auto", fontSize: 11, color: MUTED }}>{haceCuanto(a.ts, ahora)}</span>
+            <b>{a.choferNombre || ""}</b><span>{a.message || a.msg || a.mensaje || ""}</span><span style={{ marginLeft: "auto", fontSize: 11, color: MUTED }}>{haceCuanto(a.ts, ahora)}</span>
           </div>))}
       </Seccion>
       {ligar && <Dialogo titulo={"Cuenta de la app · " + ligar.nombre} onClose={() => setLigar(null)}>
