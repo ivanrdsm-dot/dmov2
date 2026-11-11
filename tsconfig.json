@@ -6,15 +6,18 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true
   },
   "include": [
     "catalogos.ts",
+    "cotizacionAuto.ts",
     "despacho.ts",
     "dimensionamiento.ts",
     "domain.ts",
     "hojaEntrega.ts",
     "servicios.ts",
-    "tarifario.ts"
+    "tarifario.ts",
+    "tiposUnidad.ts"
   ]
 }
