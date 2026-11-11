@@ -392,7 +392,9 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','tarifario','cotizaciones_logistica']);
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','tarifario','cotizaciones_logistica',
+        // Con papelera: el borrado lo controla su propia regla (copia obligatoria); la papelera no se edita.
+        'papelera','rutas','choferes','pagosProveedores','presupuestos','cuentas','viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas']);
     }
   }
 }
