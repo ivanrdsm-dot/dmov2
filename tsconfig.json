@@ -17,7 +17,7 @@
     "domain.ts",
     "hojaEntrega.ts",
     "servicios.ts",
-    "tarifario.ts",
+    "tarifario.ts", "tarifarioPro.ts",
     "tiposUnidad.ts"
   ]
 }
