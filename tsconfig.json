@@ -9,9 +9,10 @@
     "isolatedModules": true
   },
   "include": [
-    "domain.ts",
-    "servicios.ts",
+    "catalogos.ts",
+    "despacho.ts",
     "dimensionamiento.ts",
-    "catalogos.ts"
+    "domain.ts",
+    "servicios.ts"
   ]
 }
