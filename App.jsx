@@ -33,6 +33,7 @@ const CatalogosVista = lazy(()=>import("./Catalogos.jsx"));
 import { crearDespachoStore } from "./despachoStore.js";
 const DespachoVista = lazy(()=>import("./Despacho.jsx"));
 import { crearTarifarioStore } from "./tarifarioStore.js";
+import { porPagarPorTipo, tipoDeuda } from "./deudas.ts";
 import { tablasPro, puntoAdicionalSugerido, reglasPro, descuentoPorPuntos } from "./tarifarioPro.ts";
 import { redondearDecenasArriba } from "./tarifario.ts";
 import { cotizarDistribucion } from "./distribucion.ts";
@@ -2746,28 +2747,41 @@ function TopBar({view,setView,sidebarOpen,setSidebarOpen,setSearchOpen}){
     </div>
   );
 }
-function SearchPalette({cots=[],facts=[],rutas=[],clientes=[],entregas=[],onSelect,onClose}){
+function SearchPalette({cots=[],facts=[],rutas=[],clientes=[],entregas=[],onSelect,onClose,rol="admin"}){
   const [q,setQ]=useState("");
   const ref=useRef(null);
+  /* También busca en lo nuevo (pedidos, servicios, cotizaciones con folio) y en el menú. */
+  const [nuevos,setNuevos]=useState({sol:[],srv:[],cot:[]});
+  useEffect(()=>{
+    if(!FF_SERVICIOS) return;
+    const leer=c=>getDocs(query(collection(db,c),limit(300))).then(x=>x.docs.map(d=>({id:d.id,...d.data()}))).catch(()=>[]);
+    Promise.all([leer("solicitudes"),leer("servicios"),leer("cotizaciones_logistica")]).then(([sol,srv,cot])=>setNuevos({sol,srv,cot}));
+  },[]);
   useEffect(()=>{ref.current?.focus();},[]);
   useEffect(()=>{const h=e=>{if(e.key==="Escape")onClose();};window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[onClose]);
   const results=useMemo(()=>{
     if(!q.trim()) return [];
     const lq=q.toLowerCase();
     const r=[];
+    const has=(...xs)=>xs.some(x=>String(x||"").toLowerCase().includes(lq));
+    for(const sec of getNavSections(rol)) for(const it of sec.items) for(const t of it.tabs)
+      if(has(t.label,it.label)&&!r.some(x=>x.type===t.id)) r.push({type:t.id,icon:it.icon,label:"Ir a: "+it.label+(t.label!==it.label?" › "+t.label:""),sub:"",color:BLUE});
+    nuevos.sol.filter(x=>has(x.folio,x.remitenteNombre,x.remitenteCorreo,x.asunto)).slice(0,4).forEach(x=>r.push({type:"solicitudes",icon:Bell,label:(x.folio||"Pedido")+" · "+(x.remitenteNombre||x.remitenteCorreo||""),sub:x.asunto||"",color:AMBER}));
+    nuevos.cot.filter(x=>has(x.folio,x.empresa,x.solicitante)).slice(0,4).forEach(x=>r.push({type:"cotizaciones",icon:DollarSign,label:(x.folio||"")+" · "+(x.empresa||""),sub:x.estado||"",extra:x.precioAprobado?fmt(x.precioAprobado):"",color:A}));
+    nuevos.srv.filter(x=>has(x.folio,x.empresa,x.solicitante,x.choferNombre,x.unidadPlaca)).slice(0,4).forEach(x=>r.push({type:"servicios",icon:ClipboardList,label:(x.folio||"")+" · "+(x.empresa||""),sub:[x.estado,x.fechaServicio].filter(Boolean).join(" · "),color:GREEN}));
     cots.filter(c=>(c.cliente||"").toLowerCase().includes(lq)||(c.folio||"").toLowerCase().includes(lq)||(c.destino||"").toLowerCase().includes(lq)).slice(0,4).forEach(c=>r.push({type:"cotizador",icon:DollarSign,label:c.cliente||c.folio,sub:c.destino||c.modoLabel||"",extra:fmt(c.total||0),color:A}));
     facts.filter(f=>(f.empresa||f.cliente||"").toLowerCase().includes(lq)||(f.folio||"").toLowerCase().includes(lq)||(f.servicio||"").toLowerCase().includes(lq)).slice(0,4).forEach(f=>r.push({type:"facturas",icon:FileText,label:f.empresa||f.cliente||f.folio,sub:f.servicio||"",extra:fmt(f.total||0),color:BLUE}));
     rutas.filter(rt=>(rt.nombre||"").toLowerCase().includes(lq)||(rt.cliente||"").toLowerCase().includes(lq)).slice(0,3).forEach(rt=>r.push({type:"rutas",icon:Map,label:rt.nombre,sub:rt.cliente||"",extra:fmt(rt.total||0),color:VIOLET}));
     clientes.filter(cl=>(cl.nombre||"").toLowerCase().includes(lq)||(cl.contacto||"").toLowerCase().includes(lq)||(cl.plan||"").toLowerCase().includes(lq)).slice(0,3).forEach(cl=>r.push({type:"clientes",icon:Building2,label:cl.nombre||"",sub:cl.plan||cl.contacto||"",color:BLUE}));
     entregas.filter(e=>(e.pdv||"").toLowerCase().includes(lq)||(e.dir||"").toLowerCase().includes(lq)).slice(0,3).forEach(e=>r.push({type:"entregas",icon:Package,label:e.pdv||"",sub:e.dir||"",color:GREEN}));
     return r;
-  },[q,cots,facts,rutas,clientes,entregas]);
+  },[q,cots,facts,rutas,clientes,entregas,nuevos,rol]);
   return(
     <div onClick={e=>e.target===e.currentTarget&&onClose()} style={{position:"fixed",inset:0,background:"rgba(12,24,41,.5)",zIndex:600,display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:"15vh",backdropFilter:"blur(4px)"}}>
       <div className="pi" style={{background:"#fff",borderRadius:20,width:"100%",maxWidth:540,boxShadow:"0 32px 80px rgba(0,0,0,.28)",overflow:"hidden"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"16px 20px",borderBottom:"1px solid "+BORDER}}>
           <Search size={18} color={A}/>
-          <input ref={ref} value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar cotizaciones, facturas, rutas, clientes…" style={{flex:1,border:"none",fontSize:15,fontFamily:SANS,background:"transparent"}}/>
+          <input ref={ref} value={q} onChange={e=>setQ(e.target.value)} placeholder="Busca un cliente, un folio o una pantalla (p. ej. precios)…" style={{flex:1,border:"none",fontSize:15,fontFamily:SANS,background:"transparent"}}/>
           <button onClick={onClose} className="btn" style={{fontSize:10,fontFamily:MONO,color:MUTED,background:"#f5f7fc",padding:"3px 8px",borderRadius:6,fontWeight:700}}>ESC</button>
         </div>
         <div style={{maxHeight:360,overflowY:"auto"}}>
@@ -2784,7 +2798,7 @@ function SearchPalette({cots=[],facts=[],rutas=[],clientes=[],entregas=[],onSele
             </button>
           ))}
         </div>
-        {!q.trim()&&<div style={{padding:"20px 24px",color:MUTED,fontSize:12,textAlign:"center"}}>Escribe para buscar en cotizaciones, facturas, rutas, clientes y entregas</div>}
+        {!q.trim()&&<div style={{padding:"20px 24px",color:MUTED,fontSize:12,textAlign:"center"}}>Escribe un cliente, un folio (SOL-, COT-, SRV-) o el nombre de una pantalla</div>}
       </div>
     </div>
   );
@@ -3786,7 +3800,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
     const porCli={};
     factsBase.forEach(f=>{
       const k=f.clienteId||normEmpresa(f.empresa||f.cliente);
-      if(!porCli[k])porCli[k]={id:k,nombre:f.solicitante||normEmpresa(f.empresa||f.cliente),total:0,n:0};
+      if(!porCli[k])porCli[k]={id:k,nombre:normEmpresa(f.empresa||f.cliente)||f.solicitante||"Sin cliente",total:0,n:0};   // el cliente es la empresa, no quien pidió
       porCli[k].total+=Number(f.subtotal)||0;porCli[k].n++;
     });
     const topClientes=Object.values(porCli).sort((a,b)=>b.total-a.total)
@@ -3795,7 +3809,7 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
 
     // Proveedores (gasto y frecuencia) del periodo
     const porProv={};
-    pagosProv.filter(p=>enRango(p.mes,p.anio)).forEach(p=>{
+    pagosProv.filter(p=>enRango(p.mes,p.anio)&&tipoDeuda(p)==="Proveedores").forEach(p=>{   // préstamos, PTU e impuestos no son proveedores
       const k=(p.proveedor||"Sin proveedor").trim();
       if(!porProv[k])porProv[k]={proveedor:k,total:0,n:0};
       porProv[k].total+=Number(p.subtotal)||0;porProv[k].n++;
@@ -4043,6 +4057,40 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
   );
 }
 
+/* INICIO · "¿Qué falta hoy?" en palabras simples, con un botón para cada cosa. */
+function QueFaltaHoy({setView,alertasAbiertas=0}){
+  const [d,setD]=useState(null);
+  useEffect(()=>{
+    if(!FF_SERVICIOS){setD({});return;}
+    const hoy=fechaLocalISO(), out={}, listo=()=>{if(["sol","cot","srv"].every(k=>k in out)) setD({...out});};
+    const u1=onSnapshot(query(collection(db,"solicitudes"),where("estado","in",["Nueva","En revisión"]),limit(300)),x=>{out.sol=x.docs.map(y=>y.data());listo();},()=>{out.sol=[];listo();});
+    const u2=onSnapshot(query(collection(db,"cotizaciones_logistica"),where("estado","in",["Propuesta","Aprobada","Enviada"]),limit(300)),x=>{out.cot=x.docs.map(y=>y.data());listo();},()=>{out.cot=[];listo();});
+    const u3=onSnapshot(query(collection(db,"servicios"),where("fechaServicio","==",hoy),limit(300)),x=>{out.srv=x.docs.map(y=>y.data());listo();},()=>{out.srv=[];listo();});
+    return()=>{u1();u2();u3();};
+  },[]);
+  if(!d||!FF_SERVICIOS) return null;
+  const sinResp=(d.sol||[]).filter(x=>!x.primeraRespuestaEn).length;
+  const porAprobar=(d.cot||[]).filter(x=>x.estado==="Propuesta").length, porEnviar=(d.cot||[]).filter(x=>x.estado==="Aprobada").length, esperando=(d.cot||[]).filter(x=>x.estado==="Enviada").length;
+  const hoySrv=(d.srv||[]).filter(x=>x.estado!=="Cancelada"), sinChofer=hoySrv.filter(x=>["Solicitud","Cotizada","Confirmada"].includes(x.estado)).length;
+  const tarjetas=[
+    {n:sinResp,t:sinResp===1?"pedido por contestar":"pedidos por contestar",v:"solicitudes",c:sinResp?ROSE:GREEN},
+    {n:porAprobar+porEnviar,t:"cotizaciones por "+(porAprobar?"aprobar":"enviar"),sub:[porAprobar&&porAprobar+" por aprobar",porEnviar&&porEnviar+" por enviar",esperando&&esperando+" esperando al cliente"].filter(Boolean).join(" · "),v:"cotizaciones",c:porAprobar+porEnviar?AMBER:GREEN},
+    {n:hoySrv.length,t:hoySrv.length===1?"servicio para hoy":"servicios para hoy",sub:sinChofer?sinChofer+" todavía sin chofer":"",v:"servicios",c:sinChofer?ROSE:hoySrv.length?BLUE:GREEN},
+    {n:alertasAbiertas,t:alertasAbiertas===1?"alerta sin atender":"alertas sin atender",v:"alertas",c:alertasAbiertas?ROSE:GREEN},
+  ];
+  const todoBien=tarjetas.every(x=>!x.n);
+  return(
+    <div style={{marginBottom:18}}>
+      <div style={{fontFamily:DISP,fontWeight:800,fontSize:18,color:TEXT,marginBottom:10}}>{todoBien?"✓ Todo al día":"¿Qué falta hoy?"}</div>
+      <div className="g4">{tarjetas.map(x=>(
+        <button key={x.v} onClick={()=>setView(x.v)} className="btn ch" style={{textAlign:"left",background:"#fff",border:"1.5px solid "+(x.n?x.c+"55":BORDER),borderRadius:14,padding:"14px 16px",cursor:"pointer"}}>
+          <div style={{fontFamily:MONO,fontSize:28,fontWeight:900,color:x.n?x.c:GREEN,lineHeight:1}}>{x.n}</div>
+          <div style={{fontSize:13,fontWeight:700,color:TEXT,marginTop:6}}>{x.t}</div>
+          {x.sub&&<div style={{fontSize:11,color:MUTED,marginTop:3}}>{x.sub}</div>}
+          <div style={{fontSize:11,fontWeight:800,color:A,marginTop:8}}>Ver →</div>
+        </button>))}</div>
+    </div>);
+}
 function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospectos=[],choferes=[],rol="admin"}){
   const isAdmin=rol==="admin";
   // KPIs operativos adicionales (gastos choferes, jornadas activas, SOS)
@@ -4051,13 +4099,13 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   const [alertasItems,setAlertas]=useState([]);
   useEffect(()=>{
     const u1=onSnapshot(collection(db,"gastosChofer"),s=>setGastosChofer(s.docs.map(d=>({id:d.id,...d.data()}))));
-    const u2=onSnapshot(collection(db,"jornadas"),s=>setJornadas(s.docs.map(d=>({id:d.id,...d.data()}))));
+    const u2=onSnapshot(query(collection(db,"jornadas"),limit(1000)),s=>setJornadas(s.docs.map(d=>normalizarJornada(d.id,d.data()))));
     const u3=onSnapshot(query(collection(db,"alertas"),limit(500)),s=>setAlertas(s.docs.map(d=>normalizarAlerta(d.id,d.data()))));
     return()=>{u1();u2();u3();};
   },[]);
   const gastosPendientes = gastosChofer.filter(g=>g.estado==="pendiente").reduce((a,g)=>a+(g.monto||0),0);
   const gastosHoy = gastosChofer.filter(g=>{const ts=g.fechaTs?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).reduce((a,g)=>a+(g.monto||0),0);
-  const jornadasActivas = jornadas.filter(j=>!j.outTs).length;
+  const jornadasActivas = jornadas.filter(jornadaActiva).length;
   const sosSinAtender = alertasItems.filter(a=>a.type==="sos"&&!a.atendida).length;
   const alertasCriticas = alertasItems.filter(a=>ALERTAS_CRITICAS.includes(a.type)&&!a.atendida).length;
 
@@ -4158,26 +4206,11 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
 
   return(
     <div className="slide-in" style={{flex:1,overflowY:"auto",padding:"24px 28px",background:"#f1f4fb"}}>
-      {!isAdmin&&(
-        <div style={{background:"linear-gradient(135deg,"+BLUE+"18,"+BLUE+"08)",border:"1.5px solid "+BLUE+"30",borderRadius:12,padding:"12px 18px",marginBottom:18,display:"flex",alignItems:"center",gap:10}}>
-          <Shield size={16} color={BLUE}/>
-          <span style={{fontSize:13,fontWeight:600,color:BLUE}}>Vista operaciones — KPIs financieros disponibles solo para el admin</span>
-        </div>
-      )}
-      <div className="au" style={{marginBottom:20}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-          <div>
-            <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Dashboard</h1>
-            <p style={{color:MUTED,fontSize:13,marginTop:3}}>{new Date().toLocaleDateString("es-MX",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div className="ch" style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:13,padding:"10px 16px",display:"flex",alignItems:"center",gap:8,cursor:"default"}}>
-              <div style={{width:36,height:36,borderRadius:10,background:healthColor+"14",display:"flex",alignItems:"center",justifyContent:"center"}}><Shield size={16} color={healthColor}/></div>
-              <div title={healthDetalle}><div style={{fontSize:9,fontWeight:800,color:MUTED,textTransform:"uppercase",letterSpacing:"0.08em"}}>Health Score</div><div style={{fontFamily:MONO,fontSize:22,fontWeight:800,color:healthColor,lineHeight:1}}>{healthScore}</div><div style={{fontSize:8.5,color:MUTED,marginTop:2,whiteSpace:"nowrap"}}>{scoreComps.map(c=>c.l.split(" ")[0]+" "+c.v+"%").join(" · ")}</div></div>
-            </div>
-          </div>
-        </div>
+      <div className="au" style={{marginBottom:16}}>
+        <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Inicio</h1>
+        <p style={{color:MUTED,fontSize:13,marginTop:3}}>{new Date().toLocaleDateString("es-MX",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
       </div>
+      <QueFaltaHoy setView={setView} alertasAbiertas={alertasItems.filter(a=>!a.atendida).length}/>
 
       {/* ── BANNER P&L REAL (conciliado con balanzas) ── */}
       {isAdmin&&(
@@ -4236,22 +4269,6 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"} onClick={()=>setView("facturas")}/>
         </div>
       )}
-      {isAdmin?(
-        <div className="g4" style={{marginBottom:16}}>
-          <KpiCard icon={Package} color={BLUE} label="Entregas completadas" value={entregados+"/"+entregas.length} sub={pctEnt+"% completado"} onClick={()=>setView("entregas")}/>
-          <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutasActivas} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
-          <KpiCard icon={DollarSign} color={A} label="Cotizaciones" value={cots.length} sub="total generadas" onClick={()=>setView("cotizador")}/>
-          <KpiCard icon={Building2} color={BLUE} label="Clientes activos" value={clientes.length} sub="en la base" onClick={()=>setView("clientes")}/>
-        </div>
-      ):(
-        <div className="g4 au2" style={{marginBottom:16}}>
-          <KpiCard icon={Package} color={BLUE} label="Entregas completadas" value={entregados+"/"+entregas.length} sub={pctEnt+"% completado"} onClick={()=>setView("entregas")}/>
-          <KpiCard icon={Map} color={VIOLET} label="Rutas activas" value={rutasActivas} sub={rutas.length+" totales"} onClick={()=>setView("rutas")}/>
-          <KpiCard icon={Users} color={A} label="Choferes en ruta" value={choferes?choferes.length:0} sub="registrados" onClick={()=>setView("choferes")}/>
-          <KpiCard icon={Clock} color={GREEN} label="Jornadas activas" value={jornadasActivas} sub="en curso ahora" onClick={()=>setView("jornadas")}/>
-        </div>
-      )}
-
       {/* Fila nueva: Operaciones choferes + alertas */}
       <div className="g4" style={{marginBottom:16}}>
         <div onClick={()=>setView("alertas")} className="ch" style={{background:sosSinAtender>0?"linear-gradient(135deg,#dc2626,#ef4444)":alertasCriticas>0?"linear-gradient(135deg,"+ROSE+","+ROSE+"dd)":"#fff",border:sosSinAtender>0||alertasCriticas>0?"none":"1px solid "+BORDER,borderRadius:14,padding:"14px 16px",cursor:"pointer",color:sosSinAtender>0||alertasCriticas>0?"#fff":TEXT,boxShadow:sosSinAtender>0?"0 6px 20px #dc262655":"0 1px 4px rgba(12,24,41,.04)"}}>
@@ -9439,7 +9456,10 @@ function PagosProveedores({userProfile}){
   const pagadoMesSub=pagos.filter(p=>p.status==="Pagado"&&p.mes===mesActual&&p.anio===ANIO).reduce((a,p)=>a+(p.subtotal||0),0);
   const pagadoAnio=pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).reduce((a,p)=>a+(p.total||0),0);
   const pagadoAnioSub=pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).reduce((a,p)=>a+(p.subtotal||0),0);
-  const porPagar=pagos.filter(p=>p.status!=="Pagado").reduce((a,p)=>a+(p.total||0),0);
+  /* "Por pagar" separa proveedores de préstamos, PTU, impuestos y otras deudas de la balanza. */
+  const deudas=porPagarPorTipo(pagos);
+  const porPagar=deudas["Proveedores"].monto;
+  const otrasDeudas=["Préstamos e intereses","Impuestos y seguridad social","PTU","Otras deudas"].filter(k=>deudas[k].n>0);
   const ivaAcred=pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).reduce((a,p)=>a+(p.iva||0),0);
 
   /* ── Agregados dashboard ── */
@@ -9505,9 +9525,14 @@ function PagosProveedores({userProfile}){
       <div className="g4" style={{marginBottom:18}}>
         <KpiCard icon={CreditCard} color={ROSE} label={"Pagado en "+mesActual+" (c/IVA)"} value={fmtK(pagadoMes)} sub={fmtK(pagadoMesSub)+" sin IVA · "+pagos.filter(p=>p.status==="Pagado"&&p.mes===mesActual&&p.anio===ANIO).length+" pagos"}/>
         <KpiCard icon={TrendingUp} color={ROSE} label={"Pagado "+ANIO+" (c/IVA)"} value={fmtK(pagadoAnio)} sub={fmtK(pagadoAnioSub)+" sin IVA · "+pagos.filter(p=>p.status==="Pagado"&&p.anio===ANIO).length+" pagos"}/>
-        <KpiCard icon={Clock} color={AMBER} accent={porPagar>0} label="Por pagar" value={fmtK(porPagar)} valueColor={porPagar>0?AMBER:GREEN} sub={pagos.filter(p=>p.status!=="Pagado").length+" pendientes/programados"}/>
+        <KpiCard icon={Clock} color={AMBER} accent={porPagar>0} label="Por pagar a proveedores" value={fmtK(porPagar)} valueColor={porPagar>0?AMBER:GREEN} sub={deudas["Proveedores"].n+" pendientes/programados"}/>
         <KpiCard icon={CheckCircle} color={GREEN} label="IVA acreditable" value={fmtK(ivaAcred)} sub={"de pagos ejecutados "+ANIO}/>
       </div>
+
+      {otrasDeudas.length>0&&<div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"12px 16px",marginBottom:18}}>
+        <div style={{fontSize:12,fontWeight:800,color:TEXT,marginBottom:6}}>Otras deudas (no son proveedores)</div>
+        <div style={{display:"flex",gap:18,flexWrap:"wrap",fontSize:13}}>{otrasDeudas.map(k=><span key={k}>{k}: <b style={{fontFamily:MONO}}>{fmtK(deudas[k].monto)}</b> <span style={{color:MUTED}}>({deudas[k].n})</span></span>)}</div>
+      </div>}
 
       {/* Tabs */}
       <div style={{display:"flex",gap:4,marginBottom:14,flexWrap:"wrap"}}>
@@ -10555,7 +10580,9 @@ function Presupuestos(){
       setModal(false);setForm(empty);setEditItem(null);
     }catch(e){showT(e.message,"err");}
   };
-  const del=async id=>{if(!confirm("¿Eliminar este presupuesto?"))return;await deleteDoc(doc(db,"presupuestos",id));showT("Eliminado");};
+  /* Un presupuesto ligado a una factura no se borra: se perdería de dónde salió la factura. */
+  const del=async id=>{const p=items.find(x=>x.id===id);if(p?.convertidoAFacturaId){showT("Este presupuesto ya tiene factura: no se puede borrar. Cámbialo a Rechazado si ya no aplica.","err");return;}
+    if(!confirm("¿Eliminar este presupuesto? No se puede deshacer."))return;await deleteDoc(doc(db,"presupuestos",id));showT("Eliminado");};
   const updStatus=async(id,status)=>updateDoc(doc(db,"presupuestos",id),{status});
 
   // Conversión 1-click a factura: crea un registro en facturas con los datos del presupuesto
@@ -10567,6 +10594,7 @@ function Presupuestos(){
     try{
       // Un presupuesto genera UNA factura: id determinista + verificación de vínculo previo
       if(p.convertidoAFacturaId){showT("Este presupuesto ya tiene factura ligada ("+p.convertidoAFacturaId+"). Revísala en Facturación.","err");return;}
+      if(p.status!=="Aprobado"){showT("Primero marca el presupuesto como Aprobado por el cliente; después pide la factura.","err");return;}
       const legacy=await getDocs(query(collection(db,"facturas"),where("presupuestoOrigenId","==",p.id)));
       if(!legacy.empty){
         await updateDoc(doc(db,"presupuestos",p.id),{convertidoAFacturaId:legacy.docs[0].id});
@@ -10718,7 +10746,7 @@ function Presupuestos(){
                   <div style={{display:"flex",gap:5,alignItems:"center"}}>
                     <button onClick={()=>downloadPresupuestoPDF(p)} className="btn" title="Descargar PDF" style={{color:BLUE,padding:"4px 6px",border:"1px solid "+BLUE+"20",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:600}}><Download size={12}/>PDF</button>
                     <button onClick={()=>toFactura(p)} className="btn" title="Crear solicitud interna (requiere aprobación documentada)" style={{color:GREEN,padding:"4px 8px",border:"1px solid "+GREEN+"30",background:GREEN+"08",borderRadius:6,display:"flex",alignItems:"center",gap:3,fontSize:11,fontWeight:700}}>
-                      {p.convertidoAFacturaId?<><Check size={12}/>Solicitud creada</>:<><FileText size={12}/>→ Solicitud</>}
+                      {p.convertidoAFacturaId?<><Check size={12}/>Solicitud creada</>:<><FileText size={12}/>Pedir factura</>}
                     </button>
                     <button onClick={()=>openEdit(p)} className="btn" style={{color:MUTED,padding:4}}><Eye size={13}/></button>
                     <button onClick={()=>del(p.id)} className="btn" style={{color:MUTED,padding:4}}><Trash2 size={12}/></button>
@@ -13769,6 +13797,15 @@ function GastosAdmin(){
 /* ═══════════════════════════════════════════════════════════════════════════
    MÓDULO ADMIN: JORNADAS (checkin/checkout, horas trabajadas)
    ═══════════════════════════════════════════════════════════════════════════ */
+/* Jornadas: la app web vieja escribe inTs/outTs; la app nueva del chofer escribe
+   checkInEn y aún no tiene "salida". Una jornada de la app nueva de un día anterior
+   sin salida se marca "sin salida" (no se inventa la hora) y ya no cuenta como activa. */
+const normalizarJornada=(id,d)=>{
+  const inTs=d.inTs||d.checkInEn||null, outTs=d.outTs||d.checkOutEn||d.cerradaEn||null;
+  const sinSalida=!outTs&&!!d.checkInEn&&!!d.fecha&&d.fecha<fechaLocalISO();
+  return {id,...d,inTs,outTs,sinSalida};
+};
+const jornadaActiva=j=>!j.outTs&&!j.sinSalida;
 function JornadasAdmin(){
   const [items,setItems]=useState([]);
   const [load,setLoad]=useState(true);
@@ -13776,8 +13813,8 @@ function JornadasAdmin(){
   const [desde,setDesde]=useState(()=>{const d=new Date();d.setDate(d.getDate()-14);return fechaLocalISO(d);});
   const [hasta,setHasta]=useState(()=>fechaLocalISO());
 
-  useEffect(()=>onSnapshot(collection(db,"jornadas"),s=>{
-    setItems(s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(b.inTs?.seconds||0)-(a.inTs?.seconds||0)));
+  useEffect(()=>onSnapshot(query(collection(db,"jornadas"),limit(1000)),s=>{
+    setItems(s.docs.map(d=>normalizarJornada(d.id,d.data())).sort((a,b)=>(b.inTs?.seconds||0)-(a.inTs?.seconds||0)));
     setLoad(false);
   }),[]);
 
@@ -13794,11 +13831,11 @@ function JornadasAdmin(){
 
   const getHoras = j=>{
     const i = j.inTs?.seconds, o = j.outTs?.seconds||(j.outTs?null:Date.now()/1000);
-    if(!i) return 0;
+    if(!i||j.sinSalida) return 0;
     return Math.max(0,(o-i)/3600);
   };
   const totalHoras = filtered.reduce((a,j)=>a+getHoras(j),0);
-  const activas = filtered.filter(j=>!j.outTs).length;
+  const activas = filtered.filter(jornadaActiva).length;
 
   // Por chofer
   const porChofer = {};
@@ -15061,7 +15098,7 @@ export default function App(){
             </main>
           </div>
         </div>
-        {searchOpen&&<SearchPalette cots={cots} facts={facts} rutas={rutas} clientes={clientes} entregas={entregas} onSelect={v=>setView(v)} onClose={()=>setSearchOpen(false)}/>}
+        {searchOpen&&<SearchPalette rol={rol} cots={cots} facts={facts} rutas={rutas} clientes={clientes} entregas={entregas} onSelect={v=>setView(v)} onClose={()=>setSearchOpen(false)}/>}
         {showInstallBanner&&installPrompt&&<div style={{position:"fixed",bottom:16,right:16,zIndex:200,background:"#fff",borderRadius:14,padding:"14px 18px",boxShadow:"0 16px 50px rgba(12,24,41,.2)",border:"1.5px solid "+A+"30",display:"flex",alignItems:"center",gap:12,maxWidth:380}}>
           <div style={{width:40,height:40,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:14,color:"#fff",flexShrink:0}}>DM</div>
           <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13}}>Instalar app DMvimiento</div><div style={{fontSize:11,color:MUTED}}>Acceso rápido desde tu home screen</div></div>
