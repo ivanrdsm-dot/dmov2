@@ -59,15 +59,18 @@ export const oficinaLinkSeguimiento = onCall({ region: "us-central1", maxInstanc
   if(!auth || auth.token?.firebase?.sign_in_provider === "anonymous") throw new HttpsError("unauthenticated", "Inicia sesión para continuar");
   const p = await db().doc("dmov_usuarios/" + auth.uid).get();
   if(!p.exists || p.data().activo !== true) throw new HttpsError("permission-denied", "Sin perfil de oficina activo");
-  const id = String(req.data?.servicioId ?? "").slice(0, 80), nuevo = req.data?.nuevo === true;
-  const ref = db().doc("servicios/" + id), s = await ref.get();
-  if(!id || !s.exists) throw new HttpsError("not-found", "Servicio no encontrado");
-  if(s.data().seguimientoToken && !nuevo) return { token: s.data().seguimientoToken };
-  const token = randomBytes(32).toString("base64url");
-  const lote = db().batch();
-  lote.update(ref, { seguimientoToken: token, seguimientoCreadoEn: ahora() });
-  lote.set(ref.collection("eventos").doc(), { tipo: nuevo ? "link_seguimiento_cambiado" : "link_seguimiento_creado",
-    actorUid: auth.uid, actorNombre: p.data().nombre || p.data().email || auth.uid, actorRol: p.data().rol || "", ts: ahora() });
-  await lote.commit();
-  return { token };
+  const id = String(req.data?.servicioId ?? ""), nuevo = req.data?.nuevo === true;
+  if(!/^[A-Za-z0-9_-]{1,80}$/.test(id)) throw new HttpsError("invalid-argument", "Servicio no válido");
+  const ref = db().doc("servicios/" + id);
+  /* Transacción: dos clics seguidos no generan dos links distintos. */
+  return db().runTransaction(async tx => {
+    const s = await tx.get(ref);
+    if(!s.exists) throw new HttpsError("not-found", "Servicio no encontrado");
+    if(s.data().seguimientoToken && !nuevo) return { token: s.data().seguimientoToken };
+    const token = randomBytes(32).toString("base64url");
+    tx.update(ref, { seguimientoToken: token, seguimientoCreadoEn: ahora() });
+    tx.set(ref.collection("eventos").doc(), { tipo: nuevo ? "link_seguimiento_cambiado" : "link_seguimiento_creado",
+      actorUid: auth.uid, actorNombre: p.data().nombre || p.data().email || auth.uid, actorRol: p.data().rol || "", ts: ahora() });
+    return { token };
+  });
 });

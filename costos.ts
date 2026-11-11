@@ -15,7 +15,7 @@ const num = (v: unknown): number => { const n = Number(String(v ?? "").replace(/
 export function validarCosto(c: Costo): string[] {
   const e: string[] = [];
   if(!CONCEPTOS_COSTO.includes(c.concepto as ConceptoCosto)) e.push("Concepto");
-  const m = num(c.monto);
+  const m = Math.round(num(c.monto) * 100) / 100;   // se guarda a centavos: 0.004 no es un monto
   if(!(m > 0)) e.push("Monto mayor a cero");
   else if(m >= MONTO_MAX) e.push("Monto fuera de rango");
   if(c.concepto === "Otro" && !String(c.nota ?? "").trim()) e.push("Nota: di qué fue");

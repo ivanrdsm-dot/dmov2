@@ -66,7 +66,7 @@ function Viaje({ s, ubicacion, choferes, store, ahora, avisar }){
 /* Mapa de choferes en ruta: un punto por chofer con su última ubicación (verde = señal
    reciente, ámbar = vieja, rojo = sin señal). Mapbox se carga solo al abrir esta pantalla. */
 function MapaChoferes({ cargarMapa, puntos }){
-  const cont = useRef(null), mapa = useRef(null), marcas = useRef([]);
+  const cont = useRef(null), mapa = useRef(null), marcas = useRef([]), encuadrado = useRef(false);
   const [listo, setListo] = useState(false), [error, setError] = useState("");
   useEffect(() => {
     let vivo = true;
@@ -90,6 +90,8 @@ function MapaChoferes({ cargarMapa, puntos }){
       el.title = p.titulo;
       marcas.current.push(new mb.Marker({ element: el }).setLngLat([p.lng, p.lat]).setPopup(new mb.Popup({ offset: 12 }).setText(p.titulo)).addTo(m));
     }
+    if(encuadrado.current || conPos.length === 0) return;   // encuadra una vez; después respeta el zoom del operador
+    encuadrado.current = true;
     if(conPos.length === 1) m.flyTo({ center: [conPos[0].lng, conPos[0].lat], zoom: 12 });
     else if(conPos.length > 1){ const b = new mb.LngLatBounds(); conPos.forEach(p => b.extend([p.lng, p.lat])); m.fitBounds(b, { padding: 60, maxZoom: 13 }); }
   }, [listo, puntos]);
