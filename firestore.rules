@@ -251,6 +251,8 @@ service cloud.firestore {
         || (de == 'Enviada' && a in ['Aceptada','Rechazada'])
         || (de in ['Propuesta','Aprobada','Enviada'] && a == 'Cancelada');
     }
+    /* Comprobantes de pago: solo admin (como Pagos); se borran solo con copia en la papelera. */
+    match /pagosAdjuntos/{id}     { allow read, create, update: if esAdmin(); allow delete: if esAdmin() && conCopia('pagosAdjuntos', id); }
     match /papelera/{id} {
       allow read: if esAdmin();
       allow create: if esAdmin()
@@ -407,7 +409,7 @@ service cloud.firestore {
     match /{top}/{document=**} {
       allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','tarifario','cotizaciones_logistica',
         // Con papelera: el borrado lo controla su propia regla (copia obligatoria); la papelera no se edita.
-        'papelera','rutas','choferes','pagosProveedores','presupuestos','cuentas','viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas']);
+        'papelera','rutas','choferes','pagosProveedores','presupuestos','cuentas','viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas','pagosAdjuntos']);
     }
   }
 }

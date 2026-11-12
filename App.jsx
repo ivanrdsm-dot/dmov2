@@ -9443,8 +9443,8 @@ function PagosProveedores({userProfile}){
     showT("✓ Adjuntos guardados");
   };
   const borrarAdjunto=async(a)=>{
-    if(!confirm("¿Eliminar el adjunto "+a.nombre+"?"))return;
-    await deleteDoc(doc(db,"pagosAdjuntos",a.id)).catch(()=>{});
+    if(!confirm("¿Eliminar el adjunto "+a.nombre+"? Se guarda una copia en la papelera."))return;
+    try{await borrarRegistro("pagosAdjuntos",a.id);}catch{return;}   // si falla, no se quita de la lista ni se resta
     setAdjuntos(prev=>prev.filter(x=>x.id!==a.id));
     if(adjItem) updateDoc(doc(db,"pagosProveedores",adjItem.id),{nAdjuntos:Math.max(0,(adjItem.nAdjuntos||1)-1)}).catch(()=>{});
   };
