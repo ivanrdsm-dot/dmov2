@@ -31,8 +31,12 @@ service cloud.firestore {
     }
     /* Papelera: estas colecciones solo se borran si en el mismo lote queda la copia
        en papelera/{coleccion}__{id} (ver papelera.js). Nadie edita ni borra la papelera. */
+    function copiaNueva(pid) {
+      return existsAfter(/databases/$(database)/documents/papelera/$(pid))
+        && getAfter(/databases/$(database)/documents/papelera/$(pid)).data.borradoEn == request.time;
+    }
     function conCopia(col, id) {
-      return existsAfter(/databases/$(database)/documents/papelera/$(col + '__' + id));
+      return copiaNueva(col + '__' + id) || copiaNueva(col + '__' + id + '__2') || copiaNueva(col + '__' + id + '__3');
     }
     function miChoferId() {
       return get(/databases/$(database)/documents/choferes_auth/$(request.auth.uid)).data.choferId;
@@ -252,12 +256,21 @@ service cloud.firestore {
       allow create: if esAdmin()
         && request.resource.data.keys().hasOnly(['coleccion','docId','datos','borradoPorUid','borradoPorNombre','motivo','borradoEn'])
         && request.resource.data.coleccion is string && request.resource.data.docId is string
-        && id == request.resource.data.coleccion + '__' + request.resource.data.docId
+        && (id == request.resource.data.coleccion + '__' + request.resource.data.docId
+            || id == request.resource.data.coleccion + '__' + request.resource.data.docId + '__2'
+            || id == request.resource.data.coleccion + '__' + request.resource.data.docId + '__3')
         && exists(/databases/$(database)/documents/$(request.resource.data.coleccion)/$(request.resource.data.docId))
         && request.resource.data.datos is map
         && request.resource.data.borradoPorUid == request.auth.uid
         && request.resource.data.borradoEn == request.time;
-      allow update, delete: if false;
+      // Recuperar: solo se anota quién y cuándo, una vez, y el registro debe quedar de vuelta.
+      allow update: if esAdmin()
+        && !('recuperadoEn' in resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['recuperadoPorUid','recuperadoEn'])
+        && request.resource.data.recuperadoPorUid == request.auth.uid
+        && request.resource.data.recuperadoEn == request.time
+        && existsAfter(/databases/$(database)/documents/$(resource.data.coleccion)/$(resource.data.docId));
+      allow delete: if false;
     }
     match /cotizaciones_logistica/{id} {
       allow read: if esOficina();

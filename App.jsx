@@ -47,6 +47,7 @@ const CotizacionesVista = lazy(()=>import("./Cotizaciones.jsx"));
 const ReportesOperacionVista = lazy(()=>import("./ReportesOperacion.jsx"));
 /* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
+const PapeleraVista = lazy(()=>import("./Papelera.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
 const FF_SERVICIOS = import.meta.env.VITE_FF_SERVICIOS !== "off";
 /* RBAC v4: no hay acceso anónimo. La app web de chofer y el rastreo público quedan
@@ -3222,7 +3223,7 @@ const MENU=[
       {id:"cierre",label:"Cierre contable",adminOnly:true}]},
   ]},
   {section:"Configuración",items:[
-    {label:"Usuarios",icon:Shield,adminOnly:true,tabs:[{id:"usuarios",label:"Usuarios"}]},
+    {label:"Usuarios",icon:Shield,adminOnly:true,tabs:[{id:"usuarios",label:"Usuarios"},{id:"papelera",label:"Papelera",adminOnly:true}]},
   ]},
 ];
 /** Menú visible para un rol: cada opción con sus pestañas permitidas; `id` = primera pestaña. */
@@ -15100,6 +15101,7 @@ export default function App(){
       cotizaciones:<CotizacionesModulo authUser={authUser} userProfile={userProfile} onNueva={()=>{setSolicitudACotizar(null);setView("cotizadorAuto");}} onCrearServicio={c=>{setSolicitudAServicio(null);setCotizacionAServicio(c);setView("servicios");}}/>,
       reportesOperacion:<ReportesOperacionModulo userProfile={userProfile}/>,
       tarifario:<TarifarioModulo authUser={authUser} userProfile={userProfile}/>,
+      papelera:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando papelera…</div>}><PapeleraVista db={db} usuario={usuarioDe(authUser,userProfile)}/></Suspense>:null,
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,
       servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)} cotizacion={cotizacionAServicio} onCotizacionUsada={()=>setCotizacionAServicio(null)}/>}:{}),
