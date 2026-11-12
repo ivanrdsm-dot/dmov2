@@ -2,7 +2,7 @@ import { before, after, test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where } from 'firebase/firestore';
-import { borrarConRastro } from '../papelera.js';
+import { borrarConRastro, recuperar, listarPapelera } from '../papelera.js';
 
 /* RBAC v4: rutas, choferes y ubicaciones cerradas a oficina. Nada anónimo ni público. */
 let env;
@@ -87,4 +87,18 @@ test('la papelera: solo admin la lee y escribe, con su propio uid; nadie la edit
   await assertSucceeds(borrarConRastro(dbA, { uid: 'admin' }, 'viaticos', 'v1'));
   await assertFails(updateDoc(doc(dbA, 'papelera', 'viaticos__v1'), { motivo: 'cambio' }));
   await assertFails(deleteDoc(doc(dbA, 'papelera', 'viaticos__v1')));
+  await assertFails(updateDoc(doc(dbA, 'papelera', 'viaticos__v1'), { recuperadoPorUid: 'admin', recuperadoEn: new Date() }));  // sin devolver el registro no
 });
+
+test('recuperar devuelve el registro con su id; volver a borrarlo pide copia nueva (__2)', async () => {
+  const dbA = ctx('admin').firestore();
+  const copia = (await listarPapelera(dbA)).find(c => c.id === 'viaticos__v1');
+  await assertSucceeds(recuperar(dbA, { uid: 'admin' }, copia));
+  const vuelta = await getDoc(doc(dbA, 'viaticos', 'v1'));
+  if(vuelta.data().concepto !== 'Comida') throw new Error('no regresó igual');
+  await assert_rechaza(recuperar(dbA, { uid: 'admin' }, (await listarPapelera(dbA)).find(c => c.id === 'viaticos__v1')));   // una sola vez
+  await assertFails(deleteDoc(doc(dbA, 'viaticos', 'v1')));                              // la copia vieja no sirve
+  await assertSucceeds(borrarConRastro(dbA, { uid: 'admin' }, 'viaticos', 'v1'));
+  if(!(await getDoc(doc(dbA, 'papelera', 'viaticos__v1__2'))).exists()) throw new Error('falta la segunda copia');
+});
+const assert_rechaza = async p => { let ok = false; try { await p; } catch { ok = true; } if(!ok) throw new Error('debía rechazarse'); };
