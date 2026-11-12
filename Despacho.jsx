@@ -7,7 +7,10 @@ import { estadoSenal, faltantesChoferApp, avanceRuta, semaforoViaje } from "./de
 const COLOR = { verde: GREEN, ambar: AMBER, rojo: ROSE };
 const COLOR_SENAL = { "en vivo": GREEN, "con retraso": AMBER, "sin señal": ROSE, nunca: MUTED };
 const TIPO_ALERTA = { sos: "SOS", ubicacion_simulada: "Ubicación simulada", velocidad_imposible: "Salto imposible", reloj_adelantado: "Reloj adelantado",
-  cierre_fuera_de_punto: "Cierre fuera del punto", incidencia: "Incidencia", dispositivo_no_autorizado: "Equipo no autorizado" };
+  cierre_fuera_de_punto: "Cierre fuera del punto", incidencia: "Incidencia", dispositivo_no_autorizado: "Equipo no autorizado",
+  // Las del vigilante (servidor), con los mismos nombres que el Centro de Alertas.
+  solicitud_sin_respuesta: "Solicitud sin responder", cotizacion_por_aprobar: "Cotización por aprobar",
+  cotizacion_sin_enviar: "Cotización aprobada sin enviar", servicio_sin_asignar: "Servicio de hoy sin asignar", conector_sin_senal: "Conector sin señal" };
 const haceCuanto = (ms, ahora) => { if(!ms) return ""; const m = Math.max(0, Math.round((ahora - ms) / 60000)); return m < 60 ? `hace ${m} min` : m < 1440 ? `hace ${Math.floor(m / 60)} h` : `hace ${Math.floor(m / 1440)} d`; };
 const mensajeError = e => String(e?.message || "No se pudo completar").replace(/^(functions\/[a-z-]+:?\s*)/i, "");
 

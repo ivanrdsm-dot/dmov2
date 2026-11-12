@@ -1,5 +1,6 @@
 /* Papelera: lo que se borró, quién y cuándo, y un botón para recuperarlo. Solo admin. */
 import { useEffect, useState } from "react";
+import { collection, getDocs } from "firebase/firestore";
 import { GREEN, ROSE, MUTED, TEXT, BORDER, DISP, boton, caja, Chip } from "./uiBasico.jsx";
 import { listarPapelera, recuperar, NOMBRE_COLECCION, resumenRegistro } from "./papelera.js";
 
@@ -11,8 +12,12 @@ export default function Papelera({ db, usuario }){
   const [error, setError] = useState("");
   const [buscar, setBuscar] = useState("");
   const [ocupado, setOcupado] = useState("");
-  const cargar = () => listarPapelera(db).then(setItems).catch(e => { setError(e.message); setItems([]); });
-  useEffect(() => { cargar(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const [max, setMax] = useState(30);
+  // El nombre de quién borró sale de su perfil (por uid), no del texto guardado en la copia.
+  const [nombres, setNombres] = useState({});
+  useEffect(() => { getDocs(collection(db, "dmov_usuarios")).then(s => setNombres(Object.fromEntries(s.docs.map(d => [d.id, d.data().nombre || d.data().email || ""])))).catch(() => {}); }, [db]);
+  const cargar = () => listarPapelera(db, max).then(setItems).catch(e => { setError(e.message); setItems([]); });
+  useEffect(() => { cargar(); }, [max]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const recuperarUno = async c => {
     if(!confirm("¿Recuperar este " + (NOMBRE_COLECCION[c.coleccion] || "registro").toLowerCase() + "?\n\n" + resumenRegistro(c.datos))) return;
@@ -23,7 +28,7 @@ export default function Papelera({ db, usuario }){
   };
 
   const q = buscar.trim().toLowerCase();
-  const lista = (items || []).filter(c => !q || [NOMBRE_COLECCION[c.coleccion], resumenRegistro(c.datos), c.borradoPorNombre, c.motivo]
+  const lista = (items || []).filter(c => !q || [NOMBRE_COLECCION[c.coleccion], resumenRegistro(c.datos), nombres[c.borradoPorUid], c.borradoPorNombre, c.motivo]
     .join(" ").toLowerCase().includes(q));
 
   return (
@@ -40,12 +45,13 @@ export default function Papelera({ db, usuario }){
               <Chip color={MUTED}>{NOMBRE_COLECCION[c.coleccion] || c.coleccion}</Chip>
               <div style={{ flex: "1 1 260px", minWidth: 0 }}>
                 <div style={{ fontWeight: 700, color: TEXT, fontSize: 14 }}>{resumenRegistro(c.datos) || "(sin nombre)"}</div>
-                <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>Lo borró {c.borradoPorNombre || "alguien"} · {cuando(c.borradoEn)}{c.motivo ? " · " + c.motivo : ""}</div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>Lo borró {nombres[c.borradoPorUid] || c.borradoPorNombre || "alguien"} · {cuando(c.borradoEn)}{c.motivo ? " · " + c.motivo : ""}</div>
               </div>
               {c.recuperadoEn
                 ? <Chip color={GREEN}>Recuperado · {cuando(c.recuperadoEn)}</Chip>
                 : <button disabled={!!ocupado} onClick={() => recuperarUno(c)} style={{ ...boton(GREEN), opacity: ocupado ? .5 : 1 }}>{ocupado === c.id ? "Recuperando…" : "Recuperar"}</button>}
             </div>))}
+            {items.length >= max && !q && <button onClick={() => setMax(m => m + 30)} style={{ ...boton(MUTED, false), alignSelf: "center", marginTop: 6 }}>Ver más</button>}
           </div>}
     </div>
   );

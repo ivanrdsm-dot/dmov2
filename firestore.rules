@@ -36,7 +36,8 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/papelera/$(pid)).data.borradoEn == request.time;
     }
     function conCopia(col, id) {
-      return copiaNueva(col + '__' + id) || copiaNueva(col + '__' + id + '__2') || copiaNueva(col + '__' + id + '__3');
+      return copiaNueva(col + '__' + id) || copiaNueva(col + '__' + id + '__2') || copiaNueva(col + '__' + id + '__3')
+        || copiaNueva(col + '__' + id + '__4') || copiaNueva(col + '__' + id + '__5');
     }
     function miChoferId() {
       return get(/databases/$(database)/documents/choferes_auth/$(request.auth.uid)).data.choferId;
@@ -51,10 +52,10 @@ service cloud.firestore {
     match /rutas/{rutaId}            { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('rutas', rutaId); }
     match /driverLocations/{choferId}{ allow read: if esOficina(); allow create, update, delete: if esAdmin(); }
     match /choferes/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('choferes', id); }
-    match /gastosChofer/{id}         { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /jornadas/{id}             { allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId()); allow create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /mensajes/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
-    match /alertas/{id}              { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /gastosChofer/{id}         { allow read, create, update: if esOficina(); allow delete: if false; }
+    match /jornadas/{id}             { allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId()); allow create, update: if esOficina(); allow delete: if false; }
+    match /mensajes/{id}             { allow read, create, update: if esOficina(); allow delete: if false; }
+    match /alertas/{id}              { allow read, create, update: if esOficina(); allow delete: if false; }
     match /alerts/{id} {                          // legacy migrada — congelada
       allow read: if esOficina();
       allow write: if false;
@@ -89,16 +90,16 @@ service cloud.firestore {
              'intranetFolio','intranetFecha','intranetEstatus','intranetDirector','seguimiento','seguimientoFecha','cotizacionFolio','cotizacionId']));
       allow delete: if esAdmin() && (!('cfdiArchiveLocked' in resource.data) || resource.data.cfdiArchiveLocked != true) && conCopia('facturas', id);
     }
-    match /pagos/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /pagos/{id}             { allow read, create, update: if esOficina(); allow delete: if false; }
     match /pagosProveedores/{id}  { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('pagosProveedores', id); }
     match /presupuestos/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('presupuestos', id); }
-    match /cotizaciones/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin(); }
+    match /cotizaciones/{id}      { allow read, create, update: if esOficina(); allow delete: if false; }
     match /cuentas/{id}           { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('cuentas', id); }
     /* Catálogo de planes del grupo (número → empresa, RFC, director de intranet):
        lo lee toda la oficina (formulario de facturas); lo edita solo admin. */
-    match /planes/{id}            { allow read: if esOficina(); allow create, update, delete: if esAdmin(); }
+    match /planes/{id}            { allow read: if esOficina(); allow create, update: if esAdmin(); allow delete: if false; }
     /* Cierres contables cargados desde la balanza: lectura de oficina, escritura admin. */
-    match /cierresContables/{id}  { allow read: if esOficina(); allow create, update, delete: if esAdmin(); }
+    match /cierresContables/{id}  { allow read: if esOficina(); allow create, update: if esAdmin(); allow delete: if false; }
     match /viaticos/{id}          { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('viaticos', id); }
     match /prospeccion/{id}       { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('prospeccion', id); }
     match /proyectos/{id}         { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('proyectos', id); }
@@ -260,9 +261,15 @@ service cloud.firestore {
         && request.resource.data.coleccion is string && request.resource.data.docId is string
         && (id == request.resource.data.coleccion + '__' + request.resource.data.docId
             || id == request.resource.data.coleccion + '__' + request.resource.data.docId + '__2'
-            || id == request.resource.data.coleccion + '__' + request.resource.data.docId + '__3')
+            || id == request.resource.data.coleccion + '__' + request.resource.data.docId + '__3'
+            || id == request.resource.data.coleccion + '__' + request.resource.data.docId + '__4'
+            || id == request.resource.data.coleccion + '__' + request.resource.data.docId + '__5')
+        && request.resource.data.coleccion in ['rutas','choferes','facturas','pagosProveedores','presupuestos','cuentas',
+             'viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas','pagosAdjuntos']
+        // La copia es idéntica al registro real y el registro se borra en ese mismo lote.
         && exists(/databases/$(database)/documents/$(request.resource.data.coleccion)/$(request.resource.data.docId))
-        && request.resource.data.datos is map
+        && request.resource.data.datos == get(/databases/$(database)/documents/$(request.resource.data.coleccion)/$(request.resource.data.docId)).data
+        && !existsAfter(/databases/$(database)/documents/$(request.resource.data.coleccion)/$(request.resource.data.docId))
         && request.resource.data.borradoPorUid == request.auth.uid
         && request.resource.data.borradoEn == request.time;
       // Recuperar: solo se anota quién y cuándo, una vez, y el registro debe quedar de vuelta.
@@ -297,7 +304,8 @@ service cloud.firestore {
             || (esAdmin() && resource.data.estado == 'Propuesta' && request.resource.data.estado == 'Aprobada'
                 && request.resource.data.precioAprobado is number && request.resource.data.precioAprobado > 0
                 && request.resource.data.aprobadoEn == request.time
-                && request.resource.data.aprobadoPorUid == request.auth.uid))
+                && request.resource.data.aprobadoPorUid == request.auth.uid
+                && (!('nombre' in perfil()) || request.resource.data.aprobadoPor == perfil().nombre)))
         && (request.resource.data.estado != 'Aprobada' || resource.data.estado == 'Aprobada'
             || request.resource.data.diff(resource.data).affectedKeys().hasAll(cotPrecio()))
         // Solo una cotización aceptada se liga a un servicio, y una sola vez.
@@ -409,7 +417,9 @@ service cloud.firestore {
     match /{top}/{document=**} {
       allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','tarifario','cotizaciones_logistica',
         // Con papelera: el borrado lo controla su propia regla (copia obligatoria); la papelera no se edita.
-        'papelera','rutas','choferes','pagosProveedores','presupuestos','cuentas','viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas','pagosAdjuntos']);
+        'papelera','rutas','choferes','pagosProveedores','presupuestos','cuentas','viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas','pagosAdjuntos',
+        // Estas no se borran nunca (ni admin): son historia de la operación.
+        'pagos','cotizaciones','gastosChofer','jornadas','mensajes','alertas','planes','cierresContables']);
     }
   }
 }

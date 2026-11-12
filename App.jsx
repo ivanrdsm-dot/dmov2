@@ -4309,7 +4309,7 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
                 <div style={{fontSize:11,color:MUTED,marginTop:2}}>Registrado vs cobrado</div>
               </div>
               <div style={{display:"flex",gap:12}}>
-                {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
+                {[[A,"Registrado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:8,height:8,borderRadius:2,background:c}}/><span style={{fontSize:10,color:MUTED}}>{l}</span></div>)}
               </div>
             </div>
             <div style={{display:"flex",alignItems:"flex-end",gap:4,height:130}}>
@@ -7306,7 +7306,7 @@ function Facturas({rol="admin"}){
   const pendiente=filt.filter(f=>f.status==="Pendiente").reduce((a,f)=>a+(f.total||0),0);
   const vencido=filt.filter(f=>facturaVencida(f,Date.now())).reduce((a,f)=>a+(f.total||0),0);
   // Solo el año del título y solo facturas emitidas (antes sumaba todos los años y las canceladas).
-  const porMes=MESES.map(m=>{const its=items.filter(f=>f.mesOp===m&&String(f.anio||ANIO)===String(ANIO)&&facturaEmitida(f));return{m,fac:its.reduce((a,f)=>a+(f.total||0),0),cob:its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0),n:its.length};});
+  const porMes=MESES.map(m=>{const its=items.filter(f=>f.mesOp===m&&String(f.anio)===String(ANIO)&&facturaEmitida(f));return{m,fac:its.reduce((a,f)=>a+(f.total||0),0),cob:its.filter(f=>f.status==="Pagada").reduce((a,f)=>a+(f.total||0),0),n:its.length};});
   const maxV=Math.max(...porMes.map(m=>m.fac),1);
   const proyAnual=porMes.reduce((a,m)=>a+m.fac,0);
   const avgMes=porMes.filter(m=>m.fac>0).reduce((a,m,_,arr)=>a+m.fac/arr.length,0)||0;
@@ -7534,7 +7534,7 @@ function Facturas({rol="admin"}){
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
             <div><div style={{fontFamily:DISP,fontWeight:700,fontSize:16}}>Facturación mensual {ANIO}</div><div style={{fontSize:12,color:MUTED,marginTop:2}}>Facturado vs cobrado</div></div>
             <div style={{display:"flex",gap:14}}>
-              {[[A,"Registrado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontSize:11,color:MUTED}}>{l}</span></div>)}
+              {[[A,"Facturado"],[GREEN,"Cobrado"]].map(([c,l])=><div key={l} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:9,height:9,borderRadius:2,background:c}}/><span style={{fontSize:11,color:MUTED}}>{l}</span></div>)}
               <div style={{fontFamily:MONO,fontSize:13,fontWeight:700,color:VIOLET}}>Anual: {fmtK(proyAnual)}</div>
             </div>
           </div>
@@ -15101,10 +15101,10 @@ export default function App(){
       cotizaciones:<CotizacionesModulo authUser={authUser} userProfile={userProfile} onNueva={()=>{setSolicitudACotizar(null);setView("cotizadorAuto");}} onCrearServicio={c=>{setSolicitudAServicio(null);setCotizacionAServicio(c);setView("servicios");}}/>,
       reportesOperacion:<ReportesOperacionModulo userProfile={userProfile}/>,
       tarifario:<TarifarioModulo authUser={authUser} userProfile={userProfile}/>,
-      papelera:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando papelera…</div>}><PapeleraVista db={db} usuario={usuarioDe(authUser,userProfile)}/></Suspense>:null,
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,
       servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)} cotizacion={cotizacionAServicio} onCotizacionUsada={()=>setCotizacionAServicio(null)}/>}:{}),
+    papelera:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando papelera…</div>}><PapeleraVista db={db} usuario={usuarioDe(authUser,userProfile)}/></Suspense>:null,
     choferes:<Choferes/>,
     unidades:<Unidades/>,
     tracking:<LiveTracking/>,
