@@ -13,13 +13,13 @@ export const MAX_COPIAS = 3;
 
 /** Colecciones que solo se borran con copia en la papelera (deben coincidir con firestore.rules). */
 export const CON_PAPELERA = ["rutas", "choferes", "facturas", "pagosProveedores", "presupuestos", "cuentas",
-  "viaticos", "prospeccion", "proyectos", "plantillasCotizador", "unidades", "entregas"];
+  "viaticos", "prospeccion", "proyectos", "plantillasCotizador", "unidades", "entregas", "pagosAdjuntos"];
 
 /** Nombre de cada colección en palabras de todos los días. */
 export const NOMBRE_COLECCION = {
   rutas: "Ruta", choferes: "Chofer", facturas: "Factura", pagosProveedores: "Pago a proveedor",
   presupuestos: "Presupuesto", cuentas: "Cliente", viaticos: "Viático / gasto", prospeccion: "Prospecto",
-  proyectos: "Proyecto", plantillasCotizador: "Plantilla de cotización", unidades: "Unidad", entregas: "Entrega",
+  proyectos: "Proyecto", plantillasCotizador: "Plantilla de cotización", unidades: "Unidad", entregas: "Entrega", pagosAdjuntos: "Comprobante de pago",
 };
 
 export const idPapelera = (coleccion, id, n = 1) => `${coleccion}__${id}${n > 1 ? "__" + n : ""}`;
