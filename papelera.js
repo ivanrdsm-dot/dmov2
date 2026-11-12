@@ -5,11 +5,11 @@
    una copia nueva. Nadie borra ni cambia la papelera; solo se le anota "recuperado"
    una vez. Solo un admin la lee.
    Un registro recuperado se puede volver a borrar: la copia va a {coleccion}__{id}__2,
-   luego __3 (máximo 3 copias por registro). */
+   luego __3… (máximo 5 copias por registro). */
 import { doc, getDoc, writeBatch, serverTimestamp, collection, query, orderBy, limit, getDocs } from "firebase/firestore";
 
 export const COLECCION_PAPELERA = "papelera";
-export const MAX_COPIAS = 3;
+export const MAX_COPIAS = 5;
 
 /** Colecciones que solo se borran con copia en la papelera (deben coincidir con firestore.rules). */
 export const CON_PAPELERA = ["rutas", "choferes", "facturas", "pagosProveedores", "presupuestos", "cuentas",
@@ -57,7 +57,7 @@ export async function borrarConRastro(db, usuario, coleccion, id, motivo = ""){
 }
 
 /** Lo borrado más reciente primero. */
-export async function listarPapelera(db, max = 300){
+export async function listarPapelera(db, max = 30){
   const s = await getDocs(query(collection(db, COLECCION_PAPELERA), orderBy("borradoEn", "desc"), limit(max)));
   return s.docs.map(d => ({ id: d.id, ...d.data() }));
 }
@@ -67,7 +67,7 @@ export async function recuperar(db, usuario, copia){
   if(!usuario?.uid) throw new Error("Necesitas sesión para recuperar");
   if(copia.recuperadoEn) throw new Error("Ya se recuperó");
   const ref = doc(db, copia.coleccion, copia.docId);
-  if((await getDoc(ref)).exists()) throw new Error("Ya existe un registro con ese id: no se sobrescribe");
+  if((await getDoc(ref)).exists()) throw new Error("Ese registro ya está otra vez en el sistema (se recuperó o se volvió a crear): no se sobrescribe");
   const lote = writeBatch(db);
   lote.set(ref, copia.datos || {});
   lote.update(doc(db, COLECCION_PAPELERA, copia.id), { recuperadoPorUid: usuario.uid, recuperadoEn: serverTimestamp() });

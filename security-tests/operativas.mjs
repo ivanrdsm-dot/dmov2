@@ -1,7 +1,7 @@
 import { before, after, test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { borrarConRastro, recuperar, listarPapelera } from '../papelera.js';
 
 /* RBAC v4: rutas, choferes y ubicaciones cerradas a oficina. Nada anónimo ni público. */
@@ -75,7 +75,20 @@ test('admin borra y administra ubicaciones; rutas y choferes solo con copia en l
     const copia = await getDoc(doc(db, 'papelera', col + '__uno'));
     if(copia.data().datos.nombre !== 'Editado' || copia.data().borradoPorUid !== 'admin') throw new Error('copia incompleta en ' + col);
   }
-  for(const col of COLS.filter(c => !['rutas', 'choferes'].includes(c))) await assertSucceeds(deleteDoc(doc(db, col, 'uno')));
+  await assertSucceeds(deleteDoc(doc(db, 'driverLocations', 'uno')));                      // ubicaciones: efímeras
+  for(const col of ['gastosChofer', 'jornadas', 'mensajes', 'alertas']) await assertFails(deleteDoc(doc(db, col, 'uno')));   // historia: nadie borra
+});
+
+test('la copia de la papelera tiene que ser idéntica y el registro se borra en el mismo lote', async () => {
+  const dbA = ctx('admin').firestore();
+  await env.withSecurityRulesDisabled(c => setDoc(doc(c.firestore(), 'cuentas', 'c1'), { empresa: 'Cliente Ejemplo', rfc: 'XAXX010101000' }));
+  const base = { coleccion: 'cuentas', docId: 'c1', borradoPorUid: 'admin', borradoPorNombre: 'admin', motivo: '', borradoEn: serverTimestamp() };
+  let lote = writeBatch(dbA); lote.set(doc(dbA, 'papelera', 'cuentas__c1'), { ...base, datos: {} }); lote.delete(doc(dbA, 'cuentas', 'c1'));
+  await assertFails(lote.commit());                                                         // copia vacía: no
+  await assertFails(setDoc(doc(dbA, 'papelera', 'cuentas__c1'), { ...base, datos: { empresa: 'Cliente Ejemplo', rfc: 'XAXX010101000' } }));   // copia sin borrar: no
+  lote = writeBatch(dbA); lote.set(doc(dbA, 'papelera', 'dmov_usuarios__ops'), { ...base, coleccion: 'dmov_usuarios', docId: 'ops', datos: {} });
+  await assertFails(lote.commit());                                                         // colección fuera de la lista: no
+  await assertSucceeds(borrarConRastro(dbA, { uid: 'admin' }, 'cuentas', 'c1'));
 });
 
 test('la papelera: solo admin la lee y escribe, con su propio uid; nadie la edita ni la borra', async () => {

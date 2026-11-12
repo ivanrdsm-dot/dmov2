@@ -70,6 +70,8 @@ test('admin aprueba con su precio; después cualquiera de oficina la envía y re
   await assertFails(updateDoc(doc(dbAdmin, COL, cot.id), { estado: 'Aprobada' }));          // aprobar sin precio no existe
   await assertFails(updateDoc(doc(dbAdmin, COL, cot.id), { estado: 'Aprobada', precioAprobado: 3900, aprobadoPor: 'otro',
     aprobadoPorUid: 'otro', aprobadoEn: serverTimestamp() }));                                // nadie aprueba a nombre de otro
+  await assertFails(updateDoc(doc(dbAdmin, COL, cot.id), { estado: 'Aprobada', precioAprobado: 3900, aprobadoPor: 'Dueño',
+    aprobadoPorUid: 'admin', aprobadoEn: serverTimestamp() }));                              // ni con su uid y otro nombre
   await assertSucceeds(sAdmin.aprobar(ADMIN, await leer(dbAdmin, cot.id), 3900, 'Ajuste por temporada'));
   let d = await leer(dbOps, cot.id);
   assert.equal(d.estado, 'Aprobada'); assert.equal(d.precioAprobado, 3900); assert.equal(d.aprobadoPor, 'admin'); assert.equal(d.aprobadoPorUid, 'admin');
