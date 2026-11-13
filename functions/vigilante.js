@@ -44,6 +44,11 @@ export const vigilante = onSchedule({ schedule: "every 5 minutes", timeZone: "Am
       origen: "vigilante", atendida: false, read: false, ts: FieldValue.serverTimestamp(), createdAt: FieldValue.serverTimestamp() });
   }
   for(const id of resolver) lote.update(db.collection("alertas").doc(id), { atendida: true, resueltaSola: true, atendidaEn: FieldValue.serverTimestamp() });
+  /* El texto dice cuánto lleva esperando: en las que siguen abiertas se actualiza en cada corrida
+     (antes se quedaba en "lleva 1 h" aunque ya fuera un día). No cambia ts ni el estado. */
+  const abiertasPorId = new Map(abiertas.docs.map(d => [d.id, d.data()]));
+  const textos = esperadas.filter(a => abiertasPorId.has(a.id) && abiertasPorId.get(a.id).message !== a.message);
+  for(const a of textos) lote.update(db.collection("alertas").doc(a.id), { message: a.message });
   lote.set(db.collection("sistema").doc("vigilante"), { ultimaCorrida: FieldValue.serverTimestamp(), abiertas: esperadas.length, creadas: crear.length, resueltas: resolver.length }, { merge: true });
   try { await lote.commit(); }
   catch(e){
@@ -52,6 +57,7 @@ export const vigilante = onSchedule({ schedule: "every 5 minutes", timeZone: "Am
     for(const a of crear) await db.collection("alertas").doc(a.id).create({ type: a.type, titulo: TIPOS_ALERTA[a.type], message: a.message, folio: a.folio, ref: a.ref,
       origen: "vigilante", atendida: false, read: false, ts: FieldValue.serverTimestamp(), createdAt: FieldValue.serverTimestamp() }).catch(() => {});
     for(const id of resolver) await db.collection("alertas").doc(id).update({ atendida: true, resueltaSola: true, atendidaEn: FieldValue.serverTimestamp() }).catch(() => {});
+    for(const a of textos) await db.collection("alertas").doc(a.id).update({ message: a.message }).catch(() => {});
     await db.collection("sistema").doc("vigilante").set({ ultimaCorrida: FieldValue.serverTimestamp(), abiertas: esperadas.length }, { merge: true });
   }
   logger.info("vigilante", { abiertas: esperadas.length, creadas: crear.length, resueltas: resolver.length });
