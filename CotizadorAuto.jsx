@@ -67,14 +67,14 @@ export default function CotizadorAuto({ tarifarioStore, serviciosStore, cotizaci
         <div>
           <Seccion titulo="Ruta">
             <div style={rejilla}>
-              <Campo label="Tipo de ruta" opciones={["Local ZMCM", "Nacional"]} value={f.tipoRuta === "local" ? "Local ZMCM" : "Nacional"} onChange={e => setF(x => ({ ...x, tipoRuta: e.target.value === "Nacional" ? "nacional" : "local" }))}/>
+              <Campo label="¿A dónde va?" opciones={["CDMX y zona metropolitana", "Fuera de CDMX (foráneo)"]} value={f.tipoRuta === "local" ? "CDMX y zona metropolitana" : "Fuera de CDMX (foráneo)"} onChange={e => setF(x => ({ ...x, tipoRuta: e.target.value.startsWith("Fuera") ? "nacional" : "local" }))}/>
               {f.tipoRuta === "nacional" && <Campo label="Destino" lista={destinos} value={f.destino} onChange={s("destino")} placeholder="Escribe o elige"/>}
-              <Campo label="Puntos de entrega" inputMode="numeric" value={f.entregas} onChange={s("entregas")}/>
-              <Campo label="Días de resguardo" inputMode="numeric" value={f.diasResguardo} onChange={s("diasResguardo")} placeholder="0"/>
+              <Campo label="¿En cuántos lugares se entrega?" inputMode="numeric" value={f.entregas} onChange={s("entregas")}/>
+              <Campo label="Días que guardamos la mercancía (si aplica)" inputMode="numeric" value={f.diasResguardo} onChange={s("diasResguardo")} placeholder="0"/>
             </div>
           </Seccion>
           <Seccion titulo="Carga">
-            <Campo label="Cómo viene descrita" opciones={["Cajas", "Tarimas", "Solo peso y volumen"]} value={f.modo} onChange={s("modo")}/>
+            <Campo label="¿Cómo te la describió el cliente?" opciones={["Cajas", "Tarimas", "Solo peso y volumen"]} value={f.modo} onChange={s("modo")}/>
             <div style={{ ...rejilla, marginTop: 12 }}>
               {f.modo === "Cajas" && <>
                 <Campo label="Número de cajas o piezas" inputMode="numeric" value={f.cajas} onChange={s("cajas")}/>

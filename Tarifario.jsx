@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, BD2, DISP, MONO, fechaHora, etiqueta, caja, rejilla, boton, Campo, Chip, Seccion, Dialogo } from "./uiBasico.jsx";
 import { UNIDADES_TARIFA, buscarTarifa, precioConGanancia, validarTarifa } from "./tarifario.ts";
 
-const pesos = n => n === null || n === undefined || n === "" ? "—" : "$" + Number(n).toLocaleString("es-MX", { maximumFractionDigits: 2 });
+// Con centavos siempre a 2 dígitos ($22,082.50) y sin ellos cuando es cerrado ($13,310).
+const pesos = n => { if(n === null || n === undefined || n === "") return "—"; const v = Number(n), c = Math.round(v * 100) % 100 !== 0;
+  return "$" + v.toLocaleString("es-MX", { minimumFractionDigits: c ? 2 : 0, maximumFractionDigits: 2 }); };
 
 function Calculadora({ tarifas }){
   const [tipo, setTipo] = useState("nacional"), [texto, setTexto] = useState(""), [unidad, setUnidad] = useState("eur"), [ganancia, setGanancia] = useState("");
@@ -115,7 +117,7 @@ export default function Tarifario({ store, usuario }){
       </div>
       <Calculadora tarifas={tarifas}/>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-        {[["nacional", "Nacional"], ["local", "Local ZMCM"], ["regla", "Reglas del cotizador"]].map(([k, l]) => <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k} style={{ border: "1.5px solid " + (tab === k ? A : BD2), background: tab === k ? A + "14" : "#fff", color: tab === k ? A : MUTED, borderRadius: 999, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l} · {tarifas.filter(t => t.tipo === k).length}</button>)}
+        {[["nacional", "Fuera de CDMX"], ["local", "CDMX y zona metropolitana"], ["regla", "Reglas del cotizador"]].map(([k, l]) => <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k} style={{ border: "1.5px solid " + (tab === k ? A : BD2), background: tab === k ? A + "14" : "#fff", color: tab === k ? A : MUTED, borderRadius: 999, padding: "6px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{l} · {tarifas.filter(t => t.tipo === k).length}</button>)}
         <input value={q} onChange={e => setQ(e.target.value)} aria-label="Buscar tarifa" placeholder="Buscar…" style={{ ...caja, maxWidth: 280, marginLeft: "auto" }}/>
       </div>
       {error && <div role="alert" style={{ color: ROSE, fontSize: 13, marginBottom: 10 }}>No se pudo leer el tarifario: {error}</div>}
@@ -133,6 +135,8 @@ export default function Tarifario({ store, usuario }){
           </tbody>
         </table>
       </div> : <>
+      {tab === "nacional" && <div style={{ fontSize: 12, color: MUTED, margin: "0 0 8px 2px" }}>
+        En cada celda: <b style={{ color: TEXT }}>arriba, el precio base</b> (con el que cotiza el sistema) y <b style={{ color: BLUE }}>abajo en azul, el precio de lista al cliente</b> del Excel, solo de referencia.</div>}
       <div style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
           <thead><tr>{[tab === "nacional" ? "Destino" : "Concepto", ...(tab === "nacional" ? ["Km"] : []), ...UNIDADES_TARIFA.map(u => u.nombre), ""].map(h => <th key={h} style={{ textAlign: "left", padding: "11px 10px", fontSize: 10, color: MUTED, letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid " + BORDER }}>{h}</th>)}</tr></thead>

@@ -4205,7 +4205,13 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
     entregas.slice(0,3).forEach(e=>all.push({icon:Package,color:GREEN,label:e.pdv||"Entrega",sub:e.status||"",t:e.createdAt?.seconds||0,view:"entregas"}));
     return all.sort((a,b)=>b.t-a.t).slice(0,10);
   },[cots,facts,rutas,entregas]);
-  const quickActions=[
+  // El camino de todos los días: pedido → cotizar → servicio → factura.
+  const quickActions=FF_SERVICIOS?[
+    {icon:Bell,label:"Ver pedidos",color:BLUE,v:"solicitudes"},
+    {icon:DollarSign,label:"Cotizar",color:A,v:"cotizadorAuto"},
+    {icon:ClipboardList,label:"Servicios",color:VIOLET,v:"servicios"},
+    ...(isAdmin?[{icon:FileText,label:"Registrar factura",color:GREEN,v:"facturas"}]:[]),
+  ]:[
     ...(isAdmin?[
       {icon:DollarSign,label:"Nueva cotización",color:A,v:"cotizador"},
       {icon:ClipboardList,label:"Nuevo presupuesto",color:VIOLET,v:"presupuestos"},
@@ -4273,9 +4279,9 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
       {/* ── SEGUIMIENTO: cobranza y facturación pendiente ── */}
       {isAdmin&&(
         <div className="g4 au2" style={{marginBottom:16}}>
-          <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes+" registros internos sin pagar"} onClick={()=>setView("facturas")}/>
-          <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:sinVenc.length?AMBER:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:sinVenc.length?AMBER:GREEN} sub={cartera.length>0?cartera.length+" facturas vencidas":sinVenc.length>0?sinVenc.length+" sin fecha de vencimiento ("+fmtK(montoSinVenc)+")":"al corriente ✓"} onClick={()=>setView("facturas")}/>
-          <KpiCard icon={FileText} color={VIOLET} accent={sinFacturar.length>0} label="Sin facturar" value={sinFacturar.length} valueColor={VIOLET} sub="servicios por solicitar a Katia" onClick={()=>setView("facturas")}/>
+          <KpiCard icon={Clock} color={AMBER} accent label="Por cobrar" value={fmtK(pendiente)} valueColor={AMBER} sub={nPendientes===1?"1 factura sin pagar":nPendientes+" facturas sin pagar"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={AlertCircle} color={carteraVencida>0?ROSE:sinVenc.length?AMBER:GREEN} accent={carteraVencida>0} label="Cartera vencida" value={fmtK(carteraVencida)} valueColor={carteraVencida>0?ROSE:sinVenc.length?AMBER:GREEN} sub={[cartera.length>0&&cartera.length+(cartera.length===1?" factura vencida":" facturas vencidas"),sinVenc.length>0&&sinVenc.length+" sin fecha de vencimiento ("+fmtK(montoSinVenc)+"): ponles fecha"].filter(Boolean).join(" · ")||"al corriente ✓"} onClick={()=>setView("facturas")}/>
+          <KpiCard icon={FileText} color={VIOLET} accent={sinFacturar.length>0} label="Facturas pedidas sin emitir" value={sinFacturar.length} valueColor={VIOLET} sub="contabilidad todavía no las timbra" onClick={()=>setView("facturas")}/>
           <KpiCard icon={TrendingUp} color={GREEN} label="Cobrado" value={pctCob+"%"} valueColor={pctCob>=80?GREEN:AMBER} sub={fmtK(cobrado)+" de "+fmtK(totalFac)+" facturado c/IVA"+(aunNoVence>0?" · "+fmtK(aunNoVence)+" aún no vence":"")} onClick={()=>setView("facturas")}/>
         </div>
       )}
@@ -4292,10 +4298,8 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
         </div>
         <KpiCard icon={DollarSign} color={AMBER} label="Gastos chofer pendientes" value={fmtK(gastosPendientes)} sub={gastosChofer.filter(g=>g.estado==="pendiente").length+" reembolsos"} onClick={()=>setView("gastosAdmin")}/>
         <KpiCard icon={Clock} color={GREEN} label="Jornadas activas" value={jornadasActivas} sub={jornadas.filter(j=>{const ts=j.inTs?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).length+" jornadas hoy"} onClick={()=>setView("jornadas")}/>
-        {isAdmin
-          ?<KpiCard icon={AlertCircle} color={sinVenc.length?AMBER:GREEN} label="Facturas sin fecha de vencimiento" value={sinVenc.length} sub={sinVenc.length?fmtK(montoSinVenc)+" sin pagar: ponles fecha":"todas tienen fecha"} onClick={()=>setView("facturas")}/>
-          :<KpiCard icon={Package} color={VIOLET} label="Entregas hoy" value={entregas.filter(e=>{const ts=e.createdAt?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).length} sub="registradas hoy" onClick={()=>setView("entregas")}/>
-        }
+        {/* "Facturas sin fecha" ya está en la tarjeta Cartera vencida: no se repite. */}
+        {!isAdmin&&<KpiCard icon={Package} color={VIOLET} label="Entregas hoy" value={entregas.filter(e=>{const ts=e.createdAt?.seconds;if(!ts) return false;return new Date(ts*1000).toDateString()===new Date().toDateString();}).length} sub="registradas hoy" onClick={()=>setView("entregas")}/>}
       </div>
 
       <div className="g2-side" style={{marginBottom:16}}>
@@ -4328,9 +4332,9 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
           )}
           {/* Pipeline de rutas */}
           <div style={{background:"#fff",border:"1px solid "+BORDER,borderRadius:14,padding:"16px 18px"}}>
-            <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,marginBottom:12}}>Pipeline de rutas</div>
+            <div style={{fontFamily:DISP,fontWeight:700,fontSize:14,marginBottom:12}}>Rutas del sistema anterior</div>
             <div className="g3">
-              {[[rutasProg,"Programadas",VIOLET],[rutasActivas,"En curso",BLUE],[rutasComp,"Completadas",GREEN]].map(([n,l,c])=>(
+              {[[rutasProg,"Por salir",VIOLET],[rutasActivas,"En camino",BLUE],[rutasComp,"Terminadas",GREEN]].map(([n,l,c])=>(
                 <div key={l} style={{textAlign:"center",padding:"12px 8px",background:c+"08",borderRadius:11,border:"1px solid "+c+"18"}}>
                   <div style={{fontFamily:MONO,fontSize:24,fontWeight:800,color:c}}>{n}</div>
                   <div style={{fontSize:10,fontWeight:600,color:MUTED,marginTop:2}}>{l}</div>
@@ -8075,7 +8079,7 @@ function Clientes(){
           ))}{filt.map((c,i)=>(
             <tr key={c.id||i} className="fr" style={{borderBottom:"1px solid "+BORDER}}>
               <td style={{padding:"12px 16px",fontWeight:700,fontSize:13}}>{c.nombre}</td>
-              <td style={{padding:"12px 16px",fontSize:12}}>{(()=>{const cp=clienteDeCuenta(c);const rz=(c.razonSocial&&c.razonSocial!=="POR DEFINIR")?c.razonSocial:cp?.empresa;const rf=c.rfc||cp?.rfc;const her=cp&&(!c.razonSocial||c.razonSocial==="POR DEFINIR"||!c.rfc);return <>{rz||<span style={{color:MUTED}}>—</span>}<div style={{fontFamily:MONO,fontSize:11,color:MUTED}}>{rf||"sin RFC"}{her&&rz?<span style={{fontFamily:SANS,marginLeft:6}} title="Tomado del plan del catálogo; puedes capturarlo en la cuenta">· del plan</span>:null}</div></>;})()}</td>
+              <td style={{padding:"12px 16px",fontSize:12}}>{(()=>{const cp=clienteDeCuenta(c);const rzPropia=(c.razonSocial&&c.razonSocial!=="POR DEFINIR")?c.razonSocial:"";/* Razón social y RFC se toman juntos del plan o juntos de la cuenta: nunca uno de cada empresa. */const her=!!cp&&!rzPropia&&!c.rfc;const rz=her?cp.empresa:rzPropia;const rf=her?cp.rfc:c.rfc;if(!rz&&rf) return <><span style={{color:AMBER,fontWeight:700}}>Falta razón social</span><div style={{fontFamily:MONO,fontSize:11,color:MUTED}}>{rf}</div></>;return <>{rz||<span style={{color:MUTED}}>—</span>}<div style={{fontFamily:MONO,fontSize:11,color:MUTED}}>{rf||"sin RFC"}{her&&rz?<span style={{fontFamily:SANS,marginLeft:6}} title="Tomado del plan del catálogo; puedes capturarlo en la cuenta">· del plan</span>:null}</div></>;})()}</td>
               <td style={{padding:"12px 16px"}}>
                 {(()=>{
                   const ps=planesDeCuenta(c);
@@ -9070,7 +9074,7 @@ async function exportReportePDF(facts, viat, mesDesde, mesHasta, anio="2026"){
   const insights=[
     mejorMes&&mejorMes.subtotal>0?`Mejor mes del período: ${mejorMes.mesFull} con ${money(mejorMes.subtotal)} facturados (sin IVA) y utilidad de ${money(mejorMes.utilidad)}.`:null,
     cliArr[0]?`Cliente principal: ${cliArr[0][0]} concentra el ${topCliShare}% de la facturación${topCliShare>=50?" — alta dependencia, conviene diversificar":""}.`:null,
-    totalPend>0?`Por cobrar: ${money(totalPend)} en registros internos sin pagar (${pctCob}% ya cobrado).`:`Cobranza al corriente: 100% del facturado está cobrado.`,
+    totalPend>0?`Por cobrar: ${money(totalPend)} en facturas sin pagar (${pctCob}% ya cobrado).`:`Cobranza al corriente: 100% del facturado está cobrado.`,
     sinFacturarN>0?`${sinFacturarN} servicio(s) del período aún sin facturar o en solicitud — ingreso pendiente de entrar al ciclo de cobranza.`:null,
     margen<0?`El período cierra con pérdida contable de ${money(Math.abs(totalUtil))} — los costos superan lo facturado en estos meses.`:margen<0.15?`Margen de ${Math.round(margen*100)}% — por debajo del objetivo de 15%.`:`Margen sano de ${Math.round(margen*100)}% (objetivo ≥15% cumplido).`,
   ].filter(Boolean);
