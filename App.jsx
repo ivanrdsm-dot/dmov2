@@ -4085,7 +4085,7 @@ function QueFaltaHoy({setView,alertasAbiertas=0}){
   const hoySrv=(d.srv||[]).filter(x=>x.estado!=="Cancelada"), sinChofer=hoySrv.filter(x=>["Solicitud","Cotizada","Confirmada"].includes(x.estado)).length;
   const tarjetas=[
     {n:sinResp,t:sinResp===1?"pedido por contestar":"pedidos por contestar",v:"solicitudes",c:sinResp?ROSE:GREEN},
-    {n:porAprobar+porEnviar,t:porAprobar?"cotizaciones por aprobar":porEnviar?"cotizaciones por enviar":"cotizaciones por aprobar",sub:[porAprobar&&porAprobar+" por aprobar",porEnviar&&porEnviar+" por enviar",esperando&&esperando+" esperando al cliente"].filter(Boolean).join(" · "),v:"cotizaciones",c:porAprobar+porEnviar?AMBER:GREEN},
+    {n:porAprobar+porEnviar,t:(porAprobar+porEnviar===1?"cotización":"cotizaciones")+(porAprobar?" por aprobar":porEnviar?" por enviar":" por aprobar"),sub:[porAprobar&&porAprobar+" por aprobar",porEnviar&&porEnviar+" por enviar",esperando&&esperando+" esperando al cliente"].filter(Boolean).join(" · "),v:"cotizaciones",c:porAprobar+porEnviar?AMBER:GREEN},
     {n:hoySrv.length,t:hoySrv.length===1?"servicio para hoy":"servicios para hoy",sub:sinChofer?sinChofer+" todavía sin chofer":"",v:"servicios",c:sinChofer?ROSE:hoySrv.length?BLUE:GREEN},
     {n:alertasAbiertas,t:alertasAbiertas===1?"alerta sin atender":"alertas sin atender",v:"alertas",c:alertasAbiertas?ROSE:GREEN},
     {n:(d.fac||[]).length,t:(d.fac||[]).length===1?"servicio entregado sin factura":"servicios entregados sin factura",sub:(d.fac||[]).length?"Pídela desde el servicio":"",v:"reportesOperacion",c:(d.fac||[]).length?AMBER:GREEN},
@@ -9528,7 +9528,7 @@ function PagosProveedores({userProfile}){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
         <div>
           <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>💸 Pagos a Proveedores</h1>
-          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Cuentas por pagar · Carga a plan/cliente · IVA acreditable · Impacta el P&L automáticamente</p>
+          <p style={{color:MUTED,fontSize:13,marginTop:3}}>Lo que pagamos y lo que debemos a proveedores. Cada pago cuenta solo en los reportes de dinero.</p>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button onClick={()=>exportPagosPDF(filt,labelExp,filtroDesc)} className="btn" style={{display:"flex",alignItems:"center",gap:6,background:"#fff",border:"1.5px solid "+A+"40",color:A,borderRadius:11,padding:"9px 14px",fontWeight:700,fontSize:12}}><FileText size={13}/>PDF</button>
@@ -11073,10 +11073,10 @@ function Choferes(){
               <div><div style={{color:MUTED,fontWeight:700,textTransform:"uppercase",fontSize:9}}>Emergencia</div><div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.emergencia||"—"}</div></div>
               <div><div style={{color:MUTED,fontWeight:700,textTransform:"uppercase",fontSize:9}}>Tel. emergencia</div><div style={{fontFamily:MONO}}>{c.emergenciaTel||"—"}</div></div>
             </div>
-            {c.codigoAcceso&&<div style={{padding:"8px 10px",background:VIOLET+"08",borderRadius:8,border:"1px dashed "+VIOLET+"30",marginBottom:10}}>
-              <div style={{fontSize:9,color:MUTED,fontWeight:700,textTransform:"uppercase"}}>Código de acceso app chofer</div>
-              <div style={{fontFamily:MONO,fontWeight:800,fontSize:16,color:VIOLET,letterSpacing:"0.1em"}}>{c.codigoAcceso}</div>
-            </div>}
+            {/* El código viejo ya no abre nada (el acceso anónimo se cerró). La app nueva usa cuenta propia. */}
+            <div style={{padding:"8px 10px",background:BLUE+"08",borderRadius:8,border:"1px dashed "+BLUE+"30",marginBottom:10,fontSize:11,color:MUTED}}>
+              {c.authUid?<><b style={{color:GREEN}}>✓ Ya tiene cuenta en la app</b></>:<>Para darle la app: <b style={{color:TEXT}}>En vivo → Choferes en ruta → Crear cuenta</b></>}
+            </div>
             <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
               <button onClick={()=>openEdit(c)} className="btn" style={{color:BLUE,padding:"5px 9px",border:"1px solid "+BLUE+"20",borderRadius:6,fontSize:11,fontWeight:600}}><Eye size={12}/></button>
               <button onClick={()=>del(c.id)} className="btn" style={{color:ROSE,padding:"5px 9px",border:"1px solid "+ROSE+"20",borderRadius:6,fontSize:11,fontWeight:600}}><Trash2 size={12}/></button>
@@ -11099,11 +11099,7 @@ function Choferes(){
           <Sel label="Estado" value={form.status} onChange={e=>setForm({...form,status:e.target.value})} options={statuses}/>
           <Inp label="URL foto (opcional)" value={form.fotoURL} onChange={e=>setForm({...form,fotoURL:e.target.value})} placeholder="https://…"/>
           <div style={{gridColumn:"1/-1"}}><Txt label="Notas" value={form.notas} onChange={e=>setForm({...form,notas:e.target.value})} placeholder="Observaciones, restricciones, etc."/></div>
-          {editItem?.codigoAcceso&&<div style={{gridColumn:"1/-1",padding:"12px 16px",background:VIOLET+"08",borderRadius:10,border:"1.5px solid "+VIOLET+"20"}}>
-            <div style={{fontSize:10,color:VIOLET,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>Código de acceso app chofer</div>
-            <div style={{fontFamily:MONO,fontWeight:800,fontSize:22,color:VIOLET,letterSpacing:"0.12em"}}>{editItem.codigoAcceso}</div>
-            <div style={{fontSize:11,color:MUTED,marginTop:4}}>Comparte este código con el chofer para que inicie sesión en la app móvil</div>
-          </div>}
+          <div style={{gridColumn:"1/-1",fontSize:12,color:MUTED}}>La cuenta para la app del chofer se crea en <b style={{color:TEXT}}>En vivo → Choferes en ruta → Crear cuenta</b>.</div>
           <button onClick={save} className="btn" style={{gridColumn:"1/-1",background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:12,padding:"13px 0",fontFamily:DISP,fontWeight:700,fontSize:15}}>
             {editItem?"Guardar cambios":"Crear chofer"}
           </button>
