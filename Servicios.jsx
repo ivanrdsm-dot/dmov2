@@ -92,7 +92,7 @@ function Puntos({ titulo, puntos, onChange, catalogo = [] }){
       {puntos.map((p, i) => (
         <div key={i} style={{ ...rejilla, marginBottom: 10, paddingBottom: 10, borderBottom: i < puntos.length - 1 ? "1px dashed " + BD2 : "none" }}>
           <div><Campo label="Nombre del lugar" name={titulo + i} lista={catalogo.filter(x => x.activo !== false).map(x => x.nombre).filter(Boolean)} value={p.nombre || ""} onChange={e => elegir(i, e.target.value)} placeholder="Bodega, tienda, CEDIS"/>
-            {p.puntoId && <div style={{ fontSize: 11, fontWeight: 700, marginTop: 3, color: p.pinListo ? GREEN : AMBER }}>{p.pinListo ? "Punto del catálogo, pin confirmado" : "Punto del catálogo, pin sin confirmar"}</div>}</div>
+            {p.puntoId && <div style={{ fontSize: 11, fontWeight: 700, marginTop: 3, color: p.pinListo ? GREEN : AMBER }}>{p.pinListo ? "✓ Lugar guardado y confirmado en el mapa" : "Lugar guardado, falta confirmarlo en el mapa"}</div>}</div>
           <Campo label="Dirección *" name={titulo + i} value={p.direccion || ""} onChange={e => set(i, "direccion", e.target.value)}/>
           <Campo label="Quién entrega o recibe" name={titulo + i} value={p.contacto || ""} onChange={e => set(i, "contacto", e.target.value)}/>
           <Campo label="Teléfono" name={titulo + i} value={p.telefono || ""} onChange={e => set(i, "telefono", e.target.value)} inputMode="tel"/>
@@ -197,7 +197,7 @@ function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisa
       avisar("Listo: " + (chofer.nombre || "el chofer") + " ya tiene la ruta en su app" + (r?.ordenada && r.kmDespues !== null && r.kmDespues < r.kmAntes ? ` (ordenada por cercanía: ${r.kmAntes} → ${r.kmDespues} km en línea recta)` : ""));
     } catch(e){
       const m = String(e?.message || e);
-      avisar(/pin confirmado/.test(m) ? m + ". Ve a Lugares y confirma el pin de esos puntos." : "No se pudo: " + m, true);
+      avisar(/pin confirmado/.test(m) ? m.replace(/pin confirmado/g, "su lugar confirmado en el mapa") + ". Ve a Lugares y confirma esos lugares en el mapa." : "No se pudo: " + m, true);
     } finally { setOcupado(false); }
   };
   return (
@@ -212,7 +212,7 @@ function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisa
         <input type="checkbox" checked={ordenar} onChange={e => setOrdenar(e.target.checked)} style={{ width: 18, height: 18 }}/>
         Ordenar las entregas por cercanía (quítalo si el cliente pidió un orden)</label>
       {listos.length === 0 && <div style={{ fontSize: 12, color: AMBER, fontWeight: 700, marginTop: 8 }}>Ningún chofer tiene la app lista todavía. Su cuenta se crea en En vivo → Choferes en ruta.</div>}
-      <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Los lugares de carga y entrega deben estar en Lugares con su pin confirmado.</div>
+      <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Los lugares de carga y entrega deben estar en Lugares, confirmados en el mapa.</div>
     </Seccion>);
 }
 

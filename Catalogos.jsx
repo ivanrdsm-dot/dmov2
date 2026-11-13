@@ -38,7 +38,7 @@ function FormPunto({ inicial, onGuardar, onClose, guardando, SelectorMapa = null
         {mapa && SelectorMapa && <SelectorMapa title="Ubica el lugar" initialQuery={[f.nombre, f.direccion].filter(Boolean).join(", ")} onClose={() => setMapa(false)}
           onSelect={p => { setF(x => ({ ...x, coordenada: `${Number(p.lat).toFixed(6)}, ${Number(p.lng).toFixed(6)}`, direccion: x.direccion || p.address || "", nombre: x.nombre || p.name || "", pinConfirmado: false })); setMapa(false); }}/>}
         {c && <a href={`https://www.google.com/maps?q=${c.lat},${c.lng}`} target="_blank" rel="noreferrer" style={{ ...boton(BLUE, false), display: "inline-block", textDecoration: "none", lineHeight: "20px" }}>Ver el pin en el mapa</a>}
-        {c && <Marca checked={f.pinConfirmado} onChange={x => setF(y => ({ ...y, pinConfirmado: x }))}>Abrí el mapa y el pin cae en el lugar correcto</Marca>}
+        {c && <Marca checked={f.pinConfirmado} onChange={x => setF(y => ({ ...y, pinConfirmado: x }))}>Abrí el mapa y la marca cae justo en el lugar</Marca>}
         {v.avisos.map(a => <div key={a} style={{ color: AMBER, fontSize: 13, fontWeight: 700 }}>{a}</div>)}
       </Seccion>
       <Campo label="Notas de acceso" area value={f.notasAcceso} onChange={s("notasAcceso")} placeholder="Entrada por andén 3, pedir cita, EPP obligatorio"/>
@@ -89,13 +89,13 @@ const Botones = ({ onClose, guardando }) => <div style={{ display: "flex", gap: 
   <button type="submit" disabled={guardando} style={{ ...boton(A), opacity: guardando ? .6 : 1 }}>{guardando ? "Guardando…" : "Guardar"}</button></div>;
 
 const CONFIG = {
-  puntos: { titulo: "Lugares de carga y entrega", sub: "Tiendas, CEDIS y bodegas con su ubicación exacta. Un lugar se usa en una ruta cuando confirmas su pin.", nuevo: "+ Agregar lugar", Form: FormPunto,
+  puntos: { titulo: "Lugares de carga y entrega", sub: "Tiendas, CEDIS y bodegas con su ubicación exacta. Un lugar se puede usar en una ruta cuando confirmas su punto en el mapa.", nuevo: "+ Agregar lugar", Form: FormPunto,
     columnas: ["Punto", "Dirección", "Coordenada", "Recepción", "Estado"],
     fila: p => { const c = coordenadaDe(p), v = validarPunto(p); return [
       <b>{p.nombre}</b>, p.direccion, c ? <span style={{ fontFamily: MONO, fontSize: 12 }}>{c.lat.toFixed(5)}, {c.lng.toFixed(5)}<div style={{ color: MUTED }}>radio {radioDe(p)} m</div></span> : <span style={{ color: AMBER, fontWeight: 700 }}>PENDIENTE</span>,
       <span>{p.horario || "—"}<div style={{ fontSize: 11, color: MUTED }}>{p.contacto}</div></span>,
       p.activo === false ? <Chip color={MUTED}>Baja</Chip> : puntoListoParaRuta(p) ? <Chip color={GREEN}>Listo para ruta</Chip> : <span><Chip color={AMBER}>No listo</Chip><div style={{ fontSize: 11, color: AMBER, marginTop: 3 }}>{v.pendientes.slice(0, 2).join(" · ")}</div></span>]; },
-    resumen: lista => { const act = lista.filter(p => p.activo !== false); return [["Puntos activos", act.length, TEXT], ["Listos para ruta", act.filter(puntoListoParaRuta).length, GREEN], ["Sin pin confirmado", act.filter(p => !puntoListoParaRuta(p)).length, AMBER]]; },
+    resumen: lista => { const act = lista.filter(p => p.activo !== false); return [["Lugares activos", act.length, TEXT], ["Listos para ruta", act.filter(puntoListoParaRuta).length, GREEN], ["Falta confirmar en el mapa", act.filter(p => !puntoListoParaRuta(p)).length, AMBER]]; },
     texto: p => [p.nombre, p.direccion, p.contacto].join(" ") },
   proveedores: { titulo: "Proveedores", sub: "Quién puede ejecutar un servicio por nosotros. Sin seguro y tarjeta de circulación vigentes no quedan habilitados.", nuevo: "+ Agregar proveedor", Form: FormProveedor,
     columnas: ["Proveedor", "Contacto", "Unidades", "Comisión", "Estado"],
