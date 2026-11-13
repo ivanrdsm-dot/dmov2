@@ -3401,7 +3401,12 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
     const ingAnio=ingMes.reduce((a,b)=>a+b,0), gasAnio=gasMes.reduce((a,b)=>a+b,0);
     const conMonto=fAnio.filter(f=>(Number(f.subtotal||f.monto)||0)>0);
     const ticketProm=conMonto.length?ingAnio/conMonto.length:0;
-    const margen=ingAnio>0?((ingAnio-gasAnio)/ingAnio*100):0;
+    /* Margen solo con los meses que ya tienen costos (igual que Inicio): sumar ingresos de
+       meses sin costos daba un margen mejor que el real (−74 % contra −110 %). */
+    const iUlt=gasMes.reduce((k,v,i)=>v>0?i:k,-1);
+    const ingCerr=iUlt>=0?ingMes.slice(0,iUlt+1).reduce((a,b)=>a+b,0):0, gasCerr=iUlt>=0?gasMes.slice(0,iUlt+1).reduce((a,b)=>a+b,0):0;
+    const mesCierreEj=iUlt>=0?MESES[iUlt]:null;
+    const margen=ingCerr>0?((ingCerr-gasCerr)/ingCerr*100):0;
     const rutasActivas=rutas.filter(r=>r.status==="En curso"||r.status==="Programada").length;
 
     // Rentabilidad por operador y por unidad (F3+). Ingreso: cada factura reparte
@@ -3433,7 +3438,7 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
       .filter(o=>o.ingresos>0||o.costos>0).sort((a,b)=>b.ingresos-a.ingresos).slice(0,8);
     const topOperadores=mkTop(opMap), topUnidades=mkTop(uniMap);
 
-    return{ingMes,gasMes,utilMes,ingActual,ingPrev,crecimiento,cxc,cxcVencida,aging,sinMonto,topCli,catList,ingAnio,gasAnio,ticketProm,margen,nFacturas:fAnio.length,rutasActivas,nVencidas:vencidas.length,topOperadores,topUnidades};
+    return{ingMes,gasMes,utilMes,ingActual,ingPrev,crecimiento,cxc,cxcVencida,aging,sinMonto,topCli,catList,ingAnio,gasAnio,ingCerr,gasCerr,mesCierreEj,ticketProm,margen,nFacturas:fAnio.length,rutasActivas,nVencidas:vencidas.length,topOperadores,topUnidades};
   },[facts,viat,gastosCh,rutas]);
 
   const maxIng=Math.max(...kpi.ingMes,...kpi.gasMes,1);
@@ -3452,7 +3457,7 @@ function DashboardEjecutivo({facts=[],viat=[],gastosCh=[],rutas=[],clientes=[],s
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12,marginBottom:14}}>
         <KpiCard icon={TrendingUp} color={GREEN} label={"VENTAS "+MESES[MES_IDX].toUpperCase()} value={fmt(kpi.ingActual)} sub={(kpi.crecimiento>=0?"▲ +":"▼ ")+kpi.crecimiento.toFixed(1)+"% vs "+(MES_IDX>0?MESES[MES_IDX-1]:"—")}/>
         <KpiCard icon={DollarSign} color={A} label={"VENTAS "+ANIO} value={fmt(kpi.ingAnio)} sub={kpi.nFacturas+" facturas · ticket prom "+fmt(kpi.ticketProm)}/>
-        <KpiCard icon={BarChart2} color={kpi.margen>=25?GREEN:kpi.margen>=10?AMBER:ROSE} label="MARGEN BRUTO" value={kpi.margen.toFixed(1)+"%"} sub={"Utilidad "+fmt(kpi.ingAnio-kpi.gasAnio)+" · costos "+fmt(kpi.gasAnio)+(estEjec.n>0?" (incluye estimados "+estEjec.meses.join(", ")+")":"")}/>
+        <KpiCard icon={BarChart2} color={kpi.margen>=25?GREEN:kpi.margen>=10?AMBER:ROSE} label={"MARGEN"+(kpi.mesCierreEj?" · ENE–"+kpi.mesCierreEj.toUpperCase():"")} value={kpi.mesCierreEj?kpi.margen.toFixed(1)+"%":"—"} sub={kpi.mesCierreEj?"Solo meses con costos · utilidad "+fmt(kpi.ingCerr-kpi.gasCerr)+" · costos "+fmt(kpi.gasCerr)+(estEjec.n>0?" (incluye estimados "+estEjec.meses.join(", ")+")":""):"Todavía no hay costos registrados"}/>
         <KpiCard icon={FileText} color={BLUE} label="POR COBRAR" value={fmt(kpi.cxc)} sub={kpi.nVencidas+" vencidas por "+fmt(kpi.cxcVencida)} onClick={()=>setView&&setView("facturas")}/>
       </div>
 
@@ -3766,7 +3771,11 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
   const ANIO=new Date().getFullYear();
   const mesActualIdx=new Date().getMonth();
   const [desde,setDesde]=useState("Ene");
-  const [hasta,setHasta]=useState(MESES[mesActualIdx]);
+  /* "Hasta" arranca en el último mes que ya tiene costos: con meses sin costos el
+     resultado sale mejor que el real. Quien quiera, lo mueve a mano. */
+  const [hastaElegido,setHasta]=useState(null);
+  const iUltCostoPF=useMemo(()=>viat.filter(v=>String(v.anio||"")===String(ANIO)&&(Number(v.monto)||0)>0).reduce((k,v)=>Math.max(k,MESES.indexOf(v.mes)),-1),[viat]);
+  const hasta=hastaElegido||MESES[iUltCostoPF>=0?Math.min(iUltCostoPF,mesActualIdx):mesActualIdx];
   const [clienteF,setClienteF]=useState("todos");
   const [pagosProv,setPagosProv]=useState([]);
   useEffect(()=>onSnapshot(query(collection(db,"pagosProveedores"),limit(3000)),s=>setPagosProv(s.docs.map(d=>({id:d.id,...d.data()}))),()=>{}),[]);
@@ -3928,6 +3937,10 @@ function PortalFinanciero({facts=[],viat=[],clientes=[],setView}){
         </div>
       </div>
 
+      {iUltCostoPF>=0&&MESES.indexOf(hasta)>iUltCostoPF&&<div role="status" style={{background:AMBER+"10",border:"1px solid "+AMBER+"55",borderRadius:11,padding:"9px 14px",fontSize:12,color:TEXT,marginBottom:14}}>
+        ⚠️ Después de <b>{MESES[iUltCostoPF]}</b> todavía no hay costos: con esos meses el resultado se ve mejor que el real.
+        <button onClick={()=>setHasta(MESES[iUltCostoPF])} style={{marginLeft:10,background:"none",border:"none",color:BLUE,fontWeight:800,cursor:"pointer",fontSize:12}}>Ver solo hasta {MESES[iUltCostoPF]}</button>
+      </div>}
       {clienteF!=="todos"&&<div style={{background:BLUE+"0d",border:"1px solid "+BLUE+"30",borderRadius:11,padding:"9px 14px",fontSize:12,color:TEXT,marginBottom:14}}>
         📌 Vista por cliente: los costos se <strong>prorratean por peso de ingreso</strong> ({(data.peso*100).toFixed(1)}%) — la atribución directa de costos por cliente llegará cuando los gastos se liguen a ruta/cliente.
         <button onClick={()=>setClienteF("todos")} style={{marginLeft:10,background:"none",border:"none",color:BLUE,fontWeight:800,cursor:"pointer",fontSize:12}}>✕ quitar filtro</button>
@@ -9703,7 +9716,7 @@ function PagosProveedores({userProfile}){
       {/* ═══ TAB UTILIDAD ═══ */}
       {tab==="utilidad"&&<>
         <div style={{background:AMBER+"0a",border:"1px solid "+AMBER+"30",borderRadius:11,padding:"9px 14px",marginBottom:14,fontSize:11.5,color:"#92600a"}}>
-          💡 Utilidad = facturación sin IVA del cliente − pagos a proveedores cargados a ese cliente/plan. Para el P&L completo con nómina y costos contables, usa <strong>Reportes & KPIs</strong>.
+          💡 Utilidad = facturación sin IVA del cliente − pagos a proveedores cargados a ese cliente/plan. Para el P&L completo con nómina y costos contables, usa <strong>Reportes → Dinero</strong>.
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
           {[["Utilidad por cliente",utilCli.map(x=>({k:x.cliente,...x}))],["Utilidad por plan / servicio",utilPlan.map(x=>({k:x.plan,...x}))]].map(([titulo,rows])=>(
@@ -9872,7 +9885,8 @@ function Reportes(){
   const [viat,  setViat]        = useState([]);
   const [pagosProv, setPagosProv] = useState([]);
   const [load,  setLoad]        = useState(true);
-  const [modo,  setModo]        = useState("mes");       // "mes" | "rango" | "anual"
+  // Abre en el año completo: el mes en curso casi siempre está vacío y daba puros ceros.
+  const [modo,  setModo]        = useState("anual");     // "mes" | "rango" | "anual"
   const [mesSel,setMesSel]      = useState(mesActual);
   const [mesDesde,setMesDesde]  = useState("Ene");
   const [mesHasta,setMesHasta]  = useState(mesActual);
@@ -9899,7 +9913,10 @@ function Reportes(){
 
   // Filtros activos
   const desde = modo==="mes"?mesSel:modo==="anual"?"Ene":mesDesde;
-  const hasta  = modo==="mes"?mesSel:modo==="anual"?mesActual:mesHasta;
+  // "Año completo" llega hasta el último mes con costos (los siguientes aún no tienen gastos y darían más ganancia de la real).
+  const iUltCostoRep = viatAll.filter(v=>String(v.anio||"")===ANIO&&(Number(v.monto)||0)>0).reduce((k,v)=>Math.max(k,MESES_REP.indexOf(v.mes)),-1);
+  const finAnual = iUltCostoRep>=0?MESES_REP[Math.min(iUltCostoRep,MESES_REP.indexOf(mesActual))]:mesActual;
+  const hasta  = modo==="mes"?mesSel:modo==="anual"?finAnual:mesHasta;
 
   const pl = useMemo(()=>buildPLData(facts,viatAll,desde,hasta,ANIO),[facts,viatAll,desde,hasta]);
 
@@ -9932,7 +9949,7 @@ function Reportes(){
   },[facts,desde,hasta]);
   const topMax = topClientes[0]?topClientes[0][1]:1;
 
-  const periodoLabel = modo==="mes"?`${mesSel} ${ANIO}`:modo==="anual"?`Año ${ANIO}`:`${desde} – ${hasta} ${ANIO}`;
+  const periodoLabel = modo==="mes"?`${mesSel} ${ANIO}`:modo==="anual"?(finAnual!==mesActual?`Ene – ${finAnual} ${ANIO} (meses con costos)`:`Año ${ANIO}`):`${desde} – ${hasta} ${ANIO}`;
   const margenColor  = margenGral===null?MUTED:margenGral>=0.15?GREEN:margenGral>=0?AMBER:ROSE;
 
   if(load) return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:MUTED,fontSize:14}}>Cargando datos...</div>;
@@ -9945,7 +9962,7 @@ function Reportes(){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:22,flexWrap:"wrap",gap:12}}>
         <div>
           <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:28,color:TEXT,letterSpacing:"-0.03em",marginBottom:4}}>
-            📊 Reportes & KPIs
+            📊 Reportes de dinero
           </h1>
           <p style={{color:MUTED,fontSize:13}}>Estado de resultados · Desglose por categoría · Descarga por período</p>
         </div>
@@ -10001,7 +10018,7 @@ function Reportes(){
       </div>
 
       <div role="status" style={{padding:14,marginBottom:16,border:"1px solid "+AMBER,borderRadius:10,background:"#fffbeb",color:TEXT,fontSize:13}}>
-        <strong>Resultado provisional: cobertura de ingresos y gastos pendiente.</strong> Los meses sin gastos capturados no acreditan un margen real de 100%. Estos registros históricos pueden usar mes de captura, incluir importes sin desglose de IVA y carecer de CFDI o evidencia de cobro. Revisa período de servicio, duplicados, nómina, proveedores y gastos recurrentes antes de cerrar el mes.
+        <strong>Números provisionales.</strong> Un mes al que todavía no le llegan sus gastos se ve con más ganancia de la real. Antes de dar un mes por cerrado, revisa que estén sus gastos, la nómina y los pagos a proveedores.
       </div>
       {/* KPI Cards */}
       <div className="g4" style={{marginBottom:20}}>
@@ -10014,18 +10031,19 @@ function Reportes(){
       {/* Fila de KPIs secundarios */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:20}}>
         {[
-          {label:"Margen %", val:margenGral!==null?Math.round(margenGral*100)+"%":"—", ok:margenGral!==null&&margenGral>=0.15, warn:margenGral!==null&&margenGral>=0&&margenGral<0.15, ref:"≥ 15% óptimo"},
-          {label:"% Cobrado", val:pctCob+"%", ok:pctCob>=80, warn:pctCob>=50&&pctCob<80, ref:"≥ 80% objetivo"},
-          {label:"Costo / Ingreso", val:totalSub>0?Math.round(totalCos/totalSub*100)+"%":"—", ok:totalSub>0&&totalCos/totalSub<=0.85, warn:totalSub>0&&totalCos/totalSub>0.85&&totalCos<=totalSub, ref:"< 85% objetivo (sin IVA)"},
-          {label:"Nómina / Ingreso", val:totalSub>0?Math.round(((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub*100)+"%":"—", ok:totalSub>0&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub<=0.4, warn:totalSub>0&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub>0.4&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub<=0.6, ref:"< 40% saludable"},
-        ].map(({label,val,ok,warn,ref})=>{
-          const c=ok?GREEN:warn?AMBER:ROSE;
+          {label:"Margen %", vacio:margenGral===null, val:margenGral!==null?Math.round(margenGral*100)+"%":"—", ok:margenGral!==null&&margenGral>=0.15, warn:margenGral!==null&&margenGral>=0&&margenGral<0.15, ref:"≥ 15% óptimo"},
+          {label:"% Cobrado", vacio:totalIng<=0, val:totalIng>0?pctCob+"%":"—", ok:pctCob>=80, warn:pctCob>=50&&pctCob<80, ref:"≥ 80% objetivo"},
+          {label:"Costo / Ingreso", vacio:totalSub<=0, val:totalSub>0?Math.round(totalCos/totalSub*100)+"%":"—", ok:totalSub>0&&totalCos/totalSub<=0.85, warn:totalSub>0&&totalCos/totalSub>0.85&&totalCos<=totalSub, ref:"< 85% objetivo (sin IVA)"},
+          {label:"Nómina / Ingreso", vacio:totalSub<=0, val:totalSub>0?Math.round(((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub*100)+"%":"—", ok:totalSub>0&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub<=0.4, warn:totalSub>0&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub>0.4&&((catAcum["Sueldos"]||0)+(catAcum["Cargas Sociales"]||0))/totalSub<=0.6, ref:"< 40% saludable"},
+        ].map(({label,val,ok,warn,ref,vacio})=>{
+          // Sin datos en el periodo no hay nada que alarmar: gris y "Sin datos".
+          const c=vacio?MUTED:ok?GREEN:warn?AMBER:ROSE;
           return(
-            <div key={label} style={{background:"#fff",border:"1.5px solid "+(ok?GREEN:warn?AMBER:ROSE)+"30",borderRadius:12,padding:"14px 16px",textAlign:"center"}}>
+            <div key={label} style={{background:"#fff",border:"1.5px solid "+c+"30",borderRadius:12,padding:"14px 16px",textAlign:"center"}}>
               <div style={{fontSize:22,fontWeight:900,fontFamily:MONO,color:c,marginBottom:4}}>{val}</div>
               <div style={{fontSize:12,fontWeight:700,color:TEXT,marginBottom:2}}>{label}</div>
               <div style={{fontSize:10,color:MUTED}}>{ref}</div>
-              <div style={{marginTop:6,fontSize:10,fontWeight:700,color:"#fff",background:c,borderRadius:4,padding:"1px 8px",display:"inline-block"}}>{ok?"✅ OK":warn?"⚠️ Revisar":"🔴 Atención"}</div>
+              <div style={{marginTop:6,fontSize:10,fontWeight:700,color:"#fff",background:c,borderRadius:4,padding:"1px 8px",display:"inline-block"}}>{vacio?"Sin datos":ok?"✅ OK":warn?"⚠️ Revisar":"🔴 Atención"}</div>
             </div>
           );
         })}
