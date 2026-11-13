@@ -4085,7 +4085,7 @@ function QueFaltaHoy({setView,alertasAbiertas=0}){
   const hoySrv=(d.srv||[]).filter(x=>x.estado!=="Cancelada"), sinChofer=hoySrv.filter(x=>["Solicitud","Cotizada","Confirmada"].includes(x.estado)).length;
   const tarjetas=[
     {n:sinResp,t:sinResp===1?"pedido por contestar":"pedidos por contestar",v:"solicitudes",c:sinResp?ROSE:GREEN},
-    {n:porAprobar+porEnviar,t:porAprobar?"cotizaciones por aprobar":porEnviar?"cotizaciones por enviar":"cotizaciones por aprobar",sub:[porAprobar&&porAprobar+" por aprobar",porEnviar&&porEnviar+" por enviar",esperando&&esperando+" esperando al cliente"].filter(Boolean).join(" · "),v:"cotizaciones",c:porAprobar+porEnviar?AMBER:GREEN},
+    {n:porAprobar+porEnviar,t:(porAprobar+porEnviar===1?"cotización":"cotizaciones")+(porAprobar?" por aprobar":porEnviar?" por enviar":" por aprobar"),sub:[porAprobar&&porAprobar+" por aprobar",porEnviar&&porEnviar+" por enviar",esperando&&esperando+" esperando al cliente"].filter(Boolean).join(" · "),v:"cotizaciones",c:porAprobar+porEnviar?AMBER:GREEN},
     {n:hoySrv.length,t:hoySrv.length===1?"servicio para hoy":"servicios para hoy",sub:sinChofer?sinChofer+" todavía sin chofer":"",v:"servicios",c:sinChofer?ROSE:hoySrv.length?BLUE:GREEN},
     {n:alertasAbiertas,t:alertasAbiertas===1?"alerta sin atender":"alertas sin atender",v:"alertas",c:alertasAbiertas?ROSE:GREEN},
     {n:(d.fac||[]).length,t:(d.fac||[]).length===1?"servicio entregado sin factura":"servicios entregados sin factura",sub:(d.fac||[]).length?"Pídela desde el servicio":"",v:"reportesOperacion",c:(d.fac||[]).length?AMBER:GREEN},
