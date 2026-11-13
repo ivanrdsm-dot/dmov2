@@ -75,7 +75,8 @@ function MapaChoferes({ cargarMapa, puntos }){
     let vivo = true, obs = null;
     cargarMapa().then(mb => {
       if(!vivo || !cont.current || mapa.current) return;
-      mapa.current = new mb.Map({ container: cont.current, style: "mapbox://styles/mapbox/streets-v12", center: [-99.1332, 19.4326], zoom: 9 });
+      // cooperativeGestures: la rueda baja la página; para acercar el mapa se usa Ctrl + rueda (o dos dedos en el celular).
+      mapa.current = new mb.Map({ container: cont.current, style: "mapbox://styles/mapbox/streets-v12", center: [-99.1332, 19.4326], zoom: 9, cooperativeGestures: true, locale: { "ScrollZoomBlocker.CtrlMessage": "Usa Ctrl + rueda para acercar el mapa", "ScrollZoomBlocker.CmdMessage": "Usa ⌘ + rueda para acercar el mapa", "TouchPanBlocker.Message": "Usa dos dedos para mover el mapa" } });
       mapa.current.addControl(new mb.NavigationControl({ showCompass: false }), "top-right");
       mapa.current.on("load", () => { if(!vivo) return; mapa.current?.resize(); setListo(true); });
       mapa.current.__mb = mb;

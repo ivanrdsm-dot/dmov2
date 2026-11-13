@@ -10010,7 +10010,7 @@ function Reportes(){
           </select>
         </>)}
         {modo==="anual"&&(
-          <span style={{fontSize:13,fontWeight:700,color:BLUE}}>Ene → {mesActual} {ANIO}</span>
+          <span style={{fontSize:13,fontWeight:700,color:BLUE}}>Ene → {finAnual} {ANIO}{finAnual!==mesActual?" (después aún no hay costos)":""}</span>
         )}
         <div style={{marginLeft:"auto",fontSize:12,fontWeight:700,color:MUTED,background:"#f8fafc",border:"1px solid "+BORDER,borderRadius:8,padding:"5px 12px"}}>
           {periodoLabel}
