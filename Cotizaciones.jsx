@@ -4,6 +4,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { A, BLUE, GREEN, ROSE, AMBER, VIOLET, MUTED, TEXT, BORDER, DISP, MONO, etiqueta, rejilla, boton, dinero, fechaHora, Campo, Chip, Seccion, Dialogo } from "./uiBasico.jsx";
 import { ESTADOS_COTIZACION, evaluarTransicion, kpisCotizaciones, precioCliente } from "./cotizaciones.ts";
+/* El estado guardado no cambia; solo cómo se lee en pantalla. */
+const ETIQUETA = { Propuesta: "Por aprobar", Aprobada: "Aprobada · falta enviar", Enviada: "Esperando al cliente", Aceptada: "Aceptada", Rechazada: "Rechazada", Cancelada: "Cancelada" };
+const etiquetaEstado = e => ETIQUETA[e] || e;
 import { bloqueoPdf } from "./cotizacionCliente.ts";
 
 const COLOR = { Propuesta: AMBER, Aprobada: BLUE, Enviada: VIOLET, Aceptada: GREEN, Rechazada: ROSE, Cancelada: MUTED };
@@ -36,7 +39,7 @@ function Detalle({ c, store, usuario, onClose, onCrearServicio, avisar }){
   return (
     <Dialogo titulo={`${c.folio} · ${c.empresa || "Sin cliente"}`} onClose={onClose}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
-        <Chip color={COLOR[c.estado] || MUTED}>{c.estado}</Chip>
+        <Chip color={COLOR[c.estado] || MUTED}>{etiquetaEstado(c.estado)}</Chip>
         {c.solicitudFolio && <Chip color={BLUE}>Solicitud {c.solicitudFolio}</Chip>}
         {c.servicioFolio && <Chip color={GREEN}>Servicio {c.servicioFolio}</Chip>}
         {c.sustituyeA && <Chip color={MUTED}>Sustituye a {c.sustituyeA}</Chip>}
@@ -64,7 +67,7 @@ function Detalle({ c, store, usuario, onClose, onCrearServicio, avisar }){
         {r.motivoUnidad && <div style={{ fontSize: 13, marginTop: 10 }}>{r.motivoUnidad}</div>}
         {(r.conceptos || []).length > 0 && <div style={{ marginTop: 10 }}><span style={etiqueta}>Desglose interno · no sale al cliente</span>
           {r.conceptos.map(x => <div key={x.concepto} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13, padding: "4px 0", borderBottom: "1px solid " + BORDER }}>
-            <span>{x.concepto} <span style={{ color: MUTED }}>· {x.detalle}</span></span><b style={{ fontFamily: MONO }}>{dinero(x.monto)}</b></div>)}
+            <span>{x.concepto}{x.detalle ? <span style={{ color: MUTED }}> · {x.detalle}</span> : null}</span><b style={{ fontFamily: MONO }}>{dinero(x.monto)}</b></div>)}
           <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Base {dinero(r.subtotalBase)}{r.gananciaPct ? ` + ${r.gananciaPct} % de ganancia` : ""}</div></div>}
         {(r.supuestos || []).length > 0 && <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>Supuestos: {r.supuestos.join(" · ")}</div>}
         {c.notas && <div style={{ fontSize: 13, marginTop: 8 }}><span style={etiqueta}>Notas</span>{c.notas}</div>}
@@ -126,19 +129,19 @@ export default function Cotizaciones({ store, usuario, onCrearServicio, onNueva 
         {tile(k.tasaCierrePct === null ? "—" : k.tasaCierrePct + " %", "Aceptadas de las respondidas", GREEN)}{tile(dinero(k.montoAceptado), "Monto aceptado sin IVA", GREEN)}
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-        <div style={{ flex: "0 1 220px" }}><Campo label="Ver" opciones={["Abiertas", "Todas", ...ESTADOS_COTIZACION]} value={filtro} onChange={e => setFiltro(e.target.value)}/></div>
+        <div style={{ flex: "0 1 220px" }}><Campo label="Ver" opciones={["Abiertas", "Todas", ...ESTADOS_COTIZACION.map(etiquetaEstado)]} value={etiquetaEstado(filtro)} onChange={e => { const v = e.target.value; setFiltro(ESTADOS_COTIZACION.find(x => etiquetaEstado(x) === v) || v); }}/></div>
         <div style={{ flex: "1 1 240px" }}><Campo label="Buscar" value={q} onChange={e => setQ(e.target.value)} placeholder="Folio, cliente, solicitud o servicio"/></div>
       </div>
       {error && <div role="alert" style={{ background: ROSE + "10", border: "1px solid " + ROSE + "50", color: ROSE, borderRadius: 12, padding: "10px 14px", fontSize: 13, marginBottom: 12 }}>No se pudieron cargar las cotizaciones: {error}</div>}
       <div style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 860 }}>
-          <thead><tr>{["Folio", "Estado", "Cliente", "Unidad", "Propuesto", "Aprobado", "Emitida", "Ligas"].map(h => <th key={h} style={{ textAlign: "left", padding: "10px 12px", fontSize: 10, color: MUTED, letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid " + BORDER }}>{h}</th>)}</tr></thead>
+          <thead><tr>{["Folio", "Estado", "Cliente", "Unidad", "Propuesto", "Aprobado", "Hecha", "Pedido / servicio"].map(h => <th key={h} style={{ textAlign: "left", padding: "10px 12px", fontSize: 10, color: MUTED, letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid " + BORDER }}>{h}</th>)}</tr></thead>
           <tbody>
             {cargando ? <tr><td colSpan={8} style={{ padding: 24, color: MUTED }}>Cargando…</td></tr>
               : visibles.length === 0 ? <tr><td colSpan={8} style={{ padding: 24, color: MUTED }}>{lista.length === 0 ? "Todavía no hay cotizaciones guardadas. Se crean desde el Cotizador automático o desde una solicitud." : "Ninguna cotización con ese filtro."}</td></tr>
               : visibles.map(c => <tr key={c.id} onClick={() => setDetalleId(c.id)} tabIndex={0} onKeyDown={e => e.key === "Enter" && setDetalleId(c.id)} style={{ cursor: "pointer", borderBottom: "1px solid " + BORDER }}>
                 <td style={{ padding: "10px 12px", fontFamily: MONO, fontWeight: 700 }}>{c.folio}</td>
-                <td style={{ padding: "10px 12px" }}><Chip color={COLOR[c.estado] || MUTED}>{c.estado}</Chip></td>
+                <td style={{ padding: "10px 12px" }}><Chip color={COLOR[c.estado] || MUTED}>{etiquetaEstado(c.estado)}</Chip></td>
                 <td style={{ padding: "10px 12px" }}>{c.empresa}</td>
                 <td style={{ padding: "10px 12px" }}>{c.resultado?.unidadNombre ? `${c.resultado.unidades} × ${c.resultado.unidadNombre}` : "—"}</td>
                 <td style={{ padding: "10px 12px", fontFamily: MONO }}>{dinero(c.precioPropuesto)}</td>

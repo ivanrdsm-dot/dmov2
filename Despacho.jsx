@@ -72,15 +72,17 @@ function MapaChoferes({ cargarMapa, puntos }){
   const cont = useRef(null), mapa = useRef(null), marcas = useRef([]), encuadrado = useRef(false);
   const [listo, setListo] = useState(false), [error, setError] = useState("");
   useEffect(() => {
-    let vivo = true;
+    let vivo = true, obs = null;
     cargarMapa().then(mb => {
       if(!vivo || !cont.current || mapa.current) return;
       mapa.current = new mb.Map({ container: cont.current, style: "mapbox://styles/mapbox/streets-v12", center: [-99.1332, 19.4326], zoom: 9 });
       mapa.current.addControl(new mb.NavigationControl({ showCompass: false }), "top-right");
-      mapa.current.on("load", () => vivo && setListo(true));
+      mapa.current.on("load", () => { if(!vivo) return; mapa.current?.resize(); setListo(true); });
       mapa.current.__mb = mb;
+      // Si el contenedor cambia de tamaño después de dibujar (menú, pestañas), el mapa se reacomoda y no quedan zonas grises.
+      if(typeof ResizeObserver !== "undefined"){ obs = new ResizeObserver(() => mapa.current?.resize()); obs.observe(cont.current); }
     }).catch(() => vivo && setError("No se pudo cargar el mapa."));
-    return () => { vivo = false; marcas.current.forEach(m => m.remove()); mapa.current?.remove(); mapa.current = null; };
+    return () => { vivo = false; obs?.disconnect(); marcas.current.forEach(m => m.remove()); mapa.current?.remove(); mapa.current = null; };
   }, [cargarMapa]);
   useEffect(() => {
     const m = mapa.current, mb = m?.__mb;
