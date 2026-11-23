@@ -41,18 +41,27 @@ const posicionAhora = (timeout = 15000) => new Promise((ok, mal) => {
 const aPunto = (p, bateria) => ({ lat: p.coords.latitude, lng: p.coords.longitude, tMs: Math.round(p.timestamp || Date.now()), precisionM: p.coords.accuracy,
   velocidadMs: p.coords.speed ?? null, bateria, simulada: false });
 /* Foto más ligera: máximo 1600 px, JPEG. Así sube rápido con poca señal y queda bajo el límite de 5 MB. */
-async function comprimir(file){
+async function comprimir(file, maximo = 1600, calidad = 0.8){
   try {
     const img = await createImageBitmap(file);
-    const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const k = Math.min(1, maximo / Math.max(img.width, img.height));
     const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-    const b = await new Promise(r => c.toBlob(r, "image/jpeg", 0.8));
+    const b = await new Promise(r => c.toBlob(r, "image/jpeg", calidad));
     if(b) return b;
   } catch {}
   if(file.size >= 5 * 1024 * 1024) throw new Error("La foto pesa mucho. Tómala con la cámara (no de la galería) y vuelve a intentar.");
   return file;
 }
+
+
+/* Borradores en el celular: si Android recarga la página al abrir la cámara, no se pierde lo capturado. */
+const BORR_DIA = "dm_borrador_dia", BORR_ENTREGA = "dm_borrador_entrega";
+const leerBorrador = k => { try { return JSON.parse(sessionStorage.getItem(k) || "null"); } catch { return null; } };
+const guardarBorrador = (k, v) => { try { v ? sessionStorage.setItem(k, JSON.stringify(v)) : sessionStorage.removeItem(k); } catch {} };
+const aDataURL = async archivo => { if(!archivo) return ""; try { const b = await comprimir(archivo, 1280, 0.72);
+  return await new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(b); }); } catch { return ""; } };
+const deDataURL = async url => { if(!url) return null; try { return await (await fetch(url)).blob(); } catch { return null; } };
 
 /* ── Diseño (celular primero): una sola hoja de estilos, animaciones suaves, áreas seguras del notch ── */
 const CSS = `
@@ -132,13 +141,14 @@ const Estilos = () => <style>{CSS}</style>;
 const Falla = ({ children }) => children ? <div style={{ background: "#fef2f2", color: ROJO, borderRadius: 12, padding: "10px 12px", fontWeight: 700, marginTop: 12, fontSize: 15 }}>{children}</div> : null;
 const hoyTexto = () => new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
 
-function Foto({ titulo, icono, archivo, onCambio, frontal = false }){
+function Foto({ titulo, icono, archivo, onCambio }){
   const url = archivo ? URL.createObjectURL(archivo) : "";
   useEffect(() => () => url && URL.revokeObjectURL(url), [url]);
   return (
     <label className={"dm-foto" + (archivo ? " lista" : "")}>
       {archivo ? <><img src={url} alt=""/><i className="ok">✓</i></> : <><span>{icono}</span><small>{titulo}</small></>}
-      <input type="file" accept="image/*" capture={frontal ? "user" : "environment"} style={{ display: "none" }} onChange={e => e.target.files?.[0] && onCambio(e.target.files[0])}/>
+      {/* Sin "capture": el celular deja escoger cámara o galería (en algunos Android la cámara directa regresa sin foto). */}
+      <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if(f) onCambio(f); e.target.value = ""; }}/>
     </label>
   );
 }
@@ -185,6 +195,15 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
   const [placa, setPlaca] = useState(placaSugerida || ""), [km, setKm] = useState(""), [gas, setGas] = useState("");
   const [error, setError] = useState(""), [paso, setPaso] = useState("");
   useEffect(() => { if(placaSugerida && !placa) setPlaca(placaSugerida); }, [placaSugerida]);   // eslint-disable-line react-hooks/exhaustive-deps
+  /* Borrador: se recupera si el celular recargó la página, y se guarda en cada cambio. */
+  const listoBorr = useRef(false);
+  useEffect(() => { (async () => { const b = leerBorrador(BORR_DIA);
+    if(b && b.choferId === chofer.id){ setSelfie(await deDataURL(b.selfie)); setPlacas(await deDataURL(b.placas)); setTablero(await deDataURL(b.tablero));
+      if(b.placa) setPlaca(b.placa); setKm(b.km || ""); setGas(b.gas || ""); }
+    listoBorr.current = true; })(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const turno = useRef(0);   // solo se guarda el borrador más reciente (las fotos tardan en convertirse)
+  useEffect(() => { if(!listoBorr.current) return; const n = ++turno.current; (async () => { const v = { choferId: chofer.id, selfie: await aDataURL(selfie), placas: await aDataURL(placas),
+    tablero: await aDataURL(tablero), placa, km, gas }; if(n === turno.current) guardarBorrador(BORR_DIA, v); })(); }, [selfie, placas, tablero, placa, km, gas]);   // eslint-disable-line react-hooks/exhaustive-deps
   const faltan = [!selfie && "tu foto", !placas && "foto de placas", !tablero && "foto del tablero", !placa.trim() && "placas", km === "" && "kilómetros", gas === "" && "gasolina"].filter(Boolean);
   const enviar = async () => {
     if(faltan.length){ setError("Falta: " + faltan.join(", ") + "."); return; }
@@ -197,6 +216,7 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
       setPaso("Registrando…");
       await llamar("choferCheckIn", { selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: placa.trim().toUpperCase(),
         odometroKm: Number(km), combustiblePct: Number(gas), lat: p.coords.latitude, lng: p.coords.longitude, simulada: false });
+      guardarBorrador(BORR_DIA, null);
       onListo();
     } catch(e){ setError(mensaje(e)); }
     setPaso("");
@@ -207,7 +227,7 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
       <p className="dm-sub">Toca cada cuadro para tomar la foto. Solo una vez al día.</p>
       <div className="dm-et">Fotos</div>
       <div className="dm-fotos">
-        <Foto titulo="Tú" icono="🤳" archivo={selfie} onCambio={setSelfie} frontal/>
+        <Foto titulo="Tú" icono="🤳" archivo={selfie} onCambio={setSelfie}/>
         <Foto titulo="Placas" icono="🚚" archivo={placas} onCambio={setPlacas}/>
         <Foto titulo="Tablero" icono="⏱️" archivo={tablero} onCambio={setTablero}/>
       </div>
@@ -232,6 +252,15 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
   const [foto, setFoto] = useState(null), [foto2, setFoto2] = useState(null), [recibe, setRecibe] = useState(""), [notas, setNotas] = useState("");
   const [problema, setProblema] = useState(""), [error, setError] = useState(""), [paso, setPaso] = useState(""), [firma, setFirma] = useState(null), [hayProblema, setHayProblema] = useState(false);
   const carga = parada.tipo === "carga";
+  const listoBorr = useRef(false);
+  useEffect(() => { (async () => { const b = leerBorrador(BORR_ENTREGA);
+    if(b && b.servicioId === servicio.id && b.paradaId === parada.id){ setFoto(await deDataURL(b.foto)); setFoto2(await deDataURL(b.foto2));
+      setRecibe(b.recibe || ""); setNotas(b.notas || ""); setProblema(b.problema || ""); setHayProblema(!!b.hayProblema); }
+    listoBorr.current = true; })(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const turno = useRef(0), cerrada = useRef(false);   // solo el borrador más reciente; nada después de cerrar
+  useEffect(() => { if(!listoBorr.current) return; const n = ++turno.current; (async () => { const v = { servicioId: servicio.id, paradaId: parada.id,
+    foto: await aDataURL(foto), foto2: await aDataURL(foto2), recibe, notas, problema, hayProblema }; if(n === turno.current && !cerrada.current) guardarBorrador(BORR_ENTREGA, v); })(); }, [foto, foto2, recibe, notas, problema, hayProblema]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const cerrar = ok => { cerrada.current = true; guardarBorrador(BORR_ENTREGA, null); onCerrar(ok); };
   const enviar = async () => {
     if(hayProblema && !problema){ setError("Elige qué problema hubo."); return; }
     if(!foto){ setError(problema ? "Toma una foto del lugar (sirve de prueba)." : "Toma la foto de la entrega."); return; }
@@ -246,12 +275,12 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
       const firmaRuta = firma ? await subir(base + "firma.png", firma) : "";
       setPaso("Cerrando la parada…");
       await llamar("choferCerrarParada", { servicioId: servicio.id, paradaId: parada.id, evidencia: { fotos, firmaRuta, receptor: recibe.trim(), notas: notas.trim(), incidencia: problema } });
-      onCerrar(true);
+      cerrar(true);
     } catch(e){ setError(mensaje(e)); }
     setPaso("");
   };
   return (<>
-    <div className="dm-velo" onClick={() => !paso && onCerrar(false)}/>
+    <div className="dm-velo"/>
     <div className="dm-hoja" role="dialog" aria-label={"Cerrar parada " + parada.nombre}>
       <div className="dm-asa"/>
       <span className="dm-kicker" style={{ background: carga ? AZUL : VERDE }}>{carga ? "Recoger" : "Entregar"}</span>
@@ -276,7 +305,7 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
       <textarea className="dm-in" style={{ minHeight: 70, resize: "vertical" }} value={notas} onChange={e => setNotas(e.target.value)}/>
       <Falla>{error}</Falla>
       <button onClick={enviar} disabled={!!paso} className="dm-btn dm-verde" style={{ marginTop: 16 }}>{paso || "Mandar"}</button>
-      <button onClick={() => onCerrar(false)} disabled={!!paso} className="dm-btn dm-linea" style={{ marginTop: 10 }}>Regresar</button>
+      <button onClick={() => cerrar(false)} disabled={!!paso} className="dm-btn dm-linea" style={{ marginTop: 10 }}>Regresar</button>
     </div>
   </>);
 }
@@ -287,6 +316,13 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
   useEffect(() => onSnapshot(query(collection(db, "servicios", servicio.id, "paradas"), orderBy("orden")),
     s => setParadas(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setParadas([])), [db, servicio.id]);
   const enRuta = servicio.estado === "En ruta";
+  const reabierta = useRef(false);
+  useEffect(() => {
+    if(reabierta.current || !paradas.length) return;
+    reabierta.current = true;
+    const b = leerBorrador(BORR_ENTREGA), p = b && b.servicioId === servicio.id && paradas.find(x => x.id === b.paradaId && !["Entregada", "Incidencia"].includes(x.estado));
+    if(p && enRuta) setAbierta(p);
+  }, [paradas, enRuta, servicio.id]);
   const hecha = p => ["Entregada", "Incidencia"].includes(p.estado);
   const hechas = paradas.filter(hecha).length;
   const siguiente = paradas.find(p => !hecha(p));
