@@ -49,6 +49,7 @@ const ReportesOperacionVista = lazy(()=>import("./ReportesOperacion.jsx"));
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
 const AsignarRutaVista = lazy(()=>import("./AsignarRuta.jsx"));
 const HistorialRutasVista = lazy(()=>import("./HistorialRutas.jsx"));
+const OperacionVista = lazy(()=>import("./OperacionHoy.jsx"));
 const ChoferWebVista = lazy(()=>import("./ChoferWeb.jsx"));
 const PapeleraVista = lazy(()=>import("./Papelera.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
@@ -3189,6 +3190,7 @@ function MiniBar({pct,color=A,h=4}){
 const MENU=[
   {section:"Hoy",items:[
     {label:"Inicio",icon:LayoutDashboard,tabs:[{id:"dashboard",label:"Inicio"}]},
+    {label:"Centro de operación",icon:Radio,tabs:[{id:"operacion",label:"Centro de operación",ff:true}]},
   ]},
   {section:"Trabajo",items:[
     {label:"Pedidos",icon:Bell,tabs:[{id:"solicitudes",label:"Pedidos que llegan",ff:true}]},
@@ -14934,7 +14936,7 @@ export default function App(){
   },[]);
 
   // 2. Estado de la app
-  const [view,setView]=useState(()=>{try{const v=new URLSearchParams(window.location.search).get("v");if(v)return v;}catch(e){}return "dashboard";});
+  const [view,setView]=useState(()=>{try{if(window.location.pathname.startsWith("/operacion"))return "operacion";const v=new URLSearchParams(window.location.search).get("v");if(v)return v;}catch(e){}return "dashboard";});
   const [cots,setCots]=useState([]);
   const [facts,setFacts]=useState([]);
   const [rutas,setRutas]=useState([]);
@@ -15115,7 +15117,8 @@ export default function App(){
 
   /* ── App principal ── */
   const VIEWS={
-    dashboard:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    /* Operaciones (Ilse) entra directo a su Centro de operación. */
+    dashboard:isOps&&FF_SERVICIOS?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><OperacionVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)}/></Suspense>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     ejecutivo:isAdmin?<DashboardEjecutivo facts={facts} viat={viatCombo} gastosCh={gastosCh} rutas={rutas} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     finanzas:isAdmin?<PortalFinanciero facts={facts} viat={viatCombo} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     cotizador:isAdmin?<Cotizador usuario={usuarioDe(authUser,userProfile)} onSaved={()=>setView(FF_SERVICIOS?"cotizaciones":"cotizador")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
@@ -15128,6 +15131,7 @@ export default function App(){
       reportesOperacion:<ReportesOperacionModulo userProfile={userProfile}/>,
       tarifario:<TarifarioModulo authUser={authUser} userProfile={userProfile}/>,
       asignarRuta:<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><AsignarRutaVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)} mapboxToken={MAPBOX_TOKEN} onVer={setView}/></Suspense>,
+      operacion:<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><OperacionVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)}/></Suspense>,
       historialRutas:<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><HistorialRutasVista db={db}/></Suspense>,
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,

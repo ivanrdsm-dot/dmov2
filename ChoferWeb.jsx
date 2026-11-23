@@ -54,6 +54,25 @@ async function comprimir(file, maximo = 1600, calidad = 0.8){
   return file;
 }
 
+/* Sello visible en las fotos de check-in/out: quién, cuándo y dónde. El servidor además guarda la hora real
+   de subida y la huella del archivo: la foto no se puede cambiar después. */
+const FOTO_VIGENTE_MIN = 20;
+const horaLocal = ms => new Date(ms).toLocaleString("es-MX", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+async function conSello(file, lineas, maximo = 1600){
+  try {
+    const img = await createImageBitmap(file);
+    const k = Math.min(1, maximo / Math.max(img.width, img.height));
+    const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    const g = c.getContext("2d"); g.drawImage(img, 0, 0, c.width, c.height);
+    const t = Math.max(14, Math.round(c.width / 38)), alto = Math.round(t * 1.45 * lineas.length + t * 0.8);
+    g.fillStyle = "rgba(4,37,82,.78)"; g.fillRect(0, c.height - alto, c.width, alto);
+    g.fillStyle = "#fff"; g.font = `700 ${t}px system-ui, sans-serif`; g.textBaseline = "top";
+    lineas.forEach((l, i) => g.fillText(l, Math.round(t * 0.6), c.height - alto + Math.round(t * 0.4) + i * Math.round(t * 1.45), c.width - t));
+    const b = await new Promise(r => c.toBlob(r, "image/jpeg", 0.82));
+    if(b) return b;
+  } catch {}
+  return comprimir(file);
+}
 
 /* Borradores en el celular: si Android recarga la página al abrir la cámara, no se pierde lo capturado. */
 const BORR_DIA = "dm_borrador_dia", BORR_ENTREGA = "dm_borrador_entrega";
@@ -141,14 +160,17 @@ const Estilos = () => <style>{CSS}</style>;
 const Falla = ({ children }) => children ? <div style={{ background: "#fef2f2", color: ROJO, borderRadius: 12, padding: "10px 12px", fontWeight: 700, marginTop: 12, fontSize: 15 }}>{children}</div> : null;
 const hoyTexto = () => new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
 
-function Foto({ titulo, icono, archivo, onCambio }){
+function Foto({ titulo, icono, archivo, onCambio, camara = "", onError }){
   const url = archivo ? URL.createObjectURL(archivo) : "";
   useEffect(() => () => url && URL.revokeObjectURL(url), [url]);
   return (
     <label className={"dm-foto" + (archivo ? " lista" : "")}>
       {archivo ? <><img src={url} alt=""/><i className="ok">✓</i></> : <><span>{icono}</span><small>{titulo}</small></>}
-      {/* Sin "capture": el celular deja escoger cámara o galería (en algunos Android la cámara directa regresa sin foto). */}
-      <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if(f) onCambio(f); e.target.value = ""; }}/>
+      {/* Entregas: cámara o galería. Check-in/out (camara="user"/"environment"): SOLO cámara y foto de este momento. */}
+      <input type="file" accept="image/*" capture={camara || undefined} style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; e.target.value = "";
+        if(!f) return;
+        if(camara && Date.now() - (f.lastModified || 0) > 3 * 60000){ onError?.("Esa foto no es de este momento. Tómala ahora con la cámara."); return; }
+        onCambio(f); }}/>
     </label>
   );
 }
@@ -194,28 +216,35 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
   const [selfie, setSelfie] = useState(null), [placas, setPlacas] = useState(null), [tablero, setTablero] = useState(null);
   const [placa, setPlaca] = useState(placaSugerida || ""), [km, setKm] = useState(""), [gas, setGas] = useState("");
   const [error, setError] = useState(""), [paso, setPaso] = useState("");
+  const tomadas = useRef({});   // hora en que se tomó cada foto (se guarda también en el borrador)
+  const tomar = (k, set) => f => { tomadas.current = { ...tomadas.current, [k]: f.lastModified || Date.now() }; setError(""); set(f); };
   useEffect(() => { if(placaSugerida && !placa) setPlaca(placaSugerida); }, [placaSugerida]);   // eslint-disable-line react-hooks/exhaustive-deps
   /* Borrador: se recupera si el celular recargó la página, y se guarda en cada cambio. */
   const listoBorr = useRef(false);
   useEffect(() => { (async () => { const b = leerBorrador(BORR_DIA);
     if(b && b.choferId === chofer.id){ setSelfie(await deDataURL(b.selfie)); setPlacas(await deDataURL(b.placas)); setTablero(await deDataURL(b.tablero));
-      if(b.placa) setPlaca(b.placa); setKm(b.km || ""); setGas(b.gas || ""); }
+      if(b.placa) setPlaca(b.placa); setKm(b.km || ""); setGas(b.gas || ""); tomadas.current = b.t || {}; }
     listoBorr.current = true; })(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const turno = useRef(0);   // solo se guarda el borrador más reciente (las fotos tardan en convertirse)
   useEffect(() => { if(!listoBorr.current) return; const n = ++turno.current; (async () => { const v = { choferId: chofer.id, selfie: await aDataURL(selfie), placas: await aDataURL(placas),
-    tablero: await aDataURL(tablero), placa, km, gas }; if(n === turno.current) guardarBorrador(BORR_DIA, v); })(); }, [selfie, placas, tablero, placa, km, gas]);   // eslint-disable-line react-hooks/exhaustive-deps
+    tablero: await aDataURL(tablero), placa, km, gas, t: tomadas.current }; if(n === turno.current) guardarBorrador(BORR_DIA, v); })(); }, [selfie, placas, tablero, placa, km, gas]);   // eslint-disable-line react-hooks/exhaustive-deps
   const faltan = [!selfie && "tu foto", !placas && "foto de placas", !tablero && "foto del tablero", !placa.trim() && "placas", km === "" && "kilómetros", gas === "" && "gasolina"].filter(Boolean);
   const enviar = async () => {
     if(faltan.length){ setError("Falta: " + faltan.join(", ") + "."); return; }
+    const viejas = ["selfie", "placas", "tablero"].filter(k => !(Date.now() - (tomadas.current[k] || 0) < FOTO_VIGENTE_MIN * 60000));
+    if(viejas.length){ setError("Vuelve a tomar las fotos: deben ser de este momento (menos de " + FOTO_VIGENTE_MIN + " min)."); return; }
     setError("");
     try {
       setPaso("Leyendo tu ubicación…"); const p = await posicionAhora();
       setPaso("Subiendo fotos…");
       const f = fechaCDMX(), t = Date.now(), base = `jornadas/${chofer.id}/${f}_${t}_`;
-      const [s, pl, od] = await Promise.all([subir(base + "selfie.jpg", selfie), subir(base + "placas.jpg", placas), subir(base + "odometro.jpg", tablero)]);
+      const donde = `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)} ±${Math.round(p.coords.accuracy || 0)} m`;
+      const con = async (k, nombre, archivo) => { const tm = tomadas.current[k], lineas = [`D MOVIMIENTO · CHECK-IN · ${chofer.nombre || ""}`, horaLocal(tm), donde];
+        return subir(base + nombre, await conSello(archivo, lineas), { sello: lineas.join(" | "), tomadaMs: String(tm) }); };
+      const [s, pl, od] = await Promise.all([con("selfie", "selfie.jpg", selfie), con("placas", "placas.jpg", placas), con("tablero", "odometro.jpg", tablero)]);
       setPaso("Registrando…");
       await llamar("choferCheckIn", { selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: placa.trim().toUpperCase(),
-        odometroKm: Number(km), combustiblePct: Number(gas), lat: p.coords.latitude, lng: p.coords.longitude, simulada: false });
+        odometroKm: Number(km), combustiblePct: Number(gas), lat: p.coords.latitude, lng: p.coords.longitude, precisionM: p.coords.accuracy, posTMs: Math.round(p.timestamp || Date.now()), simulada: false });
       guardarBorrador(BORR_DIA, null);
       onListo();
     } catch(e){ setError(mensaje(e)); }
@@ -224,12 +253,12 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
   return (
     <div className="dm-card">
       <h2 className="dm-titulo">☀️ Empieza tu día</h2>
-      <p className="dm-sub">Toca cada cuadro para tomar la foto. Solo una vez al día.</p>
+      <p className="dm-sub">Toca cada cuadro y toma la foto con la cámara en este momento. Se guarda con tu ubicación y la hora.</p>
       <div className="dm-et">Fotos</div>
       <div className="dm-fotos">
-        <Foto titulo="Tú" icono="🤳" archivo={selfie} onCambio={setSelfie}/>
-        <Foto titulo="Placas" icono="🚚" archivo={placas} onCambio={setPlacas}/>
-        <Foto titulo="Tablero" icono="⏱️" archivo={tablero} onCambio={setTablero}/>
+        <Foto titulo="Tú" icono="🤳" archivo={selfie} onCambio={tomar("selfie", setSelfie)} camara="user" onError={setError}/>
+        <Foto titulo="Placas" icono="🚚" archivo={placas} onCambio={tomar("placas", setPlacas)} camara="environment" onError={setError}/>
+        <Foto titulo="Tablero" icono="⏱️" archivo={tablero} onCambio={tomar("tablero", setTablero)} camara="environment" onError={setError}/>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <div><div className="dm-et">Placas</div><input className="dm-in" value={placa} onChange={e => setPlaca(e.target.value.toUpperCase())} placeholder="ABC1234" autoCapitalize="characters"/></div>
@@ -384,6 +413,44 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
   </>);
 }
 
+/* ── Terminar el día (check-out): foto del tablero en este momento, kilómetros y ubicación ── */
+function TerminarDia({ chofer, llamar, subir, onCerrar, onListo }){
+  const [tablero, setTablero] = useState(null), [km, setKm] = useState(""), [error, setError] = useState(""), [paso, setPaso] = useState("");
+  const tomada = useRef(0);
+  const enviar = async () => {
+    if(!tablero){ setError("Toma la foto del tablero."); return; }
+    if(!km){ setError("Escribe los kilómetros que marca el tablero."); return; }
+    if(Date.now() - tomada.current > FOTO_VIGENTE_MIN * 60000){ setError("Vuelve a tomar la foto: debe ser de este momento."); return; }
+    setError("");
+    try {
+      setPaso("Leyendo tu ubicación…"); const p = await posicionAhora();
+      setPaso("Subiendo la foto…");
+      const lineas = [`D MOVIMIENTO · CHECK-OUT · ${chofer.nombre || ""}`, horaLocal(tomada.current), `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)} ±${Math.round(p.coords.accuracy || 0)} m`];
+      const ruta = await subir(`jornadas/${chofer.id}/${fechaCDMX()}_${Date.now()}_odometro_salida.jpg`, await conSello(tablero, lineas), { sello: lineas.join(" | "), tomadaMs: String(tomada.current) });
+      setPaso("Cerrando tu día…");
+      await llamar("choferTerminarJornada", { lat: p.coords.latitude, lng: p.coords.longitude, precisionM: p.coords.accuracy, odometroKm: Number(km), fotoOdometroRuta: ruta });
+      onListo();
+    } catch(e){ setError(mensaje(e)); }
+    setPaso("");
+  };
+  return (<>
+    <div className="dm-velo" onClick={() => !paso && onCerrar()}/>
+    <div className="dm-hoja" role="dialog" aria-label="Terminar mi día">
+      <div className="dm-asa"/>
+      <h2 className="dm-titulo">🏁 Terminar mi día</h2>
+      <p className="dm-sub">Toma la foto del tablero con la cámara y escribe los kilómetros. Se guarda con tu ubicación y la hora.</p>
+      <div className="dm-fotos" style={{ gridTemplateColumns: "1fr" }}>
+        <Foto titulo="Tablero (kilómetros)" icono="⏱️" archivo={tablero} camara="environment" onError={setError} onCambio={f => { tomada.current = f.lastModified || Date.now(); setError(""); setTablero(f); }}/>
+      </div>
+      <div className="dm-et">Kilómetros</div>
+      <input className="dm-in" inputMode="numeric" value={km} onChange={e => setKm(e.target.value.replace(/[^\d]/g, ""))} placeholder="85412"/>
+      <Falla>{error}</Falla>
+      <button onClick={enviar} disabled={!!paso} className={"dm-btn " + (tablero && km ? "dm-verde" : "dm-gris")} style={{ marginTop: 16 }}>{paso || "✓ Cerrar mi día"}</button>
+      <button onClick={onCerrar} disabled={!!paso} className="dm-btn dm-linea" style={{ marginTop: 10 }}>Todavía no</button>
+    </div>
+  </>);
+}
+
 /* ── Pantalla principal ──────────────────────────────────────────────────── */
 export default function ChoferWeb({ db, auth, app }){
   const [usuario, setUsuario] = useState(undefined);
@@ -407,8 +474,8 @@ export default function ChoferWeb({ db, auth, app }){
   useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 15000); return () => clearInterval(t); }, []);
 
   const llamar = useCallback((nombre, datos = {}) => httpsCallable(fns.current, nombre)({ dispositivoId: disp.current, ...datos }).then(r => r.data), []);
-  const subir = useCallback(async (ruta, archivo) => { const b = await comprimir(archivo);
-    await uploadBytes(refStorage(almacen.current, ruta), b, { contentType: /^image\//.test(b.type) ? b.type : "image/jpeg" }); return ruta; }, []);
+  const subir = useCallback(async (ruta, archivo, meta = null) => { const b = meta ? archivo : await comprimir(archivo);
+    await uploadBytes(refStorage(almacen.current, ruta), b, { contentType: /^image\//.test(b.type) ? b.type : "image/jpeg", ...(meta ? { customMetadata: meta } : {}) }); return ruta; }, []);
   const avisar = (texto, error = false) => { setAviso({ texto, error }); setTimeout(() => setAviso(null), 5000); };
 
   /* Al entrar: el servidor liga este celular a su cuenta (la primera vez) y dice quién es. */
@@ -433,10 +500,11 @@ export default function ChoferWeb({ db, auth, app }){
   const enRuta = (servicios || []).find(s => s.estado === "En ruta");
   const jornadaAbierta = jornada?.estado === "Abierta";
 
-  /* Ubicación: mientras haya una ruta en curso y la pantalla esté abierta. */
+  /* Ubicación: TODA la jornada (del check-in al check-out), con la pantalla abierta.
+     En ruta cada 15 s (el cliente la ve); sin ruta, cada minuto (la oficina la ve). */
   const enviar = useCallback(async (servicioId) => {
     const lote = buffer.current.splice(0, buffer.current.length);
-    if(!lote.length || !servicioId) return;
+    if(!lote.length) return;
     try { await llamar("choferSubirPosiciones", { servicioId, posiciones: lote }); setUltimoEnvio(Date.now()); }
     catch(e){ buffer.current.unshift(...lote.slice(-200)); throw e; }
   }, [llamar]);
@@ -445,12 +513,13 @@ export default function ChoferWeb({ db, auth, app }){
     buffer.current.push(aPunto(p, bateria.current));
     await enviar(servicioId || enRuta?.id);
   }, [enviar, enRuta]);
+  const rastrear = !!enRuta || jornadaAbierta, idRastreo = enRuta?.id || "";
   useEffect(() => {
-    if(!enRuta || !navigator.geolocation) return;
+    if(!rastrear || !navigator.geolocation) return;
     const w = navigator.geolocation.watchPosition(p => { setErrorGps(""); buffer.current.push(aPunto(p, bateria.current)); if(buffer.current.length > 300) buffer.current.splice(0, 100); },
       e => setErrorGps(e.code === 1 ? "Permite la ubicación: toca el candado junto a la dirección → Ubicación → Permitir." : "Buscando señal de GPS…"),
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
-    const t = setInterval(() => enviar(enRuta.id).catch(() => {}), ENVIO_MS);
+    const t = setInterval(() => enviar(idRastreo).catch(() => {}), idRastreo ? ENVIO_MS : 60000);
     let candado = null;
     const pedirCandado = () => navigator.wakeLock?.request("screen").then(l => { candado = l; }).catch(() => {});
     /* Al volver a la app (p. ej. desde Google Maps) se manda la ubicación al instante y, si estuvo fuera más de 1 min, se le recuerda. */
@@ -458,13 +527,13 @@ export default function ChoferWeb({ db, auth, app }){
     const alVolver = () => {
       if(document.visibilityState === "hidden"){ ocultoDesde = Date.now(); return; }
       pedirCandado();
-      posicionAhora(8000).then(p => { buffer.current.push(aPunto(p, bateria.current)); }).catch(() => {}).finally(() => enviar(enRuta.id).catch(() => {}));
-      if(ocultoDesde && Date.now() - ocultoDesde > 60000) avisar("Mientras estuviste fuera, el cliente vio tu última ubicación sin moverse. Regresa a esta pantalla seguido.");
+      posicionAhora(8000).then(p => { buffer.current.push(aPunto(p, bateria.current)); }).catch(() => {}).finally(() => enviar(idRastreo).catch(() => {}));
+      if(ocultoDesde && Date.now() - ocultoDesde > 60000) avisar("Mientras estuviste fuera de la app no se vio tu ubicación y la oficina recibe una alerta. Déjala abierta.");
       ocultoDesde = 0;
     };
     pedirCandado(); document.addEventListener("visibilitychange", alVolver);
     return () => { navigator.geolocation.clearWatch(w); clearInterval(t); document.removeEventListener("visibilitychange", alVolver); candado?.release?.().catch(() => {}); };
-  }, [enRuta?.id, enviar]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rastrear, idRastreo, enviar]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const sos = async () => {
     if(!confirm("¿Mandar AVISO DE EMERGENCIA a la oficina?")) return;
@@ -473,14 +542,8 @@ export default function ChoferWeb({ db, auth, app }){
     try { await llamar("choferSOS", { ...pos, servicioId: enRuta?.id || "" }); avisar("🚨 Aviso enviado. La oficina ya lo vio. Si es grave, llama al 911."); }
     catch(e){ avisar(mensaje(e), true); }
   };
-  const terminar = async () => {
-    const km = prompt("¿Cuántos kilómetros marca la camioneta al terminar? (puedes dejarlo vacío)") ?? null;
-    if(km === null) return;
-    let pos = {};
-    try { const p = await posicionAhora(8000); pos = { lat: p.coords.latitude, lng: p.coords.longitude }; } catch {}
-    try { await llamar("choferTerminarJornada", { ...pos, ...(km.trim() ? { odometroKm: Number(km.replace(/[^\d]/g, "")) } : {}) }); avisar("🙌 ¡Gracias! Tu día quedó cerrado."); }
-    catch(e){ avisar(mensaje(e), true); }
-  };
+  const [terminando, setTerminando] = useState(false);
+  const terminar = () => setTerminando(true);
 
   const Cargando = ({ texto }) => <div className="dm"><Estilos/><div className="dm-vacio" style={{ paddingTop: 120 }}><div>🚚</div><p className="dm-sub">{texto}</p></div></div>;
   if(usuario === undefined) return <Cargando texto="Cargando…"/>;
@@ -515,6 +578,8 @@ export default function ChoferWeb({ db, auth, app }){
         </div>
       </div>
       <div className="dm-pasos">{pasos.map(([t, ok], i) => <div key={t} className={"dm-paso" + (ok ? " hecho" : i === actual ? " ahora" : "")}><b>{ok ? "✓" : i + 1}</b>{t}</div>)}</div>
+      {terminando && <TerminarDia chofer={chofer} llamar={llamar} subir={subir} onCerrar={() => setTerminando(false)}
+        onListo={() => { setTerminando(false); setVuelta(v => v + 1); avisar("🙌 ¡Gracias! Tu día quedó cerrado."); }}/>}
       {aviso && <div className="dm-toast" style={{ background: aviso.error ? ROJO : VERDE }}>{aviso.texto}</div>}
       <div className="dm-cuerpo">
         {enRuta && <div className="dm-vivo" style={{ background: errorGps ? "#fef2f2" : "#ecfdf5", color: errorGps ? ROJO : "#047857" }}>
