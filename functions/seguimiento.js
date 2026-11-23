@@ -24,7 +24,8 @@ async function servicioPorToken(t){
 
 export const seguimiento = onRequest({ region: "us-central1", maxInstances: 5, memory: "256MiB", timeoutSeconds: 20 }, async (req, res) => {
   try {
-    const t = String(req.query.t ?? "");
+    /* Token por ?t= (Vercel reescribe así) o en la ruta /s/<token> (Firebase Hosting manda la ruta tal cual). */
+    const t = String(req.query.t ?? "") || String(req.path || "").split("/").filter(Boolean).pop() || "";
     if(!["GET", "POST"].includes(req.method)) return enviar(res, 405, paginaNoEncontrada());
     const doc = await servicioPorToken(t);
     if(!doc) return enviar(res, 404, paginaNoEncontrada());

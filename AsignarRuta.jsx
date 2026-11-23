@@ -14,7 +14,8 @@ import { crearCatalogoStore } from "./catalogosStore.js";
 import { requisitosEstado } from "./servicios.ts";
 
 const CDMX = [-99.1332, 19.4326];
-const URL_CHOFER = "https://dmov2-ixgf.vercel.app/chofer";
+/* La dirección del sistema es la misma desde la que se abre (Firebase o Vercel). */
+const URL_CHOFER = (typeof window !== "undefined" ? window.location.origin : "https://salesflow-crm-13c4a.web.app") + "/chofer";
 const hoyCDMX = () => new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
 const ahoraLocal = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 const mensajeError = e => String(e?.message || "No se pudo").replace(/^(functions\/[a-z-]+:?\s*)/i, "");
