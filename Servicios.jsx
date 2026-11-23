@@ -219,7 +219,7 @@ function ChoferYRuta({ s, store, usuario, unidades, choferesApp, despacho, avisa
 /* Link para el cliente: una página con la etapa de su servicio y, al final, una encuesta.
    No muestra precios ni datos internos. Cambiar el link apaga el anterior. */
 /* El link se arma siempre con el dominio público (ahí está el proxy /s/:token), aunque la oficina abra la app desde otro lado. */
-const URL_PUBLICA = (import.meta.env?.VITE_URL_PUBLICA || "https://dmov2-ixgf.vercel.app").replace(/\/$/, "");
+const URL_PUBLICA = (import.meta.env?.VITE_URL_PUBLICA || (typeof window !== "undefined" ? window.location.origin : "https://salesflow-crm-13c4a.web.app")).replace(/\/$/, "");
 function LinkCliente({ s, despacho, avisar }){
   const [ocupado, setOcupado] = useState(false);
   if(!despacho || s.estado === "Cancelada") return null;

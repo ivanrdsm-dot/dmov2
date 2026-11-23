@@ -1,4 +1,4 @@
-/* DMOV · App del chofer en el navegador del celular (dmov2-ixgf.vercel.app/chofer).
+/* DMOV · App del chofer en el navegador del celular (<dirección del sistema>/chofer).
    Sirve desde hoy, sin instalar nada: entra con su celular y contraseña, ve sus rutas,
    empieza su día, navega a cada parada, entrega con foto y manda su ubicación.
    Usa las MISMAS funciones del servidor que la app nativa: el servidor valida todo

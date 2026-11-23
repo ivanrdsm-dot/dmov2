@@ -236,7 +236,9 @@ export const oficinaVincularChofer = onCall(OPC, async req => {
   await lote.commit();
   /* Al poner su contraseña, el botón "Continuar" lo lleva a la app del chofer; la página sale en español. */
   let enlace;
-  try { enlace = await getAuth().generatePasswordResetLink(correo, { url: "https://dmov2-ixgf.vercel.app/chofer" }); }
+  const origen = String(req.rawRequest?.headers?.origin || "");
+  const base = /^https:\/\/(salesflow-crm-13c4a\.(web\.app|firebaseapp\.com)|dmov2-ixgf\.vercel\.app)$/.test(origen) ? origen : "https://salesflow-crm-13c4a.web.app";
+  try { enlace = await getAuth().generatePasswordResetLink(correo, { url: base + "/chofer" }); }
   catch { enlace = await getAuth().generatePasswordResetLink(correo); }
   enlace = /[?&]lang=/.test(enlace) ? enlace.replace(/([?&])lang=[^&]*/, "$1lang=es") : enlace + (enlace.includes("?") ? "&" : "?") + "lang=es";
   return { ok: true, enlace };

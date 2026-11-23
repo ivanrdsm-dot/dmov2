@@ -169,14 +169,14 @@ export default function Despacho({ store, usuario, cargarMapa = null }){
       {ligar && <Dialogo titulo={"Cuenta de la app · " + ligar.nombre} onClose={() => setLigar(null)}>
         {!enlace ? <>
           <Campo label="Celular o correo del chofer *" value={correo.endsWith("@choferes.denmovimiento.mx") ? correo.split("@")[0] : correo} onChange={e => setCorreo(correoDeChofer(e.target.value) || e.target.value)}/>
-          <p style={{ fontSize: 12, color: MUTED }}>Con su celular basta: entrará a <b>dmov2-ixgf.vercel.app/chofer</b> con su celular y la contraseña que él ponga con el enlace. La cuenta solo funciona en el primer teléfono desde el que entre.</p>
+          <p style={{ fontSize: 12, color: MUTED }}>Con su celular basta: entrará a <b>{window.location.host}/chofer</b> con su celular y la contraseña que él ponga con el enlace. La cuenta solo funciona en el primer teléfono desde el que entre.</p>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}><button onClick={() => setLigar(null)} style={boton(MUTED, false)}>Cancelar</button>
             <button disabled={!correo.trim() || ocupado} onClick={() => correr(async () => { const r = await store.vincularChofer(ligar.id, correo.trim()); setEnlace(r.enlace); })} style={{ ...boton(A), opacity: !correo.trim() || ocupado ? .5 : 1 }}>Crear y obtener enlace</button></div>
         </> : <>
           <p style={{ fontSize: 14, marginTop: 0 }}>Cuenta lista. Mándale este enlace al chofer para que ponga su contraseña. Trátalo como una llave: sirve una sola vez.</p>
           <textarea readOnly value={enlace} onFocus={e => e.target.select()} style={{ ...caja, minHeight: 90, fontFamily: MONO, fontSize: 12 }}/>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 10 }}>
-            {telefono10(ligar.tel).length === 10 && <a href={`https://wa.me/52${telefono10(ligar.tel)}?text=${encodeURIComponent(`Hola ${String(ligar.nombre || "").split(" ")[0]}, esta es tu entrada a la app de DMovimiento:\n1) Abre este enlace y pon una contraseña: ${enlace}\n2) Después entra a https://dmov2-ixgf.vercel.app/chofer con tu celular ${telefono10(ligar.tel)} y esa contraseña.`)}`} target="_blank" rel="noreferrer" style={{ ...boton(GREEN), textDecoration: "none", display: "inline-block" }}>Mandar por WhatsApp</a>}
+            {telefono10(ligar.tel).length === 10 && <a href={`https://wa.me/52${telefono10(ligar.tel)}?text=${encodeURIComponent(`Hola ${String(ligar.nombre || "").split(" ")[0]}, esta es tu entrada a la app de DMovimiento:\n1) Abre este enlace y pon una contraseña: ${enlace}\n2) Después entra a ${window.location.origin}/chofer con tu celular ${telefono10(ligar.tel)} y esa contraseña.`)}`} target="_blank" rel="noreferrer" style={{ ...boton(GREEN), textDecoration: "none", display: "inline-block" }}>Mandar por WhatsApp</a>}
             <button onClick={() => navigator.clipboard?.writeText(enlace).then(() => avisar("Enlace copiado"))} style={boton(BLUE)}>Copiar enlace</button><button onClick={() => setLigar(null)} style={boton(MUTED, false)}>Cerrar</button></div>
         </>}</Dialogo>}
       {liberar && <Dialogo titulo={"Cambio de teléfono · " + liberar.nombre} onClose={() => setLiberar(null)}>
