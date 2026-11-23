@@ -16,3 +16,6 @@ serviceAccount.json
 *firebase-adminsdk*.json
 # Secretos locales de conectores (nunca al repo)
 *.local
+
+# caché de firebase deploy (hosting)
+.firebase/
