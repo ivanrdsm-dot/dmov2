@@ -9,7 +9,7 @@ import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebas
 import { collection, doc, onSnapshot, query, where, orderBy } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getStorage, ref as refStorage, uploadBytes } from "firebase/storage";
-import { correoDeChofer, enlaceNavegar } from "./lugares.ts";
+import { correoDeChofer, enlaceNavegar, enlaceRutaCompleta } from "./lugares.ts";
 import FirmaPad from "./FirmaPad.jsx";
 
 const LETRA = "system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
@@ -314,7 +314,7 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
 function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarAhora, avisar, onPaso }){
   const [paradas, setParadas] = useState([]), [abierta, setAbierta] = useState(null), [ocupado, setOcupado] = useState(false);
   useEffect(() => onSnapshot(query(collection(db, "servicios", servicio.id, "paradas"), orderBy("orden")),
-    s => setParadas(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setParadas([])), [db, servicio.id]);
+    s => setParadas(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.estado !== "Quitada")), () => setParadas([])), [db, servicio.id]);   // las quitadas por la oficina desaparecen
   const enRuta = servicio.estado === "En ruta";
   const reabierta = useRef(false);
   useEffect(() => {
@@ -344,6 +344,8 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
       {(servicio.indicaciones || servicio.notas) && <div className="dm-ind"><b>📝 Indicaciones:</b> {servicio.indicaciones || servicio.notas}</div>}
       {paradas.length > 0 && <><div className="dm-barra"><i style={{ width: pct + "%" }}/></div>
         <div style={{ fontSize: 13, fontWeight: 800, color: GRIS }}>{hechas} de {paradas.length} paradas listas</div></>}
+      {paradas.filter(p => !hecha(p)).length > 1 && <a className="dm-btn dm-linea" style={{ marginTop: 12 }} target="_blank" rel="noreferrer"
+        href={enlaceRutaCompleta(paradas.filter(p => !hecha(p)))}>🗺️ Ver toda la ruta en Google Maps</a>}
     </div>
 
     {enRuta && siguiente && <div className="dm-card dm-sig" key={siguiente.id}>
@@ -451,7 +453,15 @@ export default function ChoferWeb({ db, auth, app }){
     const t = setInterval(() => enviar(enRuta.id).catch(() => {}), ENVIO_MS);
     let candado = null;
     const pedirCandado = () => navigator.wakeLock?.request("screen").then(l => { candado = l; }).catch(() => {});
-    const alVolver = () => { if(document.visibilityState === "visible"){ pedirCandado(); enviar(enRuta.id).catch(() => {}); } };
+    /* Al volver a la app (p. ej. desde Google Maps) se manda la ubicación al instante y, si estuvo fuera más de 1 min, se le recuerda. */
+    let ocultoDesde = 0;
+    const alVolver = () => {
+      if(document.visibilityState === "hidden"){ ocultoDesde = Date.now(); return; }
+      pedirCandado();
+      posicionAhora(8000).then(p => { buffer.current.push(aPunto(p, bateria.current)); }).catch(() => {}).finally(() => enviar(enRuta.id).catch(() => {}));
+      if(ocultoDesde && Date.now() - ocultoDesde > 60000) avisar("Mientras estuviste fuera, el cliente vio tu última ubicación sin moverse. Regresa a esta pantalla seguido.");
+      ocultoDesde = 0;
+    };
     pedirCandado(); document.addEventListener("visibilitychange", alVolver);
     return () => { navigator.geolocation.clearWatch(w); clearInterval(t); document.removeEventListener("visibilitychange", alVolver); candado?.release?.().catch(() => {}); };
   }, [enRuta?.id, enviar]);   // eslint-disable-line react-hooks/exhaustive-deps

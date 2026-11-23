@@ -28,7 +28,7 @@ export function faltantesChoferApp(c: ChoferApp): string[] {
 export interface ParadaRuta { id: string; orden?: number; estado?: string; nombre?: string; excepcion?: unknown; [k: string]: unknown; }
 /** Avance de una ruta: cuántas paradas cerradas, cuántas con incidencia y cuál sigue. */
 export function avanceRuta(paradas: ParadaRuta[]){
-  const orden = [...(paradas ?? [])].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+  const orden = [...(paradas ?? [])].filter(p => p.estado !== "Quitada").sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));   // "Quitada" = la oficina la quitó de la ruta
   const cerradas = orden.filter(p => p.estado === "Entregada" || p.estado === "Incidencia").length;
   const incidencias = orden.filter(p => p.estado === "Incidencia").length;
   const siguiente = orden.find(p => p.estado !== "Entregada" && p.estado !== "Incidencia") ?? null;

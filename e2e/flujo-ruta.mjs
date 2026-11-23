@@ -105,6 +105,26 @@ test("4 · al chofer le aparece la ruta con sus paradas: primero recoger, luego 
   assert.ok(paradas[0].direccion);                                      // la bodega sin dirección trae la del catálogo/coordenada
 });
 
+test("4b · Ilse edita la ruta ya enviada: agrega una tienda y la vuelve a quitar (queda marcada, no se borra)", async () => {
+  const usuario = { uid: "ilse1", rol: "operaciones", nombre: "Ilse Prueba" };
+  const [c] = await guardarLugares(ilse.db, usuario, [{ tipo: "entrega", nombre: "Tienda C", direccion: "Calle C 3", lat: 19.4300, lng: -99.1500, confirmada: true }], []);
+  const r = await ilse.llamar("oficinaEditarRuta", { servicioId, agregar: [{ puntoId: c.puntoId, nombre: "Tienda C", tipo: "entrega" }] });
+  assert.equal(r.agregadas, 1);
+  let ps = (await getDocs(query(collection(chofer.db, "servicios", servicioId, "paradas"), orderBy("orden")))).docs.map(d => ({ id: d.id, ...d.data() }));
+  const nueva = ps.find(p => p.nombre === "Tienda C");
+  assert.equal(nueva.orden, 4); assert.equal(nueva.agregadaDespues, true); assert.equal(nueva.estado, "Pendiente");   // el chofer ya la ve
+  await assert.rejects(chofer.llamar("oficinaEditarRuta", { servicioId, quitar: [nueva.id] }));                         // el chofer no edita rutas
+  await assert.rejects(ilse.llamar("oficinaEditarRuta", { servicioId, agregar: [{ puntoId: "no-existe", nombre: "X" }] }), /no están confirmados/);
+  await assert.rejects(ilse.llamar("oficinaEditarRuta", { servicioId, quitar: ps.map(p => p.id) }), /sin paradas pendientes/);
+  assert.equal((await ilse.llamar("oficinaEditarRuta", { servicioId, quitar: [nueva.id] })).quitadas, 1);
+  ps = (await getDocs(query(collection(chofer.db, "servicios", servicioId, "paradas"), orderBy("orden")))).docs.map(d => d.data());
+  assert.equal(ps.length, 4);
+  const q = ps.find(p => p.nombre === "Tienda C");
+  assert.equal(q.estado, "Quitada"); assert.equal(q.quitadaPor, "Ilse Prueba");
+  const ev = (await admin.firestore().collection(`servicios/${servicioId}/eventos`).where("tipo", "==", "ruta_editada").get()).size;
+  assert.equal(ev, 2);
+});
+
 test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () => {
   await assert.rejects(chofer.llamar("choferIniciarRuta", { dispositivoId: "equipo-prueba-0001", servicioId }), /check-in/);
   const base = `jornadas/ch1/${fechaCDMX()}_${Date.now()}_`, subir = async n => { await uploadBytes(ref(chofer.st, base + n), JPG, { contentType: "image/jpeg" }); return base + n; };

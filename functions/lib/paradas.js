@@ -2,7 +2,7 @@
    Lógica pura; probada en geo.test.js. */
 import { evaluarGeocerca } from "./geo.js";
 
-export const ESTADOS_PARADA = ["Pendiente", "En sitio", "Entregada", "Incidencia"];
+export const ESTADOS_PARADA = ["Pendiente", "En sitio", "Entregada", "Incidencia", "Quitada"];   // Quitada = la oficina la quitó de la ruta
 export const TIPOS_INCIDENCIA = ["Cliente ausente", "Entrega rechazada", "Entrega parcial", "Faltantes", "Daños", "Devolución al origen"];
 export const POSICION_MAX_EDAD_MS = 5 * 60000;   // la presencia se valida con una lectura reciente
 
@@ -11,6 +11,7 @@ export function evaluarCierreParada({ parada, posicion, ahoraMs, evidencia = {},
   const no = (motivo, extra = {}) => ({ permitido: false, motivo, ...extra });
   if(!parada) return no("Parada no encontrada");
   if(parada.estado === "Entregada") return no("Esta parada ya está cerrada");
+  if(parada.estado === "Quitada") return no("La oficina quitó esta parada de tu ruta");
   const fotos = Array.isArray(evidencia.fotos) ? evidencia.fotos.filter(Boolean) : [];
   if(fotos.length === 0) return no("Falta la foto de evidencia");
   /* Con un problema (cliente ausente, rechazo…) puede no haber nadie que reciba: no se obliga a inventar un nombre. */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { vistaPublica, validarEncuesta, paginaSeguimiento, tokenValido, estadoJSON, avisosCliente, notificacionDeEvento, suscripcionValida, manifestCliente } from "./functions/lib/seguimiento.js";
+import { vistaPublica, seccionesHTML, validarEncuesta, paginaSeguimiento, tokenValido, estadoJSON, avisosCliente, notificacionDeEvento, suscripcionValida, manifestCliente } from "./functions/lib/seguimiento.js";
 
 const S = { folio: "SRV-2026-0007", empresa: "Cliente", estado: "En ruta", fechaServicio: "2026-11-12", horaServicio: "9:00",
   choferNombre: "Juan Pérez López", unidadPlaca: "ABC-123", precio: 3500, costoTotal: 2100, notas: "INTERNO: pagar rápido", choferTel: "5555555555",
@@ -24,11 +24,15 @@ describe("lo que ve el cliente", () => {
   it("la camioneta se ve solo en camino, con SU servicio y ubicación reciente", () => {
     const T = 10_000_000, u = { lat: 19.41, lng: -99.11, tMs: T - 60_000, servicioId: "s1", confiable: true };
     const con = extra => vistaPublica(S, P, { servicioId: "s1", ahoraMs: T, ubicacion: u, ...extra }).mapa;
-    expect(con({}).vehiculo).toEqual({ lat: 19.41, lng: -99.11, tMs: T - 60_000 });
+    expect(con({}).vehiculo).toEqual({ lat: 19.41, lng: -99.11, tMs: T - 60_000, minutos: 1, reciente: true });
     expect(con({}).siguiente).toBe("Tienda 2");
     expect(con({}).distanciaKm).toBeGreaterThan(0);
     expect(con({ ubicacion: { ...u, servicioId: "otro" } }).vehiculo).toBeNull();                 // está con otro servicio
-    expect(con({ ubicacion: { ...u, tMs: T - 25 * 60_000 } }).vehiculo).toBeNull();               // ubicación vieja
+    const vieja = con({ ubicacion: { ...u, tMs: T - 25 * 60_000 } });                             // sin señal un rato: se queda la última, marcada
+    expect(vieja.vehiculo).toMatchObject({ minutos: 25, reciente: false });
+    expect(seccionesHTML(vistaPublica(S, P, { servicioId: "s1", ahoraMs: T, ubicacion: { ...u, tMs: T - 25 * 60_000 } })).vivo).toContain("hace 25 min");
+    const T2 = 100_000_000;
+    expect(vistaPublica(S, P, { servicioId: "s1", ahoraMs: T2, ubicacion: { ...u, tMs: T2 - 13 * 3600_000 } }).mapa.vehiculo).toBeNull();   // más de 12 h: ya no
     expect(con({ ubicacion: { ...u, confiable: false } }).vehiculo).toBeNull();                    // no confiable
     expect(vistaPublica({ ...S, estado: "Entregada" }, P, { servicioId: "s1", ahoraMs: T, ubicacion: u }).mapa.vehiculo).toBeNull();   // ya entregó
     expect(vistaPublica({ ...S, estado: "Asignada" }, P, { servicioId: "s1", ahoraMs: T, ubicacion: u }).mapa.vehiculo).toBeNull();    // aún no sale

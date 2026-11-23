@@ -5,10 +5,12 @@
    que ordena por cercanía) y lo pasa a "Asignada" dejando en la bitácora lo que falta
    (cotización, precio): nada se inventa. Al chofer le aparece solo en su celular. */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { collection, onSnapshot, query, where, limit } from "firebase/firestore";
+import { collection, onSnapshot, query, where, limit, getDocs, orderBy } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, boton, caja, Chip } from "./uiBasico.jsx";
-import { coordenadaDeTexto, esEnlaceCortoMaps, buscarEnCatalogo, correoDeChofer, telefono10 } from "./lugares.ts";
+import { correoDeChofer, telefono10 } from "./lugares.ts";
+import { BuscadorLugar, PegarLista, TarjetaParada } from "./BuscadorLugar.jsx";
+import EditarRuta from "./EditarRuta.jsx";
 
 /* Manda al cliente su link privado de seguimiento (mapa en vivo). Abre WhatsApp con el mensaje listo; la oficina lo envía. */
 function BotonSeguimiento({ servicio, telefono = "", llamar, compacto = false }){
@@ -29,13 +31,10 @@ function BotonSeguimiento({ servicio, telefono = "", llamar, compacto = false })
 }
 import { guardarLugares, datosServicio, crearServicioRuta, terminarAsignacion, sinUbicacion } from "./asignarRutaFlujo.js";
 
-const CDMX = [-99.1332, 19.4326];
 /* La dirección del sistema es la misma desde la que se abre (Firebase o Vercel). */
 const URL_CHOFER = (typeof window !== "undefined" ? window.location.origin : "https://salesflow-crm-13c4a.web.app") + "/chofer";
 const hoyCDMX = () => new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
 const mensajeError = e => String(e?.message || "No se pudo").replace(/^(functions\/[a-z-]+:?\s*)/i, "");
-const mapaFijo = (token, c, ancho = 560, alto = 220) =>
-  `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-l+F27B13(${c.lng},${c.lat})/${c.lng},${c.lat},16,0/${ancho}x${alto}@2x?access_token=${token}`;
 const Paso = ({ n, titulo, children }) => (
   <div style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 16, padding: "16px 18px", marginBottom: 14 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
@@ -44,64 +43,6 @@ const Paso = ({ n, titulo, children }) => (
     </div>
     {children}
   </div>);
-
-/* ── Buscador de lugares: catálogo + Mapbox + coordenada/enlace de Google Maps ── */
-function BuscadorLugar({ token, lugares, onElegir }){
-  const [q, setQ] = useState(""), [sug, setSug] = useState([]), [cargando, setCargando] = useState(false), [aviso, setAviso] = useState("");
-  const sesion = useRef(crypto?.randomUUID?.() || String(Date.now()));
-  const coord = coordenadaDeTexto(q), delCatalogo = useMemo(() => coord ? [] : buscarEnCatalogo(lugares, q, 4), [lugares, q, coord]);
-  useEffect(() => {
-    setAviso(esEnlaceCortoMaps(q) ? "Ese enlace corto no trae la ubicación. En Google Maps deja el dedo sobre el lugar y copia los números que aparecen (ej. 19.43, -99.13)." : "");
-    if(coord || q.trim().length < 3 || !token || esEnlaceCortoMaps(q)){ setSug([]); return; }
-    const t = setTimeout(async () => {
-      setCargando(true);
-      try {
-        const r = await fetch(`https://api.mapbox.com/search/searchbox/v1/suggest?q=${encodeURIComponent(q)}&access_token=${token}&session_token=${sesion.current}&country=MX&language=es&limit=6&proximity=${CDMX[0]},${CDMX[1]}`);
-        const d = await r.json(); setSug(d.suggestions || []);
-      } catch { setSug([]); }
-      setCargando(false);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [q, token]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const limpiar = () => { setQ(""); setSug([]); sesion.current = crypto?.randomUUID?.() || String(Date.now()); };
-  const elegirMapbox = async s => {
-    setCargando(true);
-    try {
-      const r = await fetch(`https://api.mapbox.com/search/searchbox/v1/retrieve/${encodeURIComponent(s.mapbox_id)}?access_token=${token}&session_token=${sesion.current}&language=es`);
-      const f = (await r.json()).features?.[0];
-      const [lng, lat] = f?.geometry?.coordinates || [];
-      if(!Number.isFinite(lat)) throw new Error();
-      onElegir({ nombre: s.name || f.properties?.name || "", direccion: f.properties?.full_address || s.full_address || s.place_formatted || "", lat, lng, puntoId: "", confirmada: false });
-      limpiar();
-    } catch { setAviso("No se pudo leer ese lugar. Prueba con otro resultado o pega la coordenada."); }
-    setCargando(false);
-  };
-  const elegirCoordenada = async () => {
-    let direccion = "";
-    try {
-      const r = await fetch(`https://api.mapbox.com/search/searchbox/v1/reverse?longitude=${coord.lng}&latitude=${coord.lat}&access_token=${token}&language=es&limit=1`);
-      direccion = (await r.json()).features?.[0]?.properties?.full_address || "";
-    } catch {}
-    onElegir({ nombre: "", direccion: direccion || `${coord.lat}, ${coord.lng}`, lat: coord.lat, lng: coord.lng, puntoId: "", confirmada: false });
-    limpiar();
-  };
-  const opcion = { display: "block", width: "100%", textAlign: "left", background: "#fff", border: "none", borderBottom: "1px solid " + BORDER, padding: "11px 12px", cursor: "pointer", fontSize: 14, fontFamily: "inherit" };
-  const hay = coord || delCatalogo.length > 0 || sug.length > 0;
-  return (
-    <div style={{ position: "relative" }}>
-      <input style={{ ...caja, fontSize: 16 }} value={q} onChange={e => setQ(e.target.value)}
-        placeholder="Busca: Walmart Coyoacán, una calle y número, o pega la ubicación de Google Maps"/>
-      {cargando && <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>Buscando…</div>}
-      {aviso && <div style={{ fontSize: 13, color: AMBER, marginTop: 6 }}>{aviso}</div>}
-      {hay && <div style={{ border: "1px solid " + BORDER, borderRadius: 12, marginTop: 6, overflow: "hidden", boxShadow: "0 6px 20px rgba(0,0,0,.08)" }}>
-        {coord && <button onClick={elegirCoordenada} style={opcion}>📍 <b>Usar esta ubicación</b> <span style={{ color: MUTED, fontFamily: MONO }}>{coord.lat}, {coord.lng}</span></button>}
-        {delCatalogo.map(l => <button key={l.id} onClick={() => { if(!Number.isFinite(Number(l.lat)) || !Number.isFinite(Number(l.lng)) || (Number(l.lat) === 0 && Number(l.lng) === 0)){ setAviso(`"${l.nombre}" está guardado sin ubicación. Búscalo por su dirección o pega la ubicación de Google Maps.`); return; } onElegir({ nombre: l.nombre || "", direccion: l.direccion || "", lat: Number(l.lat), lng: Number(l.lng), puntoId: l.id,
-            confirmada: l.pinConfirmado === true, contacto: l.contacto || "", telefono: l.telefono || "" }); limpiar(); }} style={opcion}>
-          ⭐ <b>{l.nombre}</b> <span style={{ color: MUTED }}>· {l.direccion}</span> <span style={{ color: GREEN, fontSize: 12 }}>· ya guardado</span></button>)}
-        {sug.map(s => <button key={s.mapbox_id} onClick={() => elegirMapbox(s)} style={opcion}><b>{s.name}</b> <span style={{ color: MUTED }}>· {s.full_address || s.place_formatted}</span></button>)}
-      </div>}
-    </div>);
-}
 
 /* ── Acceso del chofer a su app (solo admin): cuenta con su celular + enlace por WhatsApp ── */
 function AccesoChofer({ chofer, llamar, esAdmin, enlace, setEnlace }){
@@ -136,6 +77,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   const [fecha, setFecha] = useState(hoyCDMX()), [hora, setHora] = useState(""), [choferId, setChoferId] = useState(""), [placa, setPlaca] = useState("");
   const [cliente, setCliente] = useState(""), [telCliente, setTelCliente] = useState(""), [indicaciones, setIndicaciones] = useState(""), [paradas, setParadas] = useState([]), [ordenar, setOrdenar] = useState(true);
   const [ocupado, setOcupado] = useState(""), [error, setError] = useState(""), [listo, setListo] = useState(null), [delDia, setDelDia] = useState([]);
+  const [diaLista, setDiaLista] = useState(hoyCDMX()), [lista, setLista] = useState([]), [editando, setEditando] = useState(""), [copiada, setCopiada] = useState("");
   const [enlaces, setEnlaces] = useState({});           // enlace de acceso recién creado, por chofer (sobrevive a que llegue su authUid)
   const [pendiente, setPendiente] = useState(null);     // servicio ya creado al que le faltó armar la ruta o asignarse (para reintentar sin duplicar)
   const fns = useMemo(() => getFunctions(app, "us-central1"), [app]);
@@ -149,6 +91,27 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   }, [db]);
   useEffect(() => onSnapshot(query(collection(db, "servicios"), where("fechaServicio", "==", fecha), limit(200)),
     s => setDelDia(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId)), () => setDelDia([])), [db, fecha]);
+
+  useEffect(() => { setDiaLista(fecha); }, [fecha]);
+  useEffect(() => onSnapshot(query(collection(db, "servicios"), where("fechaServicio", "==", diaLista), limit(200)),
+    s => setLista(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId && !x.eliminado)), () => setLista([])), [db, diaLista]);
+
+  /* ↺ Repetir: copia al formulario una ruta ya hecha (mismas paradas, cliente, chofer y camioneta) para hoy. Nada se manda hasta tocar "Mandar". */
+  const repetir = async s => {
+    setError(""); setListo(null); setPendiente(null);
+    let ps = [];
+    try { ps = (await getDocs(query(collection(db, "servicios", s.id, "paradas"), orderBy("orden")))).docs.map(d => d.data()).filter(p => p.estado !== "Quitada"); } catch {}
+    if(!ps.length) ps = [...(s.origenes || []).map(p => ({ ...p, tipo: "carga" })), ...(s.destinos || []).map(p => ({ ...p, tipo: "entrega" }))]
+      .map(p => { const l = lugares.find(x => x.id === p.puntoId); return l ? { ...p, lat: Number(l.lat), lng: Number(l.lng) } : p; });
+    setParadas(ps.map(p => { const l = lugares.find(x => x.id === p.puntoId);
+      return { tipo: p.tipo === "carga" ? "carga" : "entrega", nombre: p.nombre || l?.nombre || "", direccion: p.direccion || l?.direccion || "", lat: Number(p.lat), lng: Number(p.lng),
+        puntoId: p.puntoId || "", confirmada: !!(l && l.pinConfirmado === true), contacto: p.contacto || "", telefono: p.telefono || "", clave: Date.now() + Math.random() }; }));
+    setCliente(s.empresa || ""); setTelCliente(s.solicitanteContacto || ""); setIndicaciones(s.indicaciones || "");
+    if(activos.some(c => c.id === s.choferId)) setChoferId(s.choferId);
+    if(s.unidadPlaca) setPlaca(String(s.unidadPlaca).toUpperCase());
+    setOrdenar(false); setFecha(hoyCDMX()); setCopiada(s.folio || "la ruta");
+    window.scrollTo?.({ top: 0, behavior: "smooth" }); document.querySelector("[data-asignar-ruta]")?.scrollTo?.({ top: 0, behavior: "smooth" });
+  };
 
   const activos = choferes.filter(c => c.status !== "Inactivo" && c.activo !== false).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
   const camionetas = unidades.filter(u => u.status !== "Baja").map(u => String(u.placa || u.placas || u.id).toUpperCase()).sort();
@@ -176,7 +139,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
       const datos = datosServicio({ usuario, cliente, fecha, hora, paradas: conId, placa, chofer, indicaciones, contactoCliente: telCliente });
       const { id, folio } = await crearServicioRuta(db, usuario, datos);
       const p = { id, folio, datos, choferId, choferNombre: chofer.nombre, ordenar };
-      setPendiente(p);
+      setPendiente(p); setCopiada("");
       await terminar(p);
     } catch(e){ setError(mensajeError(e)); }
     setOcupado("");
@@ -196,10 +159,13 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   };
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "24px 20px", background: "#f1f4fb" }}>
+    <div data-asignar-ruta style={{ flex: 1, overflowY: "auto", padding: "24px 20px", background: "#f1f4fb" }}>
       <div style={{ maxWidth: 760, margin: "0 auto" }}>
         <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 28, color: TEXT, margin: 0 }}>Asignar ruta</h1>
         <p style={{ color: MUTED, fontSize: 14, margin: "4px 0 16px" }}>Llena los 4 pasos y toca <b>Mandar al chofer</b>. Le aparece solo en su celular.</p>
+        {copiada && !listo && <div style={{ background: BLUE + "10", border: "1.5px solid " + BLUE, borderRadius: 14, padding: 14, marginBottom: 14, fontSize: 15 }}>
+          ↺ Copié <b style={{ fontFamily: MONO }}>{copiada}</b> para hoy, en el mismo orden. Revisa chofer, camioneta y lugares, y toca <b>Mandar al chofer</b>.
+          <button onClick={() => setCopiada("")} style={{ marginLeft: 8, background: "none", border: "none", color: MUTED, cursor: "pointer" }}>✕</button></div>}
         {listo && <div style={{ background: GREEN + "12", border: "1.5px solid " + GREEN, borderRadius: 14, padding: 14, marginBottom: 14, fontSize: 15 }}>
           ✓ Ruta <b style={{ fontFamily: MONO }}>{listo.folio}</b> mandada a <b>{listo.chofer}</b>. Ya la ve en su celular. Síguelo en <button onClick={() => onVer?.("despacho")} style={{ background: "none", border: "none", color: BLUE, fontWeight: 800, cursor: "pointer", fontSize: 15, padding: 0 }}>En vivo</button>.
           <div style={{ marginTop: 10 }}><BotonSeguimiento servicio={{ id: listo.id, folio: listo.folio }} telefono={listo.tel} llamar={llamar}/></div></div>}
@@ -233,30 +199,9 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
 
         <Paso n={3} titulo="¿A dónde va?">
           <BuscadorLugar token={mapboxToken} lugares={lugares} onElegir={agregar}/>
+          <PegarLista token={mapboxToken} lugares={lugares} onAgregar={agregar}/>
           <div style={{ fontSize: 12, color: MUTED, margin: "6px 0 10px" }}>Busca cada lugar y confirma en el mapa que la marca cae en la puerta correcta.</div>
-          {paradas.map((p, i) => (
-            <div key={p.clave} style={{ border: "1.5px solid " + (p.confirmada ? BORDER : A), borderRadius: 14, padding: 12, marginTop: 10 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <b style={{ fontFamily: MONO }}>{i + 1}.</b>
-                {[["carga", "Recoger"], ["entrega", "Entregar"]].map(([k, l]) => <button key={k} onClick={() => cambiar(p.clave, { tipo: k })}
-                  style={{ ...boton(k === "carga" ? BLUE : GREEN, p.tipo === k), padding: "6px 12px", minHeight: 34, fontSize: 13 }}>{l}</button>)}
-                <button onClick={() => quitar(p.clave)} style={{ marginLeft: "auto", background: "none", border: "none", color: ROSE, cursor: "pointer", fontWeight: 700 }}>Quitar</button>
-              </div>
-              <input style={{ ...caja, marginTop: 8 }} value={p.nombre} onChange={e => cambiar(p.clave, { nombre: e.target.value })} placeholder="Nombre del lugar (ej. Walmart Coyoacán)"/>
-              <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>{p.direccion}</div>
-              {!p.confirmada && mapboxToken && <div style={{ marginTop: 8 }}>
-                <img src={mapaFijo(mapboxToken, p)} alt="Mapa del lugar" style={{ width: "100%", borderRadius: 12, border: "1px solid " + BORDER }}/>
-                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                  <button onClick={() => cambiar(p.clave, { confirmada: true })} style={{ ...boton(GREEN), flex: 1 }}>✓ Sí, es aquí</button>
-                  <button onClick={() => quitar(p.clave)} style={{ ...boton(MUTED, false), flex: 1 }}>No, buscar otro</button>
-                </div>
-                <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Si la marca no cae justo, quítalo y pega la ubicación exacta de Google Maps (deja el dedo sobre la puerta y copia los números).</div>
-              </div>}
-              {p.confirmada && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-                <input style={caja} value={p.contacto} onChange={e => cambiar(p.clave, { contacto: e.target.value })} placeholder="Quién recibe (opcional)"/>
-                <input style={caja} inputMode="tel" value={p.telefono} onChange={e => cambiar(p.clave, { telefono: e.target.value })} placeholder="Teléfono (opcional)"/>
-              </div>}
-            </div>))}
+          {paradas.map((p, i) => <TarjetaParada key={p.clave} p={p} i={i} token={mapboxToken} cambiar={cambiar} quitar={quitar}/>)}
           {paradas.length > 1 && <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12, fontSize: 14 }}>
             <input type="checkbox" checked={ordenar} onChange={e => setOrdenar(e.target.checked)}/> Que el sistema acomode las entregas por cercanía (las recolecciones van primero)</label>}
         </Paso>
@@ -273,12 +218,24 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
           {ocupado || (faltan.length ? "Falta: " + faltan.join(", ") : "Mandar al chofer")}</button>
 
         <div style={{ marginTop: 24 }}>
-          <div style={{ fontFamily: DISP, fontWeight: 800, fontSize: 18, color: TEXT, marginBottom: 8 }}>Rutas asignadas para ese día</div>
-          {delDia.length === 0 ? <div style={{ color: MUTED, fontSize: 14 }}>Todavía no hay rutas asignadas ese día.</div>
-            : delDia.map(s => <div key={s.id} style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 12, padding: "10px 14px", marginBottom: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
-                <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center" }}><BotonSeguimiento servicio={s} telefono={s.solicitanteContacto} llamar={llamar} compacto/>
-                  <Chip color={s.estado === "En ruta" ? BLUE : s.estado === "Entregada" ? GREEN : A}>{s.estado === "Asignada" ? "Por salir" : s.estado}</Chip></span></div>)}
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+            <span style={{ fontFamily: DISP, fontWeight: 800, fontSize: 18, color: TEXT }}>Rutas del día</span>
+            <input type="date" style={{ ...caja, width: "auto", padding: "6px 10px" }} value={diaLista} onChange={e => setDiaLista(e.target.value)}/>
+            <span style={{ fontSize: 12, color: MUTED }}>Cambia el día para ver rutas pasadas y repetirlas.</span>
+          </div>
+          {lista.length === 0 ? <div style={{ color: MUTED, fontSize: 14 }}>No hay rutas asignadas ese día.</div>
+            : lista.map(s => { const editable = ["Asignada", "En ruta"].includes(s.estado);
+              return <div key={s.id} style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 12, padding: "10px 14px", marginBottom: 8 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
+                  <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    {editable && <button onClick={() => setEditando(editando === s.id ? "" : s.id)} style={{ ...boton(A, false), padding: "5px 10px", minHeight: 30, fontSize: 12 }}>✏️ {editando === s.id ? "Cerrar" : "Editar paradas"}</button>}
+                    <button onClick={() => repetir(s)} style={{ ...boton(BLUE, false), padding: "5px 10px", minHeight: 30, fontSize: 12 }}>↺ Repetir</button>
+                    {editable && <BotonSeguimiento servicio={s} telefono={s.solicitanteContacto} llamar={llamar} compacto/>}
+                    <Chip color={s.estado === "En ruta" ? BLUE : ["Entregada", "Completada", "Cerrada"].includes(s.estado) ? GREEN : s.estado === "Cancelada" ? MUTED : A}>{s.estado === "Asignada" ? "Por salir" : s.estado}</Chip></span>
+                </div>
+                {editando === s.id && editable && <EditarRuta db={db} usuario={usuario} servicio={s} lugares={lugares} token={mapboxToken} llamar={llamar} onListo={() => setEditando("")}/>}
+              </div>; })}
         </div>
       </div>
     </div>);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { coordenadaDeTexto, esEnlaceCortoMaps, buscarEnCatalogo, correoDeChofer, telefono10, enlaceNavegar } from "./lugares.ts";
+import { coordenadaDeTexto, esEnlaceCortoMaps, buscarEnCatalogo, correoDeChofer, telefono10, enlaceNavegar, enlaceRutaCompleta, lineasDeLista, lugarExacto } from "./lugares.ts";
 
 describe("coordenadaDeTexto", () => {
   it("lee una coordenada escrita", () => {
@@ -51,5 +51,27 @@ describe("cuenta del chofer", () => {
   });
   it("enlace de navegación", () => {
     expect(enlaceNavegar({ lat: 19.4, lng: -99.1 })).toContain("destination=19.4,-99.1");
+  });
+});
+
+describe("toda la ruta en Google Maps", () => {
+  it("la última es el destino y las demás escalas en orden", () => {
+    const u = enlaceRutaCompleta([{ lat: 1, lng: 2 }, { lat: 3, lng: 4 }, { lat: 5, lng: 6 }]);
+    expect(u).toContain("destination=5,6"); expect(decodeURIComponent(u)).toContain("waypoints=1,2|3,4");
+    expect(enlaceRutaCompleta([{ lat: 1, lng: 2 }])).toContain("destination=1,2");
+    expect(enlaceRutaCompleta([])).toBe("");
+  });
+});
+
+describe("pegar lista de lugares", () => {
+  it("un lugar por renglón, sin viñetas, vacíos ni repetidos", () => {
+    expect(lineasDeLista("1. Walmart Coyoacán\n\n- Bodega Aurrera Tlalpan\n• walmart coyoacan\n  19.43, -99.13  \nx")).toEqual(["Walmart Coyoacán", "Bodega Aurrera Tlalpan", "19.43, -99.13"]);
+    expect(lineasDeLista("a\n".repeat(5) + Array.from({ length: 40 }, (_, i) => "Tienda " + i).join("\n")).length).toBe(30);
+  });
+  it("reconoce un lugar guardado solo por su nombre exacto y confirmado", () => {
+    const lugares = [{ id: "1", nombre: "Walmart Coyoacán", pinConfirmado: true }, { id: "2", nombre: "Bodega", pinConfirmado: false }];
+    expect(lugarExacto(lugares, "walmart coyoacan")?.id).toBe("1");
+    expect(lugarExacto(lugares, "Bodega")).toBe(null);
+    expect(lugarExacto(lugares, "Walmart")).toBe(null);
   });
 });

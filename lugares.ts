@@ -51,8 +51,37 @@ export function buscarEnCatalogo<T extends LugarCatalogo>(lugares: T[], texto: u
     .slice(0, max);
 }
 
+/** "Pegar lista": un lugar por renglón (quita viñetas/números, vacíos y repetidos; máx. 30). */
+export function lineasDeLista(texto: unknown, max = 30): string[] {
+  const vistas = new Set<string>(), out: string[] = [];
+  for(const l of String(texto ?? "").split(/\r?\n/)){
+    const t = l.replace(/^\s*(?:[*•·]\s*|-\s+|\d{1,3}[.)-]\s+)/, "").trim();
+    const k = sinAcentos(t);
+    if(t.length < 3 || vistas.has(k)) continue;
+    vistas.add(k); out.push(t);
+    if(out.length >= max) break;
+  }
+  return out;
+}
+
+/** Lugar del catálogo cuyo NOMBRE es exactamente ese texto (sin acentos ni mayúsculas), con su punto confirmado. */
+export function lugarExacto<T extends LugarCatalogo>(lugares: T[], texto: unknown): T | null {
+  const k = sinAcentos(String(texto ?? "").trim());
+  if(!k) return null;
+  return (lugares || []).find(l => l.activo !== false && l.pinConfirmado === true && sinAcentos(String(l.nombre ?? "").trim()) === k) || null;
+}
+
 /** Enlace para que el chofer abra la navegación (Google Maps decide si usa la app o el navegador). */
 export const enlaceNavegar = (c: Coordenada) => `https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lng}&travelmode=driving`;
+
+/** Toda la ruta pendiente en Google Maps (la última parada es el destino; las demás, escalas en orden; máx. 9 escalas). */
+export function enlaceRutaCompleta(paradas: Coordenada[]): string {
+  const ok = (paradas || []).filter(p => Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng))).slice(0, 10);
+  if(ok.length === 0) return "";
+  if(ok.length === 1) return enlaceNavegar(ok[0]);
+  const destino = ok[ok.length - 1], escalas = ok.slice(0, -1).map(p => `${p.lat},${p.lng}`).join("|");
+  return `https://www.google.com/maps/dir/?api=1&destination=${destino.lat},${destino.lng}&waypoints=${encodeURIComponent(escalas)}&travelmode=driving`;
+}
 
 /** Correo interno para la cuenta del chofer cuando no tiene correo: su celular de 10 dígitos. No recibe correos. */
 export const DOMINIO_CHOFERES = "choferes.denmovimiento.mx";
