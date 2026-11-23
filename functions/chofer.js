@@ -234,7 +234,12 @@ export const oficinaVincularChofer = onCall(OPC, async req => {
   lote.set(db().doc("choferes_auth/" + usuario.uid), { choferId, correo, ligadoPor: of.uid, ligadoEn: ahora() });
   lote.update(ref, { authUid: usuario.uid, correoApp: correo, activo: true });
   await lote.commit();
-  return { ok: true, enlace: await getAuth().generatePasswordResetLink(correo) };
+  /* Al poner su contraseña, el botón "Continuar" lo lleva a la app del chofer; la página sale en español. */
+  let enlace;
+  try { enlace = await getAuth().generatePasswordResetLink(correo, { url: "https://dmov2-ixgf.vercel.app/chofer" }); }
+  catch { enlace = await getAuth().generatePasswordResetLink(correo); }
+  enlace = /[?&]lang=/.test(enlace) ? enlace.replace(/([?&])lang=[^&]*/, "$1lang=es") : enlace + (enlace.includes("?") ? "&" : "?") + "lang=es";
+  return { ok: true, enlace };
 });
 
 /** Libera el equipo de un chofer (cambio o reposición de celular). Queda en la bitácora de alertas. */

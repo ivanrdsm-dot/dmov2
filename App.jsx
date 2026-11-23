@@ -47,6 +47,8 @@ const CotizacionesVista = lazy(()=>import("./Cotizaciones.jsx"));
 const ReportesOperacionVista = lazy(()=>import("./ReportesOperacion.jsx"));
 /* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
+const AsignarRutaVista = lazy(()=>import("./AsignarRuta.jsx"));
+const ChoferWebVista = lazy(()=>import("./ChoferWeb.jsx"));
 const PapeleraVista = lazy(()=>import("./Papelera.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
 const FF_SERVICIOS = import.meta.env.VITE_FF_SERVICIOS !== "off";
@@ -3189,6 +3191,7 @@ const MENU=[
   ]},
   {section:"Trabajo",items:[
     {label:"Pedidos",icon:Bell,tabs:[{id:"solicitudes",label:"Pedidos que llegan",ff:true}]},
+    {label:"Asignar ruta",icon:Truck,tabs:[{id:"asignarRuta",label:"Asignar ruta",ff:true}]},
     {label:"Cotizar",icon:DollarSign,tabs:[
       {id:"cotizadorAuto",label:"Por carga",ff:true},
       {id:"cotizador",label:"Por destino",adminOnly:true},
@@ -4220,9 +4223,9 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
   },[cots,facts,rutas,entregas]);
   // El camino de todos los días: pedido → cotizar → servicio → factura.
   const quickActions=FF_SERVICIOS?[
+    {icon:Truck,label:"Asignar ruta",color:A,v:"asignarRuta"},
     {icon:Bell,label:"Ver pedidos",color:BLUE,v:"solicitudes"},
-    {icon:DollarSign,label:"Cotizar",color:A,v:"cotizadorAuto"},
-    {icon:ClipboardList,label:"Servicios",color:VIOLET,v:"servicios"},
+    {icon:DollarSign,label:"Cotizar",color:VIOLET,v:"cotizadorAuto"},
     ...(isAdmin?[{icon:FileText,label:"Registrar factura",color:GREEN,v:"facturas"}]:[]),
   ]:[
     ...(isAdmin?[
@@ -14907,7 +14910,8 @@ export default function App(){
   // Rutas públicas sin auth — deben estar antes de cualquier hook
   // ErrorBoundary también aquí: antes solo cubría el panel — un error de render
   // dejaba al chofer en ruta (o al cliente rastreando) con pantalla blanca.
-  if(path.startsWith("/chofer")) return FF_ACCESO_PUBLICO?<><style>{CSS}</style><ErrorBoundary><ChoferApp/></ErrorBoundary></>:<AvisoAccesoCerrado tipo="chofer"/>;
+  /* App del chofer en el navegador del celular: cuenta propia (celular + contraseña), todo lo valida el servidor. */
+  if(path.startsWith("/chofer")) return <ErrorBoundary><Suspense fallback={<div style={{padding:40,textAlign:"center",color:"#5b6b80"}}>Cargando…</div>}><ChoferWebVista db={db} auth={auth} app={fbApp}/></Suspense></ErrorBoundary>;
   const trackMatch = path.match(/^\/track\/([A-Z0-9]+)/i);
   if(trackMatch) return FF_ACCESO_PUBLICO?<><style>{CSS}</style><ErrorBoundary><ClientTracking trackingId={trackMatch[1].toUpperCase()}/></ErrorBoundary></>:<AvisoAccesoCerrado tipo="rastreo"/>;
 
@@ -15119,6 +15123,7 @@ export default function App(){
       cotizaciones:<CotizacionesModulo authUser={authUser} userProfile={userProfile} onNueva={()=>{setSolicitudACotizar(null);setView("cotizadorAuto");}} onCrearServicio={c=>{setSolicitudAServicio(null);setCotizacionAServicio(c);setView("servicios");}}/>,
       reportesOperacion:<ReportesOperacionModulo userProfile={userProfile}/>,
       tarifario:<TarifarioModulo authUser={authUser} userProfile={userProfile}/>,
+      asignarRuta:<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><AsignarRutaVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)} mapboxToken={MAPBOX_TOKEN} onVer={setView}/></Suspense>,
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,
       servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)} cotizacion={cotizacionAServicio} onCotizacionUsada={()=>setCotizacionAServicio(null)}/>}:{}),

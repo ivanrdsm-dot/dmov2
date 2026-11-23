@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, etiqueta, caja, boton, Campo, Chip, Seccion, Dialogo } from "./uiBasico.jsx";
 import { estadoSenal, faltantesChoferApp, avanceRuta, semaforoViaje } from "./despacho.ts";
+import { correoDeChofer, telefono10 } from "./lugares.ts";
 
 const COLOR = { verde: GREEN, ambar: AMBER, rojo: ROSE };
 const COLOR_SENAL = { "en vivo": GREEN, "con retraso": AMBER, "sin señal": ROSE, nunca: MUTED };
@@ -152,7 +153,7 @@ export default function Despacho({ store, usuario, cargarMapa = null }){
               <td style={{ padding: "9px 8px" }}>{f.length ? <Chip color={AMBER}>{f[0]}</Chip> : <Chip color={GREEN}>App lista</Chip>}</td>
               <td style={{ padding: "9px 8px", color: COLOR_SENAL[sn.senal], fontWeight: 700 }}>{sn.senal}{sn.minutos !== null ? ` · ${haceCuanto(ubicaciones[c.id]?.tMs, ahora)}` : ""}</td>
               <td style={{ padding: "9px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
-                {usuario.rol === "admin" && <button onClick={() => { setLigar(c); setCorreo(c.correoApp || ""); setEnlace(""); }} style={{ ...boton(BLUE, false), padding: "5px 10px", minHeight: 32, fontSize: 12, marginRight: 6 }}>{c.authUid ? "Nuevo enlace" : "Crear cuenta"}</button>}
+                {usuario.rol === "admin" && <button onClick={() => { setLigar(c); setCorreo(c.correoApp || correoDeChofer(c.tel) || ""); setEnlace(""); }} style={{ ...boton(BLUE, false), padding: "5px 10px", minHeight: 32, fontSize: 12, marginRight: 6 }}>{c.authUid ? "Nuevo enlace" : "Crear cuenta"}</button>}
                 {c.dispositivoId && <button onClick={() => { setLiberar(c); setMotivo(""); }} style={{ ...boton(MUTED, false), padding: "5px 10px", minHeight: 32, fontSize: 12 }}>Cambió de teléfono</button>}
               </td></tr>); })}
           {activos.length === 0 && <tr><td style={{ padding: 16, color: MUTED }}>No hay choferes activos.</td></tr>}
@@ -167,14 +168,15 @@ export default function Despacho({ store, usuario, cargarMapa = null }){
       </Seccion>
       {ligar && <Dialogo titulo={"Cuenta de la app · " + ligar.nombre} onClose={() => setLigar(null)}>
         {!enlace ? <>
-          <Campo label="Correo del chofer *" type="email" value={correo} onChange={e => setCorreo(e.target.value)}/>
-          <p style={{ fontSize: 12, color: MUTED }}>Se crea su cuenta y obtienes un enlace para que él mismo ponga su contraseña. La cuenta solo funciona en el primer teléfono desde el que entre.</p>
+          <Campo label="Celular o correo del chofer *" value={correo.endsWith("@choferes.denmovimiento.mx") ? correo.split("@")[0] : correo} onChange={e => setCorreo(correoDeChofer(e.target.value) || e.target.value)}/>
+          <p style={{ fontSize: 12, color: MUTED }}>Con su celular basta: entrará a <b>dmov2-ixgf.vercel.app/chofer</b> con su celular y la contraseña que él ponga con el enlace. La cuenta solo funciona en el primer teléfono desde el que entre.</p>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}><button onClick={() => setLigar(null)} style={boton(MUTED, false)}>Cancelar</button>
             <button disabled={!correo.trim() || ocupado} onClick={() => correr(async () => { const r = await store.vincularChofer(ligar.id, correo.trim()); setEnlace(r.enlace); })} style={{ ...boton(A), opacity: !correo.trim() || ocupado ? .5 : 1 }}>Crear y obtener enlace</button></div>
         </> : <>
           <p style={{ fontSize: 14, marginTop: 0 }}>Cuenta lista. Mándale este enlace al chofer para que ponga su contraseña. Trátalo como una llave: sirve una sola vez.</p>
           <textarea readOnly value={enlace} onFocus={e => e.target.select()} style={{ ...caja, minHeight: 90, fontFamily: MONO, fontSize: 12 }}/>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 10 }}>
+            {telefono10(ligar.tel).length === 10 && <a href={`https://wa.me/52${telefono10(ligar.tel)}?text=${encodeURIComponent(`Hola ${String(ligar.nombre || "").split(" ")[0]}, esta es tu entrada a la app de DMovimiento:\n1) Abre este enlace y pon una contraseña: ${enlace}\n2) Después entra a https://dmov2-ixgf.vercel.app/chofer con tu celular ${telefono10(ligar.tel)} y esa contraseña.`)}`} target="_blank" rel="noreferrer" style={{ ...boton(GREEN), textDecoration: "none", display: "inline-block" }}>Mandar por WhatsApp</a>}
             <button onClick={() => navigator.clipboard?.writeText(enlace).then(() => avisar("Enlace copiado"))} style={boton(BLUE)}>Copiar enlace</button><button onClick={() => setLigar(null)} style={boton(MUTED, false)}>Cerrar</button></div>
         </>}</Dialogo>}
       {liberar && <Dialogo titulo={"Cambio de teléfono · " + liberar.nombre} onClose={() => setLiberar(null)}>
