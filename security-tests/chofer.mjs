@@ -38,6 +38,7 @@ test('el chofer lee su servicio, sus paradas, su jornada y su propia liga de cue
   await assertSucceeds(getDocs(query(collection(db, 'servicios'), where('choferId', '==', 'c1'))));
   await assertSucceeds(getDocs(collection(db, 'servicios', 's1', 'paradas')));
   await assertSucceeds(getDoc(doc(db, 'jornadas', 'c1_2026-11-10')));
+  await assertSucceeds(getDoc(doc(db, 'jornadas', 'c1_2099-01-01')));                    // la suya de un día sin check-in todavía
   await assertSucceeds(getDoc(doc(db, 'choferes_auth', 'uid1')));
 });
 
@@ -47,6 +48,7 @@ test('el chofer NO lee lo de otro chofer, ni la lista de servicios, ni datos de 
   await assertFails(getDocs(collection(db, 'servicios')));
   await assertFails(getDocs(collection(db, 'servicios', 's2', 'paradas')));
   await assertFails(getDoc(doc(db, 'jornadas', 'c2_2026-11-10')));
+  await assertFails(getDoc(doc(db, 'jornadas', 'c2_2099-01-01')));                       // la de otro, aunque aún no exista
   await assertFails(getDoc(doc(db, 'choferes_auth', 'uid2')));
   for(const [col, id] of [['choferes', 'c1'], ['ubicaciones', 'c1'], ['facturas', 'x'], ['solicitudes', 'x'], ['proveedores', 'x'], ['dmov_usuarios', 'ops']].slice(0, 5))
     await assertFails(getDoc(doc(db, col, id)));

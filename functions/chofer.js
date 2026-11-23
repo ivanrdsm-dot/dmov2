@@ -161,7 +161,7 @@ export const choferCerrarParada = onCall(OPC, async req => {
     const todas = await tx.get(db().collection(`servicios/${servicio.id}/paradas`));
     if(!ps.exists) throw falla("not-found", "Parada no encontrada");
     const parada = { id: ps.id, ...ps.data() };
-    const v = evaluarCierreParada({ parada, posicion, ahoraMs: momento, evidencia, excepcion: parada.excepcion ? { ...parada.excepcion, paradaId: parada.id } : null });
+    const v = evaluarCierreParada({ parada, posicion, ahoraMs: momento, evidencia, incidencia, excepcion: parada.excepcion ? { ...parada.excepcion, paradaId: parada.id } : null });
     if(!v.permitido){
       eventoServicio(tx, servicio.id, { tipo: "cierre_rechazado", paradaId, motivo: v.motivo, distanciaM: v.distanciaM ?? null, ...actorChofer(chofer) });
       return { ...v, parada };
@@ -171,11 +171,15 @@ export const choferCerrarParada = onCall(OPC, async req => {
     eventoServicio(tx, servicio.id, { tipo: incidencia ? "parada_incidencia" : "parada_entregada", paradaId, paradaNombre: parada.nombre || "", receptor: evidencia.receptor,
       incidencia, distanciaM: v.distanciaM ?? null, porExcepcion: v.porExcepcion === true, diferida, ...actorChofer(chofer) });
     const pendientes = todas.docs.filter(d => d.id !== paradaId && !["Entregada", "Incidencia"].includes(d.data().estado)).length;
+    /* Paradas con problema (contando esta): la ruta termina igual, pero queda marcado y se avisa si no se entregó nada. */
+    const conProblema = todas.docs.filter(d => d.id !== paradaId && d.data().estado === "Incidencia").length + (incidencia ? 1 : 0);
+    const entregadas = todas.docs.filter(d => d.id !== paradaId && d.data().estado === "Entregada").length + (incidencia ? 0 : 1);
     if(pendientes === 0){
-      tx.update(refServicio, { estado: "Entregada", "estadoTs.Entregada": ahora(), receptor: evidencia.receptor, actualizadoEn: ahora() });
+      tx.update(refServicio, { estado: "Entregada", "estadoTs.Entregada": ahora(), receptor: evidencia.receptor || "", actualizadoEn: ahora(),
+        paradasConProblema: conProblema, paradasEntregadas: entregadas, sinEntregas: entregadas === 0 });
       eventoServicio(tx, servicio.id, { tipo: "estado", de: "En ruta", a: "Entregada", ...actorChofer(chofer) });
     }
-    return { ...v, parada, pendientes };
+    return { ...v, parada, pendientes, sinEntregas: pendientes === 0 && entregadas === 0 };
   });
   if(!resultado.permitido){
     if(resultado.fueraDeGeocerca) await alerta({ type: "cierre_fuera_de_punto", choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: servicio.id,
@@ -183,6 +187,7 @@ export const choferCerrarParada = onCall(OPC, async req => {
     throw falla("failed-precondition", resultado.motivo);
   }
   if(incidencia) await alerta({ type: "incidencia", choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: servicio.id, msg: `${incidencia} en "${resultado.parada.nombre || paradaId}"` });
+  if(resultado.sinEntregas) await alerta({ type: "incidencia", choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: servicio.id, msg: `Ruta ${servicio.folio || ""} terminada SIN ninguna entrega: revisar antes de facturar` });
   return { ok: true, pendientes: resultado.pendientes, porExcepcion: resultado.porExcepcion === true };
 });
 
@@ -262,7 +267,8 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
   const c = await db().doc("choferes/" + choferId).get();
   if(!c.exists || !c.data().authUid) throw falla("failed-precondition", "El chofer no tiene cuenta de la app. Vincúlalo primero.");
   const servicio = s.data();
-  const lista = [...(servicio.origenes || []).map(p => ({ ...p, tipo: "carga" })), ...(servicio.destinos || []).map(p => ({ ...p, tipo: "entrega" }))].filter(p => txt(p.direccion));
+  /* Un lugar del catálogo cuenta aunque no traiga dirección escrita: su coordenada verificada manda. */
+  const lista = [...(servicio.origenes || []).map(p => ({ ...p, tipo: "carga" })), ...(servicio.destinos || []).map(p => ({ ...p, tipo: "entrega" }))].filter(p => txt(p.direccion) || txt(p.puntoId));
   const sinPin = [], paradas = [];
   for(const [i, p] of lista.entries()){
     const punto = p.puntoId ? await db().doc("puntos_entrega/" + p.puntoId).get() : null;
@@ -271,6 +277,7 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
     if(!d || d.pinConfirmado !== true || d.activo === false || !coordenadaValida(coord)){ sinPin.push(p.nombre || p.direccion); continue; }
     const r = Number(d.radioM);
     paradas.push({ orden: i + 1, tipo: p.tipo, puntoId: p.puntoId, nombre: txt(p.nombre || d.nombre, 200), direccion: txt(p.direccion, 400), contacto: txt(p.contacto, 120), telefono: txt(p.telefono, 30),
+      ...(txt(p.direccion) ? {} : { direccion: txt(d.direccion, 400) || `${coord.lat}, ${coord.lng}` }),
       lat: coord.lat, lng: coord.lng, radioM: r >= 30 && r <= 2000 ? r : RADIO_GEOCERCA_DEFAULT_M, estado: "Pendiente" });
   }
   if(sinPin.length > 0) throw falla("failed-precondition", "Estos puntos no tienen pin confirmado en el catálogo: " + sinPin.join("; "));

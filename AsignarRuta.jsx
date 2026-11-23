@@ -82,7 +82,7 @@ function BuscadorLugar({ token, lugares, onElegir }){
       {aviso && <div style={{ fontSize: 13, color: AMBER, marginTop: 6 }}>{aviso}</div>}
       {hay && <div style={{ border: "1px solid " + BORDER, borderRadius: 12, marginTop: 6, overflow: "hidden", boxShadow: "0 6px 20px rgba(0,0,0,.08)" }}>
         {coord && <button onClick={elegirCoordenada} style={opcion}>📍 <b>Usar esta ubicación</b> <span style={{ color: MUTED, fontFamily: MONO }}>{coord.lat}, {coord.lng}</span></button>}
-        {delCatalogo.map(l => <button key={l.id} onClick={() => { onElegir({ nombre: l.nombre || "", direccion: l.direccion || "", lat: Number(l.lat), lng: Number(l.lng), puntoId: l.id,
+        {delCatalogo.map(l => <button key={l.id} onClick={() => { if(!Number.isFinite(Number(l.lat)) || !Number.isFinite(Number(l.lng)) || (Number(l.lat) === 0 && Number(l.lng) === 0)){ setAviso(`"${l.nombre}" está guardado sin ubicación. Búscalo por su dirección o pega la ubicación de Google Maps.`); return; } onElegir({ nombre: l.nombre || "", direccion: l.direccion || "", lat: Number(l.lat), lng: Number(l.lng), puntoId: l.id,
             confirmada: l.pinConfirmado === true, contacto: l.contacto || "", telefono: l.telefono || "" }); limpiar(); }} style={opcion}>
           ⭐ <b>{l.nombre}</b> <span style={{ color: MUTED }}>· {l.direccion}</span> <span style={{ color: GREEN, fontSize: 12 }}>· ya guardado</span></button>)}
         {sug.map(s => <button key={s.mapbox_id} onClick={() => elegirMapbox(s)} style={opcion}><b>{s.name}</b> <span style={{ color: MUTED }}>· {s.full_address || s.place_formatted}</span></button>)}
@@ -91,8 +91,8 @@ function BuscadorLugar({ token, lugares, onElegir }){
 }
 
 /* ── Acceso del chofer a su app (solo admin): cuenta con su celular + enlace por WhatsApp ── */
-function AccesoChofer({ chofer, llamar, esAdmin }){
-  const [enlace, setEnlace] = useState(""), [error, setError] = useState(""), [ocupado, setOcupado] = useState(false);
+function AccesoChofer({ chofer, llamar, esAdmin, enlace, setEnlace }){
+  const [error, setError] = useState(""), [ocupado, setOcupado] = useState(false);
   const tel = telefono10(chofer.tel);
   if(!esAdmin) return <div style={{ fontSize: 13, color: AMBER, marginTop: 8 }}>⚠️ {chofer.nombre} todavía no tiene la app. Pídele a un administrador que le dé acceso (aquí mismo).</div>;
   const crear = async () => {
@@ -103,7 +103,7 @@ function AccesoChofer({ chofer, llamar, esAdmin }){
     catch(e){ setError(mensajeError(e)); }
     setOcupado(false);
   };
-  const texto = `Hola ${String(chofer.nombre || "").split(" ")[0]}, esta es tu entrada a la app de DMovimiento:\n1) Abre este enlace y pon una contraseña: ${enlace}\n2) Después entra a ${URL_CHOFER} con tu celular ${tel} y esa contraseña.\n3) Guárdala en tu pantalla de inicio (menú del navegador → Agregar a pantalla de inicio).`;
+  const texto = `Hola ${String(chofer.nombre || "").split(" ")[0]}, esta es tu entrada a la app de DMovimiento:\n1) Abre este enlace y pon una contraseña: ${enlace}\n2) Abre ${URL_CHOFER} y ANTES de entrar agrégala a tu pantalla de inicio (menú del navegador → Agregar a pantalla de inicio).\n3) Entra SIEMPRE desde ese ícono, con tu celular ${tel} y tu contraseña.`;
   return (
     <div style={{ background: AMBER + "12", border: "1px solid " + AMBER + "55", borderRadius: 12, padding: 12, marginTop: 8, fontSize: 14 }}>
       {!enlace ? <>
@@ -123,6 +123,8 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   const [fecha, setFecha] = useState(hoyCDMX()), [hora, setHora] = useState(""), [choferId, setChoferId] = useState(""), [placa, setPlaca] = useState("");
   const [cliente, setCliente] = useState(""), [indicaciones, setIndicaciones] = useState(""), [paradas, setParadas] = useState([]), [ordenar, setOrdenar] = useState(true);
   const [ocupado, setOcupado] = useState(""), [error, setError] = useState(""), [listo, setListo] = useState(null), [delDia, setDelDia] = useState([]);
+  const [enlaces, setEnlaces] = useState({});           // enlace de acceso recién creado, por chofer (sobrevive a que llegue su authUid)
+  const [pendiente, setPendiente] = useState(null);     // servicio ya creado al que le faltó armar la ruta o asignarse (para reintentar sin duplicar)
   const fns = useMemo(() => getFunctions(app, "us-central1"), [app]);
   const llamar = (n, d) => httpsCallable(fns, n)(d).then(r => r.data);
   const esAdmin = usuario?.rol === "admin";
@@ -148,8 +150,11 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
     paradas.some(p => !p.confirmada) && "confirmar en el mapa cada lugar", paradas.some(p => !String(p.nombre).trim()) && "nombre de cada lugar"].filter(Boolean);
 
   const mandar = async () => {
+    if(pendiente) return reintentar();   // hay un servicio creado a medias: se termina ese, no se crea otro
     if(faltan.length){ setError("Falta: " + faltan.join(", ") + "."); return; }
     if(!chofer?.authUid){ setError(`${chofer?.nombre || "El chofer"} todavía no tiene la app. Dale acceso primero (arriba).`); return; }
+    const sinUbicacion = paradas.filter(p => !Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lng)) || (Number(p.lat) === 0 && Number(p.lng) === 0));
+    if(sinUbicacion.length){ setError("Estos lugares no tienen ubicación en el mapa: " + sinUbicacion.map(p => p.nombre || p.direccion).join(", ") + ". Quítalos y búscalos otra vez."); return; }
     setError(""); setListo(null);
     const store = crearServiciosStore(db), catalogo = crearCatalogoStore(db, "puntos_entrega");
     try {
@@ -160,7 +165,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
         let puntoId = p.puntoId;
         const existente = !puntoId && lugares.find(l => l.activo !== false && l.pinConfirmado === true && Number.isFinite(Number(l.lat)) && distanciaM({ lat: Number(l.lat), lng: Number(l.lng) }, p) < 30);
         if(existente) puntoId = existente.id;
-        if(!puntoId) puntoId = await catalogo.guardar(usuario, null, { nombre: p.nombre.trim(), direccion: p.direccion, lat: p.lat, lng: p.lng, coordenada: `${p.lat}, ${p.lng}`,
+        if(!puntoId) puntoId = await catalogo.guardar(usuario, null, { nombre: p.nombre.trim(), direccion: p.direccion || `${p.lat}, ${p.lng}`, lat: p.lat, lng: p.lng, coordenada: `${p.lat}, ${p.lng}`,
           pinConfirmado: true, radioM: "", horario: "", contacto: p.contacto || "", telefono: p.telefono || "", notasAcceso: "", origen: "Asignar ruta" });
         else if(p.puntoId && !lugares.find(l => l.id === p.puntoId)?.pinConfirmado) {
           const antes = lugares.find(l => l.id === p.puntoId);
@@ -168,23 +173,35 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
         }
         conId.push({ ...p, puntoId });
       }
-      const punto = p => ({ nombre: p.nombre.trim(), direccion: p.direccion, puntoId: p.puntoId, contacto: p.contacto || "", telefono: p.telefono || "" });
+      const punto = p => ({ nombre: p.nombre.trim(), direccion: p.direccion || `${p.lat}, ${p.lng}`, puntoId: p.puntoId, contacto: p.contacto || "", telefono: p.telefono || "" });
       /* 2. El servicio, con folio. */
       setOcupado("Creando el servicio…");
       const datos = { canal: "Asignación directa", recibidaEn: ahoraLocal(), empresa: cliente.trim(), solicitante: usuario.nombre || usuario.email || "",
         fechaServicio: fecha, horaServicio: hora, origenes: conId.filter(p => p.tipo === "carga").map(punto), destinos: conId.filter(p => p.tipo === "entrega").map(punto),
         asignacionTipo: "Flota propia", unidadPlaca: placa, choferNombre: chofer.nombre || "", indicaciones: indicaciones.trim(), notas: indicaciones.trim() };
       const { id, folio } = await store.crear(usuario, datos);
-      /* 3. El servidor arma la ruta (ordena por cercanía) y se la asigna al chofer. */
-      setOcupado("Mandando la ruta al chofer…");
-      await llamar("oficinaPrepararRuta", { servicioId: id, choferId, ordenar });
-      /* 4. Queda "Asignada"; lo que falte (cotización, precio) se anota, no se inventa. */
-      const faltantes = requisitosEstado({ ...datos, estado: "Solicitud" }, "Asignada");
-      await store.cambiarEstado(usuario, { id, estado: "Solicitud" }, "Asignada",
-        { motivo: faltantes.length ? "Asignada desde Asignar ruta; falta: " + faltantes.join(", ") : "Asignada desde Asignar ruta", faltantes });
-      setListo({ folio, chofer: chofer.nombre });
-      setParadas([]); setIndicaciones(""); setHora("");
-    } catch(e){ setError(mensajeError(e) + ". Si se creó el servicio, lo ves en Servicios."); }
+      const p = { id, folio, datos, choferId, choferNombre: chofer.nombre, ordenar };
+      setPendiente(p);
+      await terminarAsignacion(p);
+    } catch(e){ setError(mensajeError(e)); }
+    setOcupado("");
+  };
+  /* Pasos 3 y 4 por separado: si fallan, "Reintentar" los repite sobre el MISMO servicio (no crea otro folio). */
+  const terminarAsignacion = async p => {
+    const store = crearServiciosStore(db);
+    setOcupado("Mandando la ruta al chofer…");
+    try { await llamar("oficinaPrepararRuta", { servicioId: p.id, choferId: p.choferId, ordenar: p.ordenar }); }
+    catch(e){ if(e?.code !== "functions/already-exists") throw e; }   // ya estaba armada: se sigue
+    const faltantes = requisitosEstado({ ...p.datos, estado: "Solicitud" }, "Asignada");
+    await store.cambiarEstado(usuario, { id: p.id, estado: "Solicitud" }, "Asignada",
+      { motivo: faltantes.length ? "Asignada desde Asignar ruta; falta: " + faltantes.join(", ") : "Asignada desde Asignar ruta", faltantes });
+    setPendiente(null);
+    setListo({ folio: p.folio, chofer: p.choferNombre });
+    setParadas([]); setIndicaciones(""); setHora("");
+  };
+  const reintentar = async () => {
+    setError("");
+    try { await terminarAsignacion(pendiente); } catch(e){ setError(mensajeError(e)); }
     setOcupado("");
   };
 
@@ -211,7 +228,8 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
             <label><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Día</span><input type="date" style={caja} value={fecha} onChange={e => setFecha(e.target.value)}/></label>
             <label><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Hora de salida (opcional)</span><input type="time" style={caja} value={hora} onChange={e => setHora(e.target.value)}/></label>
           </div>
-          {chofer && !chofer.authUid && <AccesoChofer chofer={chofer} llamar={llamar} esAdmin={esAdmin}/>}
+          {chofer && (!chofer.authUid || enlaces[chofer.id]) && <AccesoChofer chofer={chofer} llamar={llamar} esAdmin={esAdmin}
+            enlace={enlaces[chofer.id] || ""} setEnlace={e => setEnlaces(x => ({ ...x, [chofer.id]: e }))}/>}
           <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>¿No está el chofer o la camioneta? Agrégalos en <button onClick={() => onVer?.("choferes")} style={{ background: "none", border: "none", color: BLUE, cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 700 }}>Choferes y unidades</button>.</div>
         </Paso>
 
@@ -255,6 +273,9 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
         </Paso>
 
         {error && <div style={{ color: ROSE, fontWeight: 700, margin: "0 0 10px" }}>{error}</div>}
+        {pendiente && !ocupado && <div style={{ background: AMBER + "12", border: "1.5px solid " + AMBER, borderRadius: 12, padding: 12, marginBottom: 10, fontSize: 14 }}>
+          El servicio <b style={{ fontFamily: MONO }}>{pendiente.folio}</b> ya se creó, pero no se pudo mandar al chofer.
+          <button onClick={reintentar} style={{ ...boton(A), marginLeft: 10 }}>Reintentar (sin crear otro)</button></div>}
         <button onClick={mandar} disabled={!!ocupado} style={{ ...boton(faltan.length ? MUTED : A), width: "100%", padding: "16px 0", fontSize: 18, opacity: ocupado ? .6 : 1 }}>
           {ocupado || (faltan.length ? "Falta: " + faltan.join(", ") : "Mandar al chofer")}</button>
 

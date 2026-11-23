@@ -33,6 +33,12 @@ describe("distancia y geocerca", () => {
 
 describe("validarLote", () => {
   const p = (pos, min, extra = {}) => ({ ...pos, tMs: T0 + min * MIN, precisionM: 12, ...extra });
+  it("una primera lectura aproximada (wifi/antena) no provoca 'salto imposible'", () => {
+    const lejos = mover(ZOCALO, 9000);
+    const r = validarLote([p(lejos, 0, { precisionM: 2500 }), p(ZOCALO, 1)], { ahoraMs: T0 + 2 * MIN });
+    expect(r.alertas).toEqual([]);
+    expect(r.aceptadas.every(x => x.confiable)).toBe(true);
+  });
   it("acepta un recorrido normal y lo ordena por hora", () => {
     const r = validarLote([p(mover(ZOCALO, 600), 2), p(ZOCALO, 0), p(mover(ZOCALO, 300), 1)], { ahoraMs: T0 + 3 * MIN });
     expect(r.aceptadas.map(x => x.tMs)).toEqual([T0, T0 + MIN, T0 + 2 * MIN]);
@@ -83,6 +89,10 @@ describe("cierre de parada", () => {
   });
   it("NO cierra sin foto, sin receptor, ni con ubicación vieja, simulada o imprecisa", () => {
     expect(evaluarCierreParada({ parada, posicion: pos(10), ahoraMs: T0, evidencia: { ...evidencia, fotos: [] } }).motivo).toBe("Falta la foto de evidencia");
+    expect(evaluarCierreParada({ parada, posicion: pos(10), ahoraMs: T0, evidencia: { ...evidencia, receptor: "" } }).motivo).toBe("Falta el nombre de quien recibe");
+    // Con un problema (cliente ausente) no se exige nombre de quien recibe, pero sí la foto.
+    expect(evaluarCierreParada({ parada, posicion: pos(10), ahoraMs: T0, evidencia: { ...evidencia, receptor: "" }, incidencia: "Cliente ausente" }).permitido).toBe(true);
+    expect(evaluarCierreParada({ parada, posicion: pos(10), ahoraMs: T0, evidencia: { ...evidencia, receptor: "", fotos: [] }, incidencia: "Cliente ausente" }).motivo).toBe("Falta la foto de evidencia");
     expect(evaluarCierreParada({ parada, posicion: pos(10), ahoraMs: T0, evidencia: { ...evidencia, receptor: " " } }).motivo).toBe("Falta el nombre de quien recibe");
     expect(evaluarCierreParada({ parada, posicion: pos(10, 9), ahoraMs: T0, evidencia }).permitido).toBe(false);
     expect(evaluarCierreParada({ parada, posicion: pos(10, 1, { confiable: false }), ahoraMs: T0, evidencia }).permitido).toBe(false);
