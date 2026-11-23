@@ -31,11 +31,12 @@ export async function guardarLugares(db, usuario, paradas, lugares = []){
   return conId;
 }
 
-export function datosServicio({ usuario, cliente, fecha, hora = "", paradas, placa, chofer, indicaciones = "", ahora = new Date() }){
+export function datosServicio({ usuario, cliente, fecha, hora = "", paradas, placa, chofer, indicaciones = "", contactoCliente = "", ahora = new Date() }){
   const punto = p => ({ nombre: String(p.nombre).trim(), direccion: p.direccion || `${p.lat}, ${p.lng}`, puntoId: p.puntoId, contacto: p.contacto || "", telefono: p.telefono || "" });
   return { canal: "Asignación directa", recibidaEn: ahoraLocal(ahora), empresa: String(cliente).trim(), solicitante: usuario.nombre || usuario.email || "",
     fechaServicio: fecha, horaServicio: hora, origenes: paradas.filter(p => p.tipo === "carga").map(punto), destinos: paradas.filter(p => p.tipo === "entrega").map(punto),
-    asignacionTipo: "Flota propia", unidadPlaca: placa, choferNombre: chofer.nombre || "", indicaciones: String(indicaciones).trim(), notas: String(indicaciones).trim() };
+    asignacionTipo: "Flota propia", unidadPlaca: placa, choferNombre: chofer.nombre || "", indicaciones: String(indicaciones).trim(), notas: String(indicaciones).trim(),
+    ...(String(contactoCliente).trim() ? { solicitanteContacto: String(contactoCliente).trim() } : {}) };
 }
 
 export async function crearServicioRuta(db, usuario, datos){

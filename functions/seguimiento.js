@@ -5,16 +5,18 @@
 import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { randomBytes } from "node:crypto";
-import { vistaPublica, validarEncuesta, paginaSeguimiento, paginaNoEncontrada, tokenValido } from "./lib/seguimiento.js";
+import { vistaPublica, validarEncuesta, paginaSeguimiento, paginaNoEncontrada, tokenValido, estadoJSON } from "./lib/seguimiento.js";
 
 const db = () => getFirestore();
 const ahora = () => FieldValue.serverTimestamp();
-const HEADERS = {
-  "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
-  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-  "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff",
-};
-const enviar = (res, status, html) => { res.set(HEADERS); res.status(status).send(html); };
+/* Token público de Mapbox (pk.…) en functions/.env.<proyecto>; sin token la página sale sin mapa. */
+const MAPBOX = () => String(process.env.MAPBOX_TOKEN || "");
+const csp = nonce => ["default-src 'none'", `script-src 'nonce-${nonce}' https://api.mapbox.com`, "style-src 'unsafe-inline' https://api.mapbox.com",
+  "img-src data: blob: https://*.mapbox.com", "connect-src 'self' https://*.mapbox.com https://events.mapbox.com", "worker-src blob:", "child-src blob:",
+  "font-src https://api.mapbox.com", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'"].join("; ");
+const HEADERS = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" };
+const enviar = (res, status, html, nonce = randomBytes(16).toString("base64")) => {
+  res.set({ ...HEADERS, "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": csp(nonce) }); res.status(status).send(html); };
 
 async function servicioPorToken(t){
   if(!tokenValido(t)) return null;
@@ -29,14 +31,22 @@ export const seguimiento = onRequest({ region: "us-central1", maxInstances: 5, m
     if(!["GET", "POST"].includes(req.method)) return enviar(res, 405, paginaNoEncontrada());
     const doc = await servicioPorToken(t);
     if(!doc) return enviar(res, 404, paginaNoEncontrada());
+    /* Vista con mapa en vivo y avisos: paradas, última ubicación del chofer de ESTE servicio y bitácora. */
     const leerVista = async (ref) => {
       const s = (await ref.get()).data();
-      const paradas = (await ref.collection("paradas").orderBy("orden").get()).docs.map(d => d.data());
-      return vistaPublica(s, paradas);
+      const [ps, evs, u] = await Promise.all([ref.collection("paradas").orderBy("orden").get(), ref.collection("eventos").orderBy("ts", "desc").limit(40).get(),
+        s.choferId ? db().doc("ubicaciones/" + s.choferId).get() : Promise.resolve(null)]);
+      return vistaPublica(s, ps.docs.map(d => ({ id: d.id, ...d.data() })), { servicioId: ref.id, ahoraMs: Date.now(),
+        ubicacion: u?.exists ? u.data() : null, eventos: evs.docs.map(d => ({ id: d.id, ...d.data() })) });
     };
+    const pagina = (v, opc = {}) => { const nonce = randomBytes(16).toString("base64"); return [paginaSeguimiento(v, { ...opc, nonce, mapboxToken: MAPBOX() }), nonce]; };
+    if(req.method === "GET" && req.query.formato === "json"){
+      res.set({ ...HEADERS, "Content-Type": "application/json; charset=utf-8" });
+      return res.status(200).send(JSON.stringify(estadoJSON(await leerVista(doc.ref))));
+    }
     if(req.method === "POST"){
       const v = validarEncuesta(req.body || {});
-      if(!v.ok) return enviar(res, 400, paginaSeguimiento(await leerVista(doc.ref), { error: v.error }));
+      if(!v.ok){ const [h, n] = pagina(await leerVista(doc.ref), { error: v.error }); return enviar(res, 400, h, n); }
       await db().runTransaction(async tx => {
         const s = (await tx.get(doc.ref)).data();
         const vista = vistaPublica(s, []);
@@ -45,9 +55,9 @@ export const seguimiento = onRequest({ region: "us-central1", maxInstances: 5, m
         tx.update(doc.ref, { encuestaRespondida: true, encuestaCalificacion: v.calificacion });
         tx.set(doc.ref.collection("eventos").doc(), { tipo: "encuesta", calificacion: v.calificacion, actorUid: "cliente", actorNombre: "Cliente (link de seguimiento)", actorRol: "cliente", ts: ahora() });
       });
-      return enviar(res, 200, paginaSeguimiento(await leerVista(doc.ref), { gracias: true }));
+      const [h, n] = pagina(await leerVista(doc.ref), { gracias: true }); return enviar(res, 200, h, n);
     }
-    return enviar(res, 200, paginaSeguimiento(await leerVista(doc.ref)));
+    const [h, n] = pagina(await leerVista(doc.ref)); return enviar(res, 200, h, n);
   } catch(e){
     console.error("seguimiento", e);
     return enviar(res, 500, paginaNoEncontrada());

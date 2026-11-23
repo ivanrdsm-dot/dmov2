@@ -9,6 +9,24 @@ import { collection, onSnapshot, query, where, limit } from "firebase/firestore"
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, boton, caja, Chip } from "./uiBasico.jsx";
 import { coordenadaDeTexto, esEnlaceCortoMaps, buscarEnCatalogo, correoDeChofer, telefono10 } from "./lugares.ts";
+
+/* Manda al cliente su link privado de seguimiento (mapa en vivo). Abre WhatsApp con el mensaje listo; la oficina lo envía. */
+function BotonSeguimiento({ servicio, telefono = "", llamar, compacto = false }){
+  const [estado, setEstado] = useState("");
+  const mandar = async () => {
+    setEstado("…");
+    try {
+      const r = await llamar("oficinaLinkSeguimiento", { servicioId: servicio.id });
+      const url = `${window.location.origin}/s/${r.token}`, tel = telefono10(telefono);
+      const texto = `Hola, soy de D Movimiento. Aquí puedes ver tu envío ${servicio.folio || ""} en el mapa, en vivo; se actualiza solo y te avisa cada entrega:\n${url}`;
+      if(tel.length === 10){ window.open(`https://wa.me/52${tel}?text=${encodeURIComponent(texto)}`, "_blank", "noopener"); setEstado("✓ Abrí WhatsApp"); }
+      else { await navigator.clipboard?.writeText(url).catch(() => {}); setEstado("✓ Link copiado: pégalo al cliente"); }
+    } catch(e){ setEstado("No se pudo: " + mensajeError(e)); }
+  };
+  return <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+    <button onClick={mandar} style={{ ...boton(GREEN, !compacto), ...(compacto ? { padding: "5px 10px", minHeight: 30, fontSize: 12 } : {}) }}>📲 {compacto ? "Seguimiento" : "Mandar seguimiento al cliente"}</button>
+    {estado && <span style={{ fontSize: 12, color: estado.startsWith("No") ? ROSE : MUTED }}>{estado}</span>}</span>;
+}
 import { guardarLugares, datosServicio, crearServicioRuta, terminarAsignacion, sinUbicacion } from "./asignarRutaFlujo.js";
 
 const CDMX = [-99.1332, 19.4326];
@@ -116,7 +134,7 @@ function AccesoChofer({ chofer, llamar, esAdmin, enlace, setEnlace }){
 export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   const [choferes, setChoferes] = useState([]), [unidades, setUnidades] = useState([]), [cuentas, setCuentas] = useState([]), [lugares, setLugares] = useState([]);
   const [fecha, setFecha] = useState(hoyCDMX()), [hora, setHora] = useState(""), [choferId, setChoferId] = useState(""), [placa, setPlaca] = useState("");
-  const [cliente, setCliente] = useState(""), [indicaciones, setIndicaciones] = useState(""), [paradas, setParadas] = useState([]), [ordenar, setOrdenar] = useState(true);
+  const [cliente, setCliente] = useState(""), [telCliente, setTelCliente] = useState(""), [indicaciones, setIndicaciones] = useState(""), [paradas, setParadas] = useState([]), [ordenar, setOrdenar] = useState(true);
   const [ocupado, setOcupado] = useState(""), [error, setError] = useState(""), [listo, setListo] = useState(null), [delDia, setDelDia] = useState([]);
   const [enlaces, setEnlaces] = useState({});           // enlace de acceso recién creado, por chofer (sobrevive a que llegue su authUid)
   const [pendiente, setPendiente] = useState(null);     // servicio ya creado al que le faltó armar la ruta o asignarse (para reintentar sin duplicar)
@@ -155,7 +173,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
       setOcupado("Guardando lugares…");
       const conId = await guardarLugares(db, usuario, paradas, lugares);
       setOcupado("Creando el servicio…");
-      const datos = datosServicio({ usuario, cliente, fecha, hora, paradas: conId, placa, chofer, indicaciones });
+      const datos = datosServicio({ usuario, cliente, fecha, hora, paradas: conId, placa, chofer, indicaciones, contactoCliente: telCliente });
       const { id, folio } = await crearServicioRuta(db, usuario, datos);
       const p = { id, folio, datos, choferId, choferNombre: chofer.nombre, ordenar };
       setPendiente(p);
@@ -168,7 +186,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
     setOcupado("Mandando la ruta al chofer…");
     await terminarAsignacion(db, usuario, llamar, p);
     setPendiente(null);
-    setListo({ folio: p.folio, chofer: p.choferNombre });
+    setListo({ folio: p.folio, chofer: p.choferNombre, id: p.id, tel: p.datos?.solicitanteContacto || "" });
     setParadas([]); setIndicaciones(""); setHora("");
   };
   const reintentar = async () => {
@@ -183,7 +201,8 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
         <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 28, color: TEXT, margin: 0 }}>Asignar ruta</h1>
         <p style={{ color: MUTED, fontSize: 14, margin: "4px 0 16px" }}>Llena los 4 pasos y toca <b>Mandar al chofer</b>. Le aparece solo en su celular.</p>
         {listo && <div style={{ background: GREEN + "12", border: "1.5px solid " + GREEN, borderRadius: 14, padding: 14, marginBottom: 14, fontSize: 15 }}>
-          ✓ Ruta <b style={{ fontFamily: MONO }}>{listo.folio}</b> mandada a <b>{listo.chofer}</b>. Ya la ve en su celular. Síguelo en <button onClick={() => onVer?.("despacho")} style={{ background: "none", border: "none", color: BLUE, fontWeight: 800, cursor: "pointer", fontSize: 15, padding: 0 }}>En vivo</button>.</div>}
+          ✓ Ruta <b style={{ fontFamily: MONO }}>{listo.folio}</b> mandada a <b>{listo.chofer}</b>. Ya la ve en su celular. Síguelo en <button onClick={() => onVer?.("despacho")} style={{ background: "none", border: "none", color: BLUE, fontWeight: 800, cursor: "pointer", fontSize: 15, padding: 0 }}>En vivo</button>.
+          <div style={{ marginTop: 10 }}><BotonSeguimiento servicio={{ id: listo.id, folio: listo.folio }} telefono={listo.tel} llamar={llamar}/></div></div>}
 
         <Paso n={1} titulo="¿Quién maneja y en qué camioneta?">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
@@ -208,6 +227,8 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
         <Paso n={2} titulo="¿Para qué cliente?">
           <input style={caja} list="ar-clientes" value={cliente} onChange={e => setCliente(e.target.value)} placeholder="Escribe o elige el cliente"/>
           <datalist id="ar-clientes">{nombresClientes.map(n => <option key={n} value={n}/>)}</datalist>
+          <input style={{ ...caja, marginTop: 8 }} inputMode="tel" value={telCliente} onChange={e => setTelCliente(e.target.value)}
+            placeholder="WhatsApp de tu contacto en el cliente (opcional): le mandas su mapa en vivo"/>
         </Paso>
 
         <Paso n={3} titulo="¿A dónde va?">
@@ -256,7 +277,8 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
           {delDia.length === 0 ? <div style={{ color: MUTED, fontSize: 14 }}>Todavía no hay rutas asignadas ese día.</div>
             : delDia.map(s => <div key={s.id} style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 12, padding: "10px 14px", marginBottom: 8, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
-                <span style={{ marginLeft: "auto" }}><Chip color={s.estado === "En ruta" ? BLUE : s.estado === "Entregada" ? GREEN : A}>{s.estado === "Asignada" ? "Por salir" : s.estado}</Chip></span></div>)}
+                <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center" }}><BotonSeguimiento servicio={s} telefono={s.solicitanteContacto} llamar={llamar} compacto/>
+                  <Chip color={s.estado === "En ruta" ? BLUE : s.estado === "Entregada" ? GREEN : A}>{s.estado === "Asignada" ? "Por salir" : s.estado}</Chip></span></div>)}
         </div>
       </div>
     </div>);

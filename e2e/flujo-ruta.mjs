@@ -36,7 +36,7 @@ function cliente(nombre){
 const TEL = "5512345678", CLAVE_CHOFER = "clave-chofer-123";
 /* Tres lugares a ~800 m uno del otro (CDMX): una recolección y dos entregas. */
 const BODEGA = { lat: 19.4000, lng: -99.1500 }, TIENDA_A = { lat: 19.4072, lng: -99.1500 }, TIENDA_B = { lat: 19.4144, lng: -99.1500 };
-let oficina, ilse, chofer, servicioId, paradas;
+let oficina, ilse, chofer, servicioId, paradas, seguimientoToken;
 
 before(async () => {
   adm = admin.initializeApp({ projectId: PROYECTO });
@@ -125,6 +125,19 @@ test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con pro
     const pos = [...(i === 0 ? [{ lat: 19.45, lng: -99.20, tMs: tiempos[i] - 30000, precisionM: 2500 }] : []), { ...sitios[i], tMs: tiempos[i], precisionM: 10 }];
     const r = await c("choferSubirPosiciones", { dispositivoId: D, servicioId, posiciones: pos });
     assert.equal(r.aceptadas, pos.length);
+    if(i === 1){
+      /* El CLIENTE, con su link privado, ve la camioneta en el mapa a medio camino y sus avisos. */
+      const { token } = await ilse.llamar("oficinaLinkSeguimiento", { servicioId });
+      const j = await (await fetch(`http://127.0.0.1:5011/${PROYECTO}/us-central1/seguimiento?t=${token}&formato=json`)).json();
+      assert.ok(j.mapa.vehiculo, "el cliente ve la camioneta");
+      assert.equal(j.mapa.puntos.length, 2);                                  // solo sus 2 entregas, no la bodega
+      assert.match(j.vivo, /va en camino/);
+      assert.ok(j.avisos.some(a => /salió a ruta/.test(a.texto)));
+      assert.ok(!JSON.stringify(j).includes("ABC1234"), "sin placas");
+      const html = await (await fetch(`http://127.0.0.1:5011/${PROYECTO}/us-central1/seguimiento?t=${token}`)).text();
+      assert.match(html, /Tu servicio SRV-/);
+      seguimientoToken = token;
+    }
     const foto = `evidencias/ch1/${servicioId}/${p.id}_${Date.now()}_1.jpg`;
     await uploadBytes(ref(chofer.st, foto), JPG, { contentType: "image/jpeg" });
     const problema = p.nombre === "Tienda B" ? "Cliente ausente" : "";
@@ -138,6 +151,10 @@ test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con pro
   const alertas = (await admin.firestore().collection("alertas").get()).docs.map(d => d.data().type);
   assert.ok(!alertas.includes("velocidad_imposible"), "no debe haber falsas alertas de salto");
   assert.ok(alertas.includes("incidencia"));
+  // Ya entregado: el cliente deja de ver la camioneta y ve el aviso de la parada con problema.
+  const j = await (await fetch(`http://127.0.0.1:5011/${PROYECTO}/us-central1/seguimiento?t=${seguimientoToken}&formato=json`)).json();
+  assert.equal(j.mapa.vehiculo, null); assert.equal(j.final, true);
+  assert.ok(j.avisos.some(a => /Cliente ausente/.test(a.texto)));
 });
 
 test("7 · la oficina lo ve en vivo y el chofer termina su día", async () => {

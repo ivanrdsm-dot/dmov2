@@ -19,3 +19,6 @@ serviceAccount.json
 
 # caché de firebase deploy (hosting)
 .firebase/
+
+# variables de las Cloud Functions por proyecto (token público de Mapbox, etc.)
+functions/.env*
