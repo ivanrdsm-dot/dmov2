@@ -13,7 +13,7 @@ const ahora = () => FieldValue.serverTimestamp();
 /* Token público de Mapbox (pk.…) en functions/.env.<proyecto>; sin token la página sale sin mapa. */
 const MAPBOX = () => String(process.env.MAPBOX_TOKEN || "");
 const VAPID_PUBLICA = () => String(process.env.VAPID_PUBLIC_KEY || "");
-const csp = nonce => ["default-src 'none'", `script-src 'nonce-${nonce}' https://api.mapbox.com`, "style-src 'unsafe-inline' https://api.mapbox.com",
+const csp = nonce => ["default-src 'none'", `script-src 'nonce-${nonce}' https://unpkg.com`, "style-src 'unsafe-inline' https://unpkg.com",
   "img-src 'self' data: blob: https://*.mapbox.com", "connect-src 'self' https://*.mapbox.com https://events.mapbox.com", "worker-src 'self' blob:", "child-src blob:", "manifest-src 'self'",
   "font-src https://api.mapbox.com", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'"].join("; ");
 const HEADERS = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" };

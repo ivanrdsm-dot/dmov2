@@ -15,7 +15,7 @@ import FirmaPad from "./FirmaPad.jsx";
 const LETRA = "system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
 const AZUL = "#042552", NARANJA = "#F27B13", VERDE = "#059669", ROJO = "#dc2626", GRIS = "#5b6b80", FONDO = "#f1f4fb";
 const INCIDENCIAS = ["Cliente ausente", "Entrega rechazada", "Entrega parcial", "Faltantes", "Daños", "Devolución al origen"];
-const ENVIO_MS = 30000;
+const ENVIO_MS = 15000;   // cada 15 s: el cliente ve la camioneta casi en tiempo real
 
 const fechaCDMX = (ms = Date.now()) => new Date(ms - 6 * 3600000).toISOString().slice(0, 10);
 const mensaje = e => String(e?.message || "No se pudo. Intenta otra vez.").replace(/^(functions\/[a-z-]+:?\s*|Firebase:\s*)/i, "")
