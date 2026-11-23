@@ -123,3 +123,6 @@ export { seguimiento, oficinaLinkSeguimiento } from "./seguimiento.js";
 
 /* Fase 6 · el estado de la factura se refleja en su servicio */
 export { reflejarFacturaEnServicio } from "./facturas.js";
+
+/* Permisos dentro de la cuenta (custom claims) para Storage y la app */
+export { permisosOficina, permisosChofer } from "./permisos.js";

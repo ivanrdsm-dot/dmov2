@@ -1,9 +1,13 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    /* Permisos dentro de la cuenta (claims que pone el servidor): Storage no siempre tiene permiso de
+       consultar Firestore en producción, así que primero se revisa la cuenta y la consulta queda de respaldo. */
     function fiscalOffice() {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.auth.token.get('admin', false) == true
+        || request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous'
         && firestore.exists(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid)).data.activo == true
         && firestore.get(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid)).data.rol == 'admin';
@@ -33,6 +37,8 @@ service firebase.storage {
     function oficina() {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.auth.token.get('oficina', false) == true
+        || request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous'
         && firestore.exists(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/dmov_usuarios/$(request.auth.uid)).data.activo == true;
     }
@@ -41,6 +47,8 @@ service firebase.storage {
     function choferDueno(choferId) {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider != 'anonymous'
+        && request.auth.token.get('choferId', '') == choferId
+        || request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous'
         && firestore.exists(/databases/(default)/documents/choferes_auth/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/choferes_auth/$(request.auth.uid)).data.choferId == choferId;
     }

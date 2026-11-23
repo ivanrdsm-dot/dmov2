@@ -14925,6 +14925,8 @@ export default function App(){
       // (La app de chofer y el tracking público viven en componentes aparte:
       // el chofer hace su propia auth anónima y el tracking usa reglas públicas.)
       setAuthUser(u||null);
+      /* Token nuevo al entrar: trae los permisos de la cuenta (oficina/admin) para ver fotos y archivos. */
+      if(u&&!u.isAnonymous) u.getIdToken(true).catch(()=>{});
     });
     return()=>unsub();
   },[]);

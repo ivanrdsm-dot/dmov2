@@ -8,6 +8,7 @@ import { getAuth } from "firebase-admin/auth";
 import { validarLote, coordenadaValida, RADIO_GEOCERCA_DEFAULT_M } from "./lib/geo.js";
 import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA } from "./lib/paradas.js";
 import { ordenarParadas } from "./lib/rutas.js";
+import { fusionarClaims } from "./permisos.js";
 
 const OPC = { region: "us-central1", maxInstances: 5, memory: "256MiB", timeoutSeconds: 30 };
 const db = () => getFirestore();
@@ -239,6 +240,8 @@ export const oficinaVincularChofer = onCall(OPC, async req => {
   lote.set(db().doc("choferes_auth/" + usuario.uid), { choferId, correo, ligadoPor: of.uid, ligadoEn: ahora() });
   lote.update(ref, { authUid: usuario.uid, correoApp: correo, activo: true });
   await lote.commit();
+  /* El permiso de subir sus fotos va dentro de su cuenta (no depende de que Storage lea Firestore). */
+  await fusionarClaims(usuario.uid, { choferId });
   /* Al poner su contraseña, el botón "Continuar" lo lleva a la app del chofer; la página sale en español. */
   let enlace;
   const origen = String(req.rawRequest?.headers?.origin || "");

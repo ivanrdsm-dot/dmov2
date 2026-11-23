@@ -266,7 +266,8 @@ export default function ChoferWeb({ db, auth, app }){
     if(!usuario) return;
     if(usuario.isAnonymous || !usuario.email){ setErrorCuenta("Esta sesión no es de chofer."); return; }
     llamar("choferRegistrarDispositivo", { modelo: navigator.userAgent.slice(0, 80) })
-      .then(r => setChofer({ id: r.choferId, nombre: r.nombre }))
+      /* Token nuevo: trae el permiso de subir sus fotos (choferId dentro de la cuenta). */
+      .then(async r => { await usuario.getIdToken(true).catch(() => {}); setChofer({ id: r.choferId, nombre: r.nombre }); })
       .catch(e => setErrorCuenta(mensaje(e)));
   }, [usuario, llamar]);
 
