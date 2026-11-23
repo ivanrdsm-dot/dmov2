@@ -22,7 +22,7 @@ const hora = (ms: unknown): string => { const n = Number(ms); if(!Number.isFinit
 export const CAMPOS_INTERNOS = ["precioPropuesto", "costoInterno", "margen", "viaticos", "comisionPct", "proveedor", "notas"];
 
 export function datosHojaEntrega(s: Servicio, paradas: ParadaCerrada[]): HojaEntrega {
-  const orden = [...(paradas ?? [])].sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));
+  const orden = [...(paradas ?? [])].filter(p => p.estado !== "Quitada").sort((a, b) => (a.orden ?? 0) - (b.orden ?? 0));   // las quitadas por la oficina no salen
   const pendientes: string[] = [];
   const cerradas = orden.filter(p => p.estado === "Entregada" || p.estado === "Incidencia");
   if(orden.length === 0) pendientes.push("El servicio no tiene paradas registradas");

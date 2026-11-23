@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { initializeApp, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SA = join(ROOT, "serviceAccount.json");
@@ -22,7 +23,7 @@ if(!existsSync(SA)){
   process.exit(1);
 }
 try {
-  initializeApp({ credential: cert(JSON.parse(readFileSync(SA, "utf8"))) });
+  initializeApp({ credential: cert(JSON.parse(readFileSync(SA, "utf8"))), storageBucket: "salesflow-crm-13c4a.firebasestorage.app" });
   const db = getFirestore();
   const d = new Date(), p = n => String(n).padStart(2, "0");
   const hoy = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;   // fecha local, no UTC
@@ -42,9 +43,30 @@ try {
   const ev = await db.collectionGroup("eventos").get();
   writeFileSync(join(dir, "_eventos.json"), JSON.stringify(ev.docs.map(x => ({ ruta: x.ref.path, ...limpio(x.data()) })), null, 1));
   resumen["*/eventos"] = ev.size; total += ev.size;
+  /* Paradas (con la evidencia de cada entrega) y costos de cada servicio. */
+  for(const sub of ["paradas", "costos"]){
+    const g = await db.collectionGroup(sub).get();
+    writeFileSync(join(dir, `_${sub}.json`), JSON.stringify(g.docs.map(x => ({ ruta: x.ref.path, ...limpio(x.data()) })), null, 1));
+    resumen["*/" + sub] = g.size; total += g.size;
+  }
+  /* Fotos de evidencia y de inicio de día: se acumulan en backups/fotos/ (nunca cambian ni se borran);
+     cada noche solo se bajan las nuevas. */
+  let fotosNuevas = 0, fotosTotal = 0;
+  for(const prefijo of ["evidencias/", "jornadas/"]){
+    const [archivos] = await getStorage().bucket().getFiles({ prefix: prefijo });
+    for(const f of archivos){
+      fotosTotal++;
+      const local = join(DESTINO, "fotos", f.name);
+      if(existsSync(local)) continue;
+      mkdirSync(dirname(local), { recursive: true });
+      await f.download({ destination: local });
+      fotosNuevas++;
+    }
+  }
+  resumen["fotos (acumuladas)"] = fotosTotal;
 
   writeFileSync(join(dir, "_resumen.json"), JSON.stringify({ fecha: hoy, generado: marca(), totalDocs: total, colecciones: resumen }, null, 2));
-  console.log(`[${marca()}] Respaldo ${hoy}: ${total} documentos en ${Object.keys(resumen).length} colecciones`);
+  console.log(`[${marca()}] Respaldo ${hoy}: ${total} documentos en ${Object.keys(resumen).length} colecciones · fotos: ${fotosNuevas} nuevas, ${fotosTotal} en total`);
 
   const dias = readdirSync(DESTINO).filter(x => /^\d{4}-\d{2}-\d{2}$/.test(x)).sort();
   while(dias.length > 30){ const viejo = dias.shift(); rmSync(join(DESTINO, viejo), { recursive: true, force: true }); console.log(`  retención: se borró el respaldo ${viejo}`); }

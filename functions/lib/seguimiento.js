@@ -12,7 +12,8 @@ const ms = v => (v && typeof v.toMillis === "function") ? v.toMillis() : (typeof
 const TOKEN_RE = /^[A-Za-z0-9_-]{32,64}$/;
 export const tokenValido = t => TOKEN_RE.test(String(t ?? ""));
 
-export const UBICACION_MAX_MIN = 20;
+export const UBICACION_MAX_MIN = 20;        // más vieja que esto ya no cuenta como "en vivo"
+export const ULTIMA_UBICACION_MAX_H = 12;   // hasta aquí se sigue mostrando la última ubicación conocida ("hace X min")
 const r5 = x => Math.round(Number(x) * 1e5) / 1e5;
 const coordOk = p => Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lng)) && !(Number(p.lat) === 0 && Number(p.lng) === 0);
 function km(a, b){ const R = 6371, r = x => x * Math.PI / 180, dLat = r(b.lat - a.lat), dLng = r(b.lng - a.lng);
@@ -44,7 +45,7 @@ export function vistaPublica(s, paradas = [], extra = {}){
   const etapa = cancelado ? -1 : (ETAPA_DE_ESTADO[s.estado] ?? 0);
   const ts = s.estadoTs || {};
   const horaEtapa = [ms(ts.Solicitud) ?? ms(s.creadoEn), ms(ts.Confirmada), ms(ts.Asignada), ms(ts["En ruta"]), ms(ts.Entregada)];
-  const entregas = (paradas || []).filter(p => p.tipo !== "carga").map(p => ({
+  const entregas = (paradas || []).filter(p => p.tipo !== "carga" && p.estado !== "Quitada").map(p => ({
     lugar: txt(p.nombre, 80) || "Entrega",
     estado: p.estado === "Entregada" ? "Entregado" : p.estado === "Incidencia" ? "Con incidencia" : "Pendiente",
     hora: ms(p.cerradaEn),
@@ -53,11 +54,13 @@ export function vistaPublica(s, paradas = [], extra = {}){
   const destinos = entregas.length ? entregas.map(e => e.lugar) : (s.destinos || []).map(d => txt(d.nombre, 80) || "Entrega").filter(Boolean);
   /* Mapa: sus puntos de entrega; la camioneta solo en camino, con SU servicio y ubicación reciente. */
   const ahoraMs = Number(extra.ahoraMs) || Date.now();
-  const puntos = (paradas || []).filter(p => p.tipo !== "carga" && coordOk(p)).map(p => ({ lat: r5(p.lat), lng: r5(p.lng), lugar: txt(p.nombre, 80) || "Entrega",
+  const puntos = (paradas || []).filter(p => p.tipo !== "carga" && p.estado !== "Quitada" && coordOk(p)).map(p => ({ lat: r5(p.lat), lng: r5(p.lng), lugar: txt(p.nombre, 80) || "Entrega",
     estado: p.estado === "Entregada" ? "Entregado" : p.estado === "Incidencia" ? "Con incidencia" : "Pendiente" }));
   const u = extra.ubicacion;
   const vehiculo = !cancelado && etapa === 3 && u && coordOk(u) && u.confiable !== false && extra.servicioId && u.servicioId === extra.servicioId
-    && Number(u.tMs) > 0 && ahoraMs - Number(u.tMs) <= UBICACION_MAX_MIN * 60000 ? { lat: r5(u.lat), lng: r5(u.lng), tMs: Number(u.tMs) } : null;
+    && Number(u.tMs) > 0 && ahoraMs - Number(u.tMs) <= ULTIMA_UBICACION_MAX_H * 3600000
+    ? { lat: r5(u.lat), lng: r5(u.lng), tMs: Number(u.tMs), minutos: Math.max(0, Math.round((ahoraMs - Number(u.tMs)) / 60000)),
+        reciente: ahoraMs - Number(u.tMs) <= UBICACION_MAX_MIN * 60000 && ahoraMs - Number(u.tMs) <= 3 * 60000 } : null;
   const siguiente = puntos.find(p => p.estado === "Pendiente") || null;
   const distanciaKm = vehiculo && siguiente ? Math.round(km(vehiculo, siguiente) * 10) / 10 : null;
   return {
@@ -79,6 +82,7 @@ export function validarEncuesta(b){
   return { ok: true, calificacion: cal, comentario: txt(b?.comentario, 600) };
 }
 
+const textoMinutos = n => n < 60 ? `${n} min` : `${Math.floor(n / 60)} h${n % 60 ? " " + (n % 60) + " min" : ""}`;
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const hora = t => t ? new Date(t).toLocaleString("es-MX", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City" }) : "";
 
@@ -89,6 +93,7 @@ export function seccionesHTML(v){
     : v.etapa >= 4 ? `<div class="vivo verde">🎉 <div><b>¡Entregado!</b><small>${v.entregadas} de ${v.entregas.length || v.entregadas} entregas listas</small></div></div>`
     : v.etapa === 3 ? `<div class="vivo azul"><span class="pulso"></span><div><b>Tu envío va en camino</b><small>${m.vehiculo
         ? (m.siguiente ? `Próxima entrega: ${esc(m.siguiente)}${m.distanciaKm != null ? ` · a ${esc(m.distanciaKm)} km` : ""}` : "Siguiendo la ruta")
+          + (m.vehiculo.reciente ? "" : `<br>Última ubicación conocida: hace ${esc(textoMinutos(m.vehiculo.minutos))}. Se actualiza sola en cuanto la unidad tenga señal.`)
         : "Ubicación en camino de actualizarse…"}</small></div></div>`
     : v.etapa === 2 ? `<div class="vivo naranja">🚚 <div><b>Unidad asignada</b><small>${v.chofer ? `Te atiende ${esc(v.chofer)}. ` : ""}Pronto sale a ruta.</small></div></div>`
     : `<div class="vivo gris">📋 <div><b>Recibimos tu pedido</b><small>Te avisamos aquí cuando salga a ruta.</small></div></div>`;
@@ -142,7 +147,7 @@ textarea{width:100%;min-height:70px;border:1.5px solid var(--borde);border-radiu
 button{margin-top:10px;background:var(--naranja);color:#fff;border:0;border-radius:12px;padding:12px 18px;font-weight:800;font-size:15px;width:100%}
 .err{color:#be123c}.card.ok{background:#ecfdf5}footer{text-align:center;color:var(--gris);font-size:12px;padding:10px 0 24px}
 #toast{position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));max-width:600px;margin:0 auto;background:var(--azul);color:#fff;border-radius:14px;padding:14px 16px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.25);transform:translateY(-140%);transition:transform .3s;z-index:3001}
-#toast.si{transform:none}.pedir{position:fixed;inset:0;background:rgba(4,37,82,.55);z-index:3000;display:flex;align-items:flex-end;justify-content:center}.pedir[hidden]{display:none}.hoja{background:#fff;border-radius:24px 24px 0 0;padding:22px 20px calc(22px + env(safe-area-inset-bottom));max-width:560px;width:100%;text-align:center;animation:sube .3s ease both}@keyframes sube{from{transform:translateY(100%)}to{transform:none}}.secundario{background:#fff!important;color:#607080!important;border:2px solid #e3e8f0!important}.leaflet-container{font:inherit;background:#dfe7f2}.leaflet-div-icon{background:none;border:0}.ios{margin-top:10px;background:#fff7ed;border-radius:12px;padding:10px 12px;font-size:13px;color:#7c2d12;line-height:1.4}.camion{width:40px;height:40px;border-radius:50%;background:var(--naranja);border:3px solid #fff;display:grid;place-items:center;font-size:20px;box-shadow:0 4px 14px rgba(242,123,19,.6)}
+#toast.si{transform:none}.pedir{position:fixed;inset:0;background:rgba(4,37,82,.55);z-index:3000;display:flex;align-items:flex-end;justify-content:center}.pedir[hidden]{display:none}.hoja{background:#fff;border-radius:24px 24px 0 0;padding:22px 20px calc(22px + env(safe-area-inset-bottom));max-width:560px;width:100%;text-align:center;animation:sube .3s ease both}@keyframes sube{from{transform:translateY(100%)}to{transform:none}}.secundario{background:#fff!important;color:#607080!important;border:2px solid #e3e8f0!important}.leaflet-container{font:inherit;background:#dfe7f2}.leaflet-div-icon{background:none;border:0}.ios{margin-top:10px;background:#fff7ed;border-radius:12px;padding:10px 12px;font-size:13px;color:#7c2d12;line-height:1.4}.camion{width:40px;height:40px;border-radius:50%;background:var(--naranja);border:3px solid #fff;display:grid;place-items:center;font-size:20px;box-shadow:0 4px 14px rgba(242,123,19,.6)}.camion.vieja{background:#94a3b8;box-shadow:0 4px 14px rgba(100,116,139,.5)}
 .pin{width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.25);display:grid;place-items:center}.pin i{display:block;transform:rotate(45deg);font-style:normal;color:#fff;font-weight:900;font-size:13px;line-height:1}
 </style></head><body><div id="toast"></div>
 <div id="pedir" class="pedir" hidden><div class="hoja"><div style="font-size:44px">🔔</div><h2 style="color:#042552;font-size:20px;text-transform:none;letter-spacing:0;margin:6px 0">¿Te avisamos cada novedad de tu envío?</h2>
@@ -169,7 +174,8 @@ ${encuesta}</main><footer>D Movimiento · Logística · Esta página se actualiz
   function pintar(m){if(!mapa||!m)return;capaPins.clearLayers();var b=[];
     (m.puntos||[]).forEach(function(p,i){var c=p.estado==="Entregado"?"#059669":p.estado==="Con incidencia"?"#c2410c":"#042552";
       L.marker([p.lat,p.lng],{icon:icono('<div class="pin" style="background:'+c+'"><i>'+(p.estado==="Entregado"?"✓":(i+1))+'</i></div>',30,30,15,32)}).bindPopup(p.lugar+" · "+p.estado).addTo(capaPins);b.push([p.lat,p.lng])});
-    if(m.vehiculo){var ll=[m.vehiculo.lat,m.vehiculo.lng];if(!camion)camion=L.marker(ll,{icon:icono('<div class="camion">🚚</div>',40,40,20,20),zIndexOffset:1000}).addTo(mapa);else moverCamion(ll);b.push(ll)}
+    if(m.vehiculo){var ll=[m.vehiculo.lat,m.vehiculo.lng],ic=icono('<div class="camion'+(m.vehiculo.reciente?'':' vieja')+'">🚚</div>',40,40,20,20);
+      if(!camion)camion=L.marker(ll,{icon:ic,zIndexOffset:1000}).addTo(mapa);else{camion.setIcon(ic);moverCamion(ll)}b.push(ll)}
     else if(camion){mapa.removeLayer(camion);camion=null}
     if(!encuadrado&&b.length){if(b.length===1)mapa.setView(b[0],15);else mapa.fitBounds(b,{padding:[40,40],maxZoom:15});encuadrado=true}}
   if(D.token){var s=document.createElement("script");s.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";s.nonce="${esc(nonce)}";

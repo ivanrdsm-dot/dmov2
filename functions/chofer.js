@@ -130,7 +130,7 @@ export const choferSubirPosiciones = onCall(OPC, async req => {
   if(ultima && servicio.seguimientoToken && servicio.estado === "En ruta"){
     try {
       const ps = (await db().collection(`servicios/${servicio.id}/paradas`).orderBy("orden").get()).docs;
-      const sig = ps.find(d => d.data().tipo !== "carga" && !["Entregada", "Incidencia"].includes(d.data().estado));
+      const sig = ps.find(d => d.data().tipo !== "carga" && !["Entregada", "Incidencia", "Quitada"].includes(d.data().estado));
       if(sig && !sig.data().avisoCercaEn && coordenadaValida({ lat: sig.data().lat, lng: sig.data().lng }) && distanciaM(ultima, { lat: sig.data().lat, lng: sig.data().lng }) < 1000){
         await db().runTransaction(async tx => {
           const p = await tx.get(sig.ref);
@@ -188,7 +188,7 @@ export const choferCerrarParada = onCall(OPC, async req => {
       distanciaAlCerrarM: v.distanciaM ?? null, cerradaPorExcepcion: v.porExcepcion === true, cerradaDiferida: diferida, cerradaEnEquipoMs: diferida ? cerradaMs : null });
     eventoServicio(tx, servicio.id, { tipo: incidencia ? "parada_incidencia" : "parada_entregada", paradaId, paradaNombre: parada.nombre || "", receptor: evidencia.receptor,
       incidencia, distanciaM: v.distanciaM ?? null, porExcepcion: v.porExcepcion === true, diferida, ...actorChofer(chofer) });
-    const pendientes = todas.docs.filter(d => d.id !== paradaId && !["Entregada", "Incidencia"].includes(d.data().estado)).length;
+    const pendientes = todas.docs.filter(d => d.id !== paradaId && !["Entregada", "Incidencia", "Quitada"].includes(d.data().estado)).length;
     /* Paradas con problema (contando esta): la ruta termina igual, pero queda marcado y se avisa si no se entregó nada. */
     const conProblema = todas.docs.filter(d => d.id !== paradaId && d.data().estado === "Incidencia").length + (incidencia ? 1 : 0);
     const entregadas = todas.docs.filter(d => d.id !== paradaId && d.data().estado === "Entregada").length + (incidencia ? 0 : 1);
@@ -278,6 +278,18 @@ export const oficinaLiberarDispositivo = onCall(OPC, async req => {
   return { ok: true };
 });
 
+/** Una parada a partir de un lugar del catálogo con su punto confirmado (o null si no sirve para ruta). */
+async function paradaDeCatalogo(p, orden){
+  const punto = txt(p.puntoId, 80) ? await db().doc("puntos_entrega/" + txt(p.puntoId, 80)).get() : null;
+  const d = punto?.exists ? punto.data() : null;
+  const coord = d ? { lat: Number(d.lat), lng: Number(d.lng) } : null;
+  if(!d || d.pinConfirmado !== true || d.activo === false || !coordenadaValida(coord)) return null;
+  const r = Number(d.radioM);
+  return { orden, tipo: p.tipo === "carga" ? "carga" : "entrega", puntoId: txt(p.puntoId, 80), nombre: txt(p.nombre || d.nombre, 200),
+    direccion: txt(p.direccion, 400) || txt(d.direccion, 400) || `${coord.lat}, ${coord.lng}`, contacto: txt(p.contacto, 120), telefono: txt(p.telefono, 30),
+    lat: coord.lat, lng: coord.lng, radioM: r >= 30 && r <= 2000 ? r : RADIO_GEOCERCA_DEFAULT_M, estado: "Pendiente" };
+}
+
 /** Arma la ruta del servicio: crea las paradas con la coordenada VERIFICADA del catálogo y asigna al chofer. */
 export const oficinaPrepararRuta = onCall(OPC, async req => {
   const of = await oficinaDe(req);
@@ -291,14 +303,9 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
   const lista = [...(servicio.origenes || []).map(p => ({ ...p, tipo: "carga" })), ...(servicio.destinos || []).map(p => ({ ...p, tipo: "entrega" }))].filter(p => txt(p.direccion) || txt(p.puntoId));
   const sinPin = [], paradas = [];
   for(const [i, p] of lista.entries()){
-    const punto = p.puntoId ? await db().doc("puntos_entrega/" + p.puntoId).get() : null;
-    const d = punto?.exists ? punto.data() : null;
-    const coord = d ? { lat: Number(d.lat), lng: Number(d.lng) } : null;
-    if(!d || d.pinConfirmado !== true || d.activo === false || !coordenadaValida(coord)){ sinPin.push(p.nombre || p.direccion); continue; }
-    const r = Number(d.radioM);
-    paradas.push({ orden: i + 1, tipo: p.tipo, puntoId: p.puntoId, nombre: txt(p.nombre || d.nombre, 200), direccion: txt(p.direccion, 400), contacto: txt(p.contacto, 120), telefono: txt(p.telefono, 30),
-      ...(txt(p.direccion) ? {} : { direccion: txt(d.direccion, 400) || `${coord.lat}, ${coord.lng}` }),
-      lat: coord.lat, lng: coord.lng, radioM: r >= 30 && r <= 2000 ? r : RADIO_GEOCERCA_DEFAULT_M, estado: "Pendiente" });
+    const parada = await paradaDeCatalogo(p, i + 1);
+    if(!parada){ sinPin.push(p.nombre || p.direccion); continue; }
+    paradas.push(parada);
   }
   if(sinPin.length > 0) throw falla("failed-precondition", "Estos puntos no tienen pin confirmado en el catálogo: " + sinPin.join("; "));
   if(paradas.length === 0) throw falla("failed-precondition", "El servicio no tiene orígenes ni destinos con dirección");
@@ -315,6 +322,39 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
     kmLineaRectaAntes: o.kmAntes, kmLineaRectaDespues: o.kmDespues, ...actorOficina(of), ts: ahora() });
   await lote.commit();
   return { ok: true, paradas: paradas.length, ordenada: ordenar, kmAntes: o.kmAntes, kmDespues: o.kmDespues };
+});
+
+/** Edita una ruta YA enviada: agrega paradas (lugares verificados) o quita pendientes.
+ *  Lo quitado no se borra: queda "Quitada", con quién y cuándo. El chofer lo ve al momento. */
+export const oficinaEditarRuta = onCall(OPC, async req => {
+  const of = await oficinaDe(req);
+  const servicioId = txt(req.data?.servicioId, 80);
+  if(!/^[A-Za-z0-9_-]{1,80}$/.test(servicioId)) throw falla("invalid-argument", "Servicio no válido");
+  const refS = db().doc("servicios/" + servicioId), s = await refS.get();
+  if(!s.exists) throw falla("not-found", "Servicio no encontrado");
+  if(!["Asignada", "En ruta"].includes(s.data().estado)) throw falla("failed-precondition", `El servicio está en "${s.data().estado}": su ruta ya no se puede cambiar`);
+  const quitar = [...new Set((Array.isArray(req.data?.quitar) ? req.data.quitar : []).map(x => txt(x, 80)).filter(Boolean))].slice(0, 50);
+  const agregar = (Array.isArray(req.data?.agregar) ? req.data.agregar : []).slice(0, 50);
+  if(!quitar.length && !agregar.length) throw falla("invalid-argument", "No hay cambios");
+  const existentes = (await refS.collection("paradas").get()).docs, porId = new Map(existentes.map(d => [d.id, d]));
+  for(const id of quitar){
+    const d = porId.get(id);
+    if(!d) throw falla("not-found", "Parada no encontrada");
+    if(d.data().estado !== "Pendiente") throw falla("failed-precondition", `"${d.data().nombre || id}" ya se cerró o se quitó: no se puede quitar`);
+  }
+  let orden = existentes.reduce((m, d) => Math.max(m, Number(d.data().orden) || 0), 0);
+  const nuevas = [], sinPin = [];
+  for(const p of agregar){ const n = await paradaDeCatalogo(p, ++orden); if(n) nuevas.push(n); else sinPin.push(txt(p.nombre || p.direccion, 80)); }
+  if(sinPin.length) throw falla("failed-precondition", "Estos lugares no están confirmados en el mapa: " + sinPin.join("; "));
+  const quedan = existentes.filter(d => d.data().estado === "Pendiente" && !quitar.includes(d.id)).length + nuevas.length;
+  if(quedan === 0) throw falla("failed-precondition", "La ruta se quedaría sin paradas pendientes. Si ya no va, cancela el servicio.");
+  const lote = db().batch();
+  for(const id of quitar) lote.update(porId.get(id).ref, { estado: "Quitada", quitadaEn: ahora(), quitadaPor: of.nombre });
+  for(const n of nuevas) lote.set(refS.collection("paradas").doc("p" + String(n.orden).padStart(2, "0")), { ...n, agregadaDespues: true, creadaEn: ahora() });
+  lote.update(refS, { actualizadoEn: ahora() });
+  lote.set(refS.collection("eventos").doc(), { tipo: "ruta_editada", agregadas: nuevas.map(n => n.nombre), quitadas: quitar.map(id => porId.get(id).data().nombre || id), ...actorOficina(of), ts: ahora() });
+  await lote.commit();
+  return { ok: true, agregadas: nuevas.length, quitadas: quitar.length };
 });
 
 /** Autoriza cerrar una parada fuera de geocerca. Solo oficina, siempre con motivo, siempre auditado. */
