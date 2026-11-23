@@ -1,0 +1,16 @@
+{
+  "name": "DMovimiento Choferes",
+  "short_name": "DMov Chofer",
+  "description": "Mis rutas, entregas y ubicación para la oficina.",
+  "start_url": "/chofer",
+  "scope": "/chofer",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#042552",
+  "theme_color": "#042552",
+  "lang": "es",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
