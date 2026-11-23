@@ -39,6 +39,14 @@ jobs:
       - name: Private fiscal archive and profile rules (isolated demo emulator)
         run: npm run test:security
 
+      # Día completo de punta a punta (asignar → chofer → entregas → En vivo) con las funciones reales
+      # en un Firebase de prueba ("demo-…": no toca producción).
+      - name: Flujo completo de una ruta (emuladores con funciones)
+        run: |
+          npm ci --prefix functions
+          echo "DMOV_CONECTOR_TOKEN=solo-pruebas" > functions/.secret.local
+          npm run test:e2e
+
       - name: Build de producción
         run: npm run build
 
