@@ -137,6 +137,13 @@ test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con pro
       const html = await (await fetch(`http://127.0.0.1:5011/${PROYECTO}/us-central1/seguimiento?t=${token}`)).text();
       assert.match(html, /Tu servicio SRV-/);
       seguimientoToken = token;
+      // El cliente activa "Avísame en este celular": su suscripción queda guardada (solo la escribe el servidor).
+      const sub = { endpoint: "https://push.example.invalid/dmov-prueba-123456", keys: { p256dh: "B".repeat(87), auth: "a".repeat(22) } };
+      const rs = await fetch(`http://127.0.0.1:5011/${PROYECTO}/us-central1/seguimiento?t=${token}&accion=suscribir`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sub) });
+      assert.equal(rs.status, 200);
+      assert.equal((await admin.firestore().collection(`servicios/${servicioId}/suscripciones`).where("activo", "==", true).get()).size, 1);
+      const malo = await fetch(`http://127.0.0.1:5011/${PROYECTO}/us-central1/seguimiento?t=${token}&accion=suscribir`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: "http://x" }) });
+      assert.equal(malo.status, 400);
     }
     const foto = `evidencias/ch1/${servicioId}/${p.id}_${Date.now()}_1.jpg`;
     await uploadBytes(ref(chofer.st, foto), JPG, { contentType: "image/jpeg" });
@@ -155,6 +162,10 @@ test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con pro
   const j = await (await fetch(`http://127.0.0.1:5011/${PROYECTO}/us-central1/seguimiento?t=${seguimientoToken}&formato=json`)).json();
   assert.equal(j.mapa.vehiculo, null); assert.equal(j.final, true);
   assert.ok(j.avisos.some(a => /Cliente ausente/.test(a.texto)));
+  // Con link de seguimiento activo, al acercarse a la Tienda B quedó UNA vez el aviso "está por llegar".
+  const llegando = (await admin.firestore().collection(`servicios/${servicioId}/eventos`).where("tipo", "==", "llegando").get()).docs.map(d => d.data().paradaNombre);
+  assert.deepEqual(llegando, ["Tienda B"]);
+  assert.ok(j.avisos.some(a => /por llegar a Tienda B/.test(a.texto)));
 });
 
 test("7 · la oficina lo ve en vivo y el chofer termina su día", async () => {

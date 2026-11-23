@@ -5,14 +5,16 @@
 import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { randomBytes } from "node:crypto";
-import { vistaPublica, validarEncuesta, paginaSeguimiento, paginaNoEncontrada, tokenValido, estadoJSON } from "./lib/seguimiento.js";
+import { vistaPublica, validarEncuesta, paginaSeguimiento, paginaNoEncontrada, tokenValido, estadoJSON, suscripcionValida, manifestCliente } from "./lib/seguimiento.js";
+import { createHash } from "node:crypto";
 
 const db = () => getFirestore();
 const ahora = () => FieldValue.serverTimestamp();
 /* Token público de Mapbox (pk.…) en functions/.env.<proyecto>; sin token la página sale sin mapa. */
 const MAPBOX = () => String(process.env.MAPBOX_TOKEN || "");
+const VAPID_PUBLICA = () => String(process.env.VAPID_PUBLIC_KEY || "");
 const csp = nonce => ["default-src 'none'", `script-src 'nonce-${nonce}' https://api.mapbox.com`, "style-src 'unsafe-inline' https://api.mapbox.com",
-  "img-src data: blob: https://*.mapbox.com", "connect-src 'self' https://*.mapbox.com https://events.mapbox.com", "worker-src blob:", "child-src blob:",
+  "img-src 'self' data: blob: https://*.mapbox.com", "connect-src 'self' https://*.mapbox.com https://events.mapbox.com", "worker-src 'self' blob:", "child-src blob:", "manifest-src 'self'",
   "font-src https://api.mapbox.com", "form-action 'self'", "frame-ancestors 'none'", "base-uri 'none'"].join("; ");
 const HEADERS = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" };
 const enviar = (res, status, html, nonce = randomBytes(16).toString("base64")) => {
@@ -39,7 +41,21 @@ export const seguimiento = onRequest({ region: "us-central1", maxInstances: 5, m
       return vistaPublica(s, ps.docs.map(d => ({ id: d.id, ...d.data() })), { servicioId: ref.id, ahoraMs: Date.now(),
         ubicacion: u?.exists ? u.data() : null, eventos: evs.docs.map(d => ({ id: d.id, ...d.data() })) });
     };
-    const pagina = (v, opc = {}) => { const nonce = randomBytes(16).toString("base64"); return [paginaSeguimiento(v, { ...opc, nonce, mapboxToken: MAPBOX() }), nonce]; };
+    const pagina = (v, opc = {}) => { const nonce = randomBytes(16).toString("base64"); return [paginaSeguimiento(v, { ...opc, nonce, mapboxToken: MAPBOX(), vapidPublica: VAPID_PUBLICA() }), nonce]; };
+    if(req.method === "GET" && req.query.formato === "manifest"){
+      res.set({ ...HEADERS, "Content-Type": "application/manifest+json; charset=utf-8" });
+      return res.status(200).send(JSON.stringify(manifestCliente(`/s/${t}`, doc.data().folio)));
+    }
+    /* El celular del cliente se suscribe a los avisos (Web Push). Máximo 20 celulares por servicio. */
+    if(req.method === "POST" && req.query.accion === "suscribir"){
+      const sub = suscripcionValida(req.body || {});
+      if(!sub) return res.status(400).json({ ok: false });
+      const col = doc.ref.collection("suscripciones"), id = createHash("sha256").update(sub.endpoint).digest("hex").slice(0, 40);
+      const activas = await col.where("activo", "==", true).limit(21).get();
+      if(activas.size >= 20 && !activas.docs.some(d => d.id === id)) return res.status(429).json({ ok: false });
+      await col.doc(id).set({ ...sub, activo: true, creadoEn: ahora(), agente: String(req.get("user-agent") || "").slice(0, 160) }, { merge: true });
+      return res.status(200).json({ ok: true });
+    }
     if(req.method === "GET" && req.query.formato === "json"){
       res.set({ ...HEADERS, "Content-Type": "application/json; charset=utf-8" });
       return res.status(200).send(JSON.stringify(estadoJSON(await leerVista(doc.ref))));

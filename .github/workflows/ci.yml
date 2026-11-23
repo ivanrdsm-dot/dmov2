@@ -44,7 +44,7 @@ jobs:
       - name: Flujo completo de una ruta (emuladores con funciones)
         run: |
           npm ci --prefix functions
-          echo "DMOV_CONECTOR_TOKEN=solo-pruebas" > functions/.secret.local
+          printf "DMOV_CONECTOR_TOKEN=solo-pruebas\nVAPID_PRIVATE_KEY=solo-pruebas\n" > functions/.secret.local
           npm run test:e2e
 
       - name: Build de producción
