@@ -119,7 +119,7 @@ export function paginaSeguimiento(v, { gracias = false, error = "", nonce = "", 
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow"><meta name="theme-color" content="#042552"><link rel="manifest" href="?formato=manifest">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Mi envío"><link rel="apple-touch-icon" href="/icon.svg"><title>Seguimiento ${esc(v.folio)} · D Movimiento</title>
-${conMapa ? `<link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v3.26.0/mapbox-gl.css">` : ""}
+${conMapa ? `<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">` : ""}
 <style>
 :root{--azul:#042552;--naranja:#F27B13;--gris:#607080;--borde:#e3e8f0;--verde:#059669}
 *{box-sizing:border-box}html,body{margin:0}body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#eef2f9;color:#0c1829;-webkit-font-smoothing:antialiased}
@@ -141,10 +141,13 @@ small{display:block;color:var(--gris);font-size:12px}.ent,.avisos{list-style:non
 textarea{width:100%;min-height:70px;border:1.5px solid var(--borde);border-radius:12px;padding:10px;font:inherit}
 button{margin-top:10px;background:var(--naranja);color:#fff;border:0;border-radius:12px;padding:12px 18px;font-weight:800;font-size:15px;width:100%}
 .err{color:#be123c}.card.ok{background:#ecfdf5}footer{text-align:center;color:var(--gris);font-size:12px;padding:10px 0 24px}
-#toast{position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));max-width:600px;margin:0 auto;background:var(--azul);color:#fff;border-radius:14px;padding:14px 16px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.25);transform:translateY(-140%);transition:transform .3s;z-index:9}
-#toast.si{transform:none}.ios{margin-top:10px;background:#fff7ed;border-radius:12px;padding:10px 12px;font-size:13px;color:#7c2d12;line-height:1.4}.camion{width:40px;height:40px;border-radius:50%;background:var(--naranja);border:3px solid #fff;display:grid;place-items:center;font-size:20px;box-shadow:0 4px 14px rgba(242,123,19,.6)}
+#toast{position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));max-width:600px;margin:0 auto;background:var(--azul);color:#fff;border-radius:14px;padding:14px 16px;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.25);transform:translateY(-140%);transition:transform .3s;z-index:3001}
+#toast.si{transform:none}.pedir{position:fixed;inset:0;background:rgba(4,37,82,.55);z-index:3000;display:flex;align-items:flex-end;justify-content:center}.pedir[hidden]{display:none}.hoja{background:#fff;border-radius:24px 24px 0 0;padding:22px 20px calc(22px + env(safe-area-inset-bottom));max-width:560px;width:100%;text-align:center;animation:sube .3s ease both}@keyframes sube{from{transform:translateY(100%)}to{transform:none}}.secundario{background:#fff!important;color:#607080!important;border:2px solid #e3e8f0!important}.leaflet-container{font:inherit;background:#dfe7f2}.leaflet-div-icon{background:none;border:0}.ios{margin-top:10px;background:#fff7ed;border-radius:12px;padding:10px 12px;font-size:13px;color:#7c2d12;line-height:1.4}.camion{width:40px;height:40px;border-radius:50%;background:var(--naranja);border:3px solid #fff;display:grid;place-items:center;font-size:20px;box-shadow:0 4px 14px rgba(242,123,19,.6)}
 .pin{width:30px;height:30px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.25);display:grid;place-items:center}.pin i{display:block;transform:rotate(45deg);font-style:normal;color:#fff;font-weight:900;font-size:13px;line-height:1}
 </style></head><body><div id="toast"></div>
+<div id="pedir" class="pedir" hidden><div class="hoja"><div style="font-size:44px">🔔</div><h2 style="color:#042552;font-size:20px;text-transform:none;letter-spacing:0;margin:6px 0">¿Te avisamos cada novedad de tu envío?</h2>
+<p id="pedir-txt">Te llega un aviso cuando salga a ruta, cuando esté por llegar y cuando se entregue, aunque cierres esta página.</p>
+<button id="pedir-si" type="button">Sí, avísame</button><button id="pedir-no" type="button" class="secundario">Ahora no</button></div></div>
 <header><div class="m">D Movimiento</div><h1>Tu servicio ${esc(v.folio)}</h1><p>${[v.cliente, v.fecha && "Fecha: " + v.fecha, v.hora].filter(Boolean).map(esc).join(" · ")}</p></header>
 <main>
 <div class="card"><div id="vivo">${sec.vivo}</div>${conMapa ? `<div id="mapa" aria-label="Mapa de tu envío"></div>` : ""}
@@ -155,45 +158,54 @@ button{margin-top:10px;background:var(--naranja);color:#fff;border:0;border-radi
 ${encuesta}</main><footer>D Movimiento · Logística · Esta página se actualiza sola</footer>
 <script nonce="${esc(nonce)}">
 (function(){
-  var D=${datos}, conocidos=new Set(D.avisos), ultima=Date.now(), mapa=null, camion=null, pins=[], encuadrado=false;
+  var D=${datos}, conocidos=new Set(D.avisos), ultima=Date.now(), mapa=null, camion=null, capaPins=null, encuadrado=false, anim=null;
   function $(id){return document.getElementById(id)}
   function toast(t){var e=$("toast");e.textContent=t;e.className="si";setTimeout(function(){e.className=""},6000)}
-  function avisar(t){toast(t);try{navigator.vibrate&&navigator.vibrate([120,60,120])}catch(_){}
-    try{if(window.Notification&&Notification.permission==="granted")new Notification("D Movimiento",{body:t,tag:"dmov-"+Date.now()})}catch(_){}}
-  function marcador(html){var d=document.createElement("div");d.innerHTML=html;return d.firstChild}
-  function pintar(m){if(!mapa||!m)return;
-    pins.forEach(function(p){p.remove()});pins=[];var b=new mapboxgl.LngLatBounds();
+  function avisar(t){toast(t);try{navigator.vibrate&&navigator.vibrate([120,60,120])}catch(_){}}
+  /* Mapa ligero (Leaflet + calles de Mapbox): carga rápido en cualquier celular. */
+  function icono(html,w,h,ax,ay){return L.divIcon({className:"",html:html,iconSize:[w,h],iconAnchor:[ax,ay]})}
+  function moverCamion(destino){if(!camion)return;var ini=camion.getLatLng(),t0=performance.now(),dur=1500;if(anim)cancelAnimationFrame(anim);
+    (function paso(t){var k=Math.min(1,(t-t0)/dur),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;camion.setLatLng([ini.lat+(destino[0]-ini.lat)*e,ini.lng+(destino[1]-ini.lng)*e]);if(k<1)anim=requestAnimationFrame(paso)})(t0)}
+  function pintar(m){if(!mapa||!m)return;capaPins.clearLayers();var b=[];
     (m.puntos||[]).forEach(function(p,i){var c=p.estado==="Entregado"?"#059669":p.estado==="Con incidencia"?"#c2410c":"#042552";
-      var el=marcador('<div><div class="pin" style="background:'+c+'"><i>'+(p.estado==="Entregado"?"✓":(i+1))+'</i></div></div>');
-      pins.push(new mapboxgl.Marker({element:el,anchor:"bottom"}).setLngLat([p.lng,p.lat]).setPopup(new mapboxgl.Popup({offset:18}).setText(p.lugar+" · "+p.estado)).addTo(mapa));b.extend([p.lng,p.lat]);});
-    if(m.vehiculo){var ll=[m.vehiculo.lng,m.vehiculo.lat];if(!camion)camion=new mapboxgl.Marker({element:marcador('<div class="camion">🚚</div>')}).setLngLat(ll).addTo(mapa);else camion.setLngLat(ll);b.extend(ll);}
-    else if(camion){camion.remove();camion=null}
-    if(!encuadrado&&!b.isEmpty()){mapa.fitBounds(b,{padding:60,maxZoom:15,duration:0});encuadrado=true}}
-  if(D.token&&window.mapboxgl===undefined){var s=document.createElement("script");s.src="https://api.mapbox.com/mapbox-gl-js/v3.26.0/mapbox-gl.js";s.nonce="${esc(nonce)}";
-    s.onload=function(){mapboxgl.accessToken=D.token;var c=(D.mapa.vehiculo||(D.mapa.puntos||[])[0]||{lat:19.4326,lng:-99.1332});
-      mapa=new mapboxgl.Map({container:"mapa",style:"mapbox://styles/mapbox/streets-v12",center:[c.lng,c.lat],zoom:12,cooperativeGestures:true,attributionControl:true,
-        locale:{"ScrollZoomBlocker.CtrlMessage":"Usa Ctrl + rueda para acercar","ScrollZoomBlocker.CmdMessage":"Usa ⌘ + rueda para acercar","TouchPanBlocker.Message":"Usa dos dedos para mover el mapa"}});
-      mapa.addControl(new mapboxgl.NavigationControl({showCompass:false}),"top-right");mapa.on("load",function(){pintar(D.mapa)});};document.head.appendChild(s);}
-  /* Avisos al celular aunque la página esté cerrada (Web Push). En iPhone solo funciona desde "Agregar a inicio". */
+      L.marker([p.lat,p.lng],{icon:icono('<div class="pin" style="background:'+c+'"><i>'+(p.estado==="Entregado"?"✓":(i+1))+'</i></div>',30,30,15,32)}).bindPopup(p.lugar+" · "+p.estado).addTo(capaPins);b.push([p.lat,p.lng])});
+    if(m.vehiculo){var ll=[m.vehiculo.lat,m.vehiculo.lng];if(!camion)camion=L.marker(ll,{icon:icono('<div class="camion">🚚</div>',40,40,20,20),zIndexOffset:1000}).addTo(mapa);else moverCamion(ll);b.push(ll)}
+    else if(camion){mapa.removeLayer(camion);camion=null}
+    if(!encuadrado&&b.length){if(b.length===1)mapa.setView(b[0],15);else mapa.fitBounds(b,{padding:[40,40],maxZoom:15});encuadrado=true}}
+  if(D.token){var s=document.createElement("script");s.src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";s.nonce="${esc(nonce)}";
+    s.onload=function(){var c=(D.mapa.vehiculo||(D.mapa.puntos||[])[0]||{lat:19.4326,lng:-99.1332});
+      mapa=L.map("mapa",{scrollWheelZoom:false,zoomControl:true,attributionControl:true}).setView([c.lat,c.lng],13);
+      L.tileLayer("https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/{z}/{x}/{y}{r}?access_token="+D.token,{tileSize:512,zoomOffset:-1,maxZoom:19,
+        attribution:'© <a href="https://www.mapbox.com/about/maps/">Mapbox</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(mapa);
+      capaPins=L.layerGroup().addTo(mapa);pintar(D.mapa)};document.head.appendChild(s)}
+  /* Avisos al celular aunque la página esté cerrada (Web Push). Se piden al abrir el link, con un solo toque. */
   var b=$("avisame"), ios=/iP(hone|ad|od)/.test(navigator.userAgent), app=window.navigator.standalone===true||matchMedia("(display-mode: standalone)").matches;
-  var puedePush="serviceWorker" in navigator&&"PushManager" in window&&window.Notification&&D.vapid;
+  var puedePush="serviceWorker" in navigator&&"PushManager" in window&&!!window.Notification&&!!D.vapid;
   function b64(s){var p="=".repeat((4-s.length%4)%4),r=atob((s+p).replace(/-/g,"+").replace(/_/g,"/")),o=new Uint8Array(r.length);for(var i=0;i<r.length;i++)o[i]=r.charCodeAt(i);return o}
   async function suscribir(){var reg=await navigator.serviceWorker.register("/sw-seguimiento.js",{scope:"/s/"});await navigator.serviceWorker.ready;
     var sub=await reg.pushManager.getSubscription()||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(D.vapid)});
     var r=await fetch(location.pathname+"?accion=suscribir",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(sub)});if(!r.ok)throw new Error("no")}
-  if(b){
-    if(ios&&!app&&!puedePush){b.style.display="none";$("ios").hidden=false}
-    else if(!window.Notification){b.style.display="none"}
-    else if(Notification.permission==="granted"){b.textContent="🔔 Avisos activados";if(puedePush)suscribir().catch(function(){})}
-    b.onclick=async function(){try{var p=await Notification.requestPermission();if(p!=="granted"){b.textContent="Avisos bloqueados en este navegador";return}
-      b.textContent="Activando…";if(puedePush)await suscribir();b.textContent="🔔 Avisos activados";toast("Listo: te avisamos en este celular cada novedad de tu envío.")}
-      catch(_){b.textContent="🔔 Avisos activados (con la página abierta)"}}}
+  async function activar(){try{var p=await Notification.requestPermission();if(p!=="granted"){if(b)b.textContent="Avisos bloqueados en este navegador";return false}
+      if(b)b.textContent="Activando…";if(puedePush)await suscribir();if(b)b.textContent="🔔 Avisos activados";toast("Listo: te avisamos en este celular cada novedad.");return true}
+    catch(_){if(b)b.textContent="🔔 Avisos activados (con la página abierta)";return false}}
+  function guardado(k){try{return localStorage.getItem(k)}catch(_){return null}}
+  function guardar(k,v){try{localStorage.setItem(k,v)}catch(_){}}
+  var clave="dm-avisos-"+location.pathname;
+  if(!D.final){
+    if(ios&&!app&&!puedePush){if(b)b.style.display="none";$("ios").hidden=false;
+      if(!guardado(clave)){$("pedir-txt").innerHTML="En iPhone: toca <b>Compartir</b> → <b>Agregar a inicio</b> y abre <b>Mi envío</b> desde tu pantalla. Ahí te pedimos permiso para avisarte.";$("pedir-si").textContent="Entendido";$("pedir-no").hidden=true;$("pedir").hidden=false}}
+    else if(window.Notification&&Notification.permission==="granted"){if(b)b.textContent="🔔 Avisos activados";if(puedePush)suscribir().catch(function(){})}
+    else if(window.Notification&&Notification.permission==="default"&&!guardado(clave)){$("pedir").hidden=false}
+  }
+  $("pedir-si").onclick=async function(){$("pedir").hidden=true;guardar(clave,"1");if(!(ios&&!app&&!puedePush))await activar()};
+  $("pedir-no").onclick=function(){$("pedir").hidden=true;guardar(clave,"no")};
+  if(b){if(!window.Notification)b.style.display="none";b.onclick=activar}
   setInterval(function(){var s=Math.round((Date.now()-ultima)/1000);$("actualizado").textContent="Actualizado hace "+(s<10?"un momento":s<60?s+" s":Math.round(s/60)+" min")},5000);
   async function refrescar(){if(D.final)return;try{var r=await fetch(location.pathname+"?formato=json",{cache:"no-store"});if(!r.ok)return;var j=await r.json();
     ["vivo","etapas","entregas"].forEach(function(k){if($(k)&&j[k]!=null)$(k).innerHTML=j[k]});if(j.avisosHTML&&$("avisos"))$("avisos").innerHTML=j.avisosHTML;
     (j.avisos||[]).slice().reverse().forEach(function(a){if(!conocidos.has(a.id)){conocidos.add(a.id);avisar(a.texto)}});
     D.mapa=j.mapa;pintar(j.mapa);ultima=Date.now();if(j.final){D.final=true;setTimeout(function(){location.reload()},1500)}}catch(_){}}
-  setInterval(refrescar,15000);document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible")refrescar()});
+  setInterval(refrescar,10000);document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible")refrescar()});
 })();
 </script></body></html>`;
 }

@@ -1,7 +1,8 @@
 /* SERVICIOS · alta manual (Fase 0). Todo servicio del grupo se registra aquí:
    quién lo pidió, por dónde llegó, qué se mueve, quién lo ejecuta y en qué estado va.
    No habla con Firestore: recibe un `store` (serviciosStore.js o uno en memoria). */
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+const Evidencias = lazy(() => import("./Evidencias.jsx"));
 import { A, BLUE, GREEN, ROSE, AMBER, VIOLET, MUTED, TEXT, BORDER, BD2, DISP, MONO, ahoraLocal, dinero, fechaHora, etiqueta, caja, rejilla, boton, Campo, Chip, Seccion, Dialogo } from "./uiBasico.jsx";
 import {
   ESTADOS_SERVICIO, CANALES_SOLICITUD, TIPOS_ASIGNACION,
@@ -270,6 +271,9 @@ function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = nul
   const [precio, setPrecio] = useState(s.precio || s.precioPropuesto || "");
   const [ocupado, setOcupado] = useState(false);
   useEffect(() => store.suscribirEventos(s.id, setEventos, () => setEventos([])), [s.id, store]);
+  /* Paradas con su evidencia (fotos y firma): se vuelven a leer cuando la bitácora cambia (cada cierre deja evento). */
+  const [paradas, setParadas] = useState(null);
+  useEffect(() => { store.leerParadas(s.id).then(setParadas).catch(() => setParadas([])); }, [s.id, store, eventos.length]);
   const v = validarServicio(s);
   const i = ESTADOS_SERVICIO.indexOf(s.estado);
   const opciones = [...ESTADOS_SERVICIO, "Cancelada"].filter(e => evaluarCambioEstado(s, e, { esAdmin }).permitido);
@@ -330,6 +334,10 @@ function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = nul
           {veredicto?.requiereMotivo && <div style={{ marginTop: 10 }}><Campo label="Motivo (queda en la bitácora) *" area value={motivo} onChange={e => setMotivo(e.target.value)}/></div>}
         </>}
       </Seccion>
+      {(s.rutaArmadaEn || (paradas && paradas.length > 0)) && <Seccion titulo="Entregas y evidencias">
+        {paradas === null ? <p style={{ fontSize: 13, color: MUTED, margin: 0 }}>Cargando…</p>
+          : <Suspense fallback={<p style={{ fontSize: 13, color: MUTED, margin: 0 }}>Cargando…</p>}><Evidencias paradas={paradas}/></Suspense>}
+      </Seccion>}
       <Seccion titulo="Bitácora">
         {eventos.length === 0 ? <div style={{ fontSize: 13, color: MUTED }}>Sin eventos.</div> : eventos.map(e => (
           <div key={e.id} style={{ fontSize: 13, padding: "7px 0", borderBottom: "1px solid " + BORDER }}>
