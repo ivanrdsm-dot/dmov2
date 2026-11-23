@@ -54,21 +54,90 @@ async function comprimir(file){
   return file;
 }
 
-const boton = (color, lleno = true) => ({ background: lleno ? color : "#fff", color: lleno ? "#fff" : color, border: "2px solid " + color, borderRadius: 14,
-  padding: "14px 16px", fontSize: 17, fontWeight: 800, width: "100%", cursor: "pointer", fontFamily: "inherit" });
-const caja = { width: "100%", boxSizing: "border-box", border: "2px solid #d2dcea", borderRadius: 12, padding: "13px 14px", fontSize: 17, fontFamily: "inherit", background: "#fff", color: AZUL };
-const tarjeta = { background: "#fff", borderRadius: 16, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(4,37,82,.08)" };
-const Etiqueta = ({ children }) => <div style={{ fontSize: 13, fontWeight: 800, color: GRIS, margin: "12px 0 6px", textTransform: "uppercase", letterSpacing: ".04em" }}>{children}</div>;
+/* ── Diseño (celular primero): una sola hoja de estilos, animaciones suaves, áreas seguras del notch ── */
+const CSS = `
+html,body{margin:0;padding:0;background:#eef2f9;overscroll-behavior-y:none}
+.dm *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+.dm{font-family:${LETRA};color:${AZUL};min-height:100dvh;background:#eef2f9;-webkit-font-smoothing:antialiased;padding-bottom:calc(110px + env(safe-area-inset-bottom))}
+.dm-hdr{background:linear-gradient(150deg,#042552 0%,#0b3b7d 70%,#13509f 100%);color:#fff;padding:calc(14px + env(safe-area-inset-top)) 18px 26px;border-radius:0 0 28px 28px;position:relative;overflow:hidden}
+.dm-hdr:after{content:"";position:absolute;right:-60px;top:-60px;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,rgba(242,123,19,.35),transparent 70%)}
+.dm-top{display:flex;align-items:center;gap:10px;position:relative;z-index:1}
+.dm-marca{font-weight:900;color:${NARANJA};font-size:13px;letter-spacing:.06em;text-transform:uppercase}
+.dm-hola{font-size:26px;font-weight:900;margin:14px 0 2px;position:relative;z-index:1;letter-spacing:-.02em}
+.dm-fecha{opacity:.75;font-size:14px;position:relative;z-index:1;text-transform:capitalize}
+.dm-chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 12px;font-size:13px;font-weight:800}
+.dm-sos{margin-left:auto;background:${ROJO};color:#fff;border:0;border-radius:999px;padding:9px 16px;font-weight:900;font-size:15px;letter-spacing:.04em;box-shadow:0 4px 14px rgba(220,38,38,.45);cursor:pointer}
+.dm-salir{background:rgba(255,255,255,.14);color:#fff;border:0;border-radius:999px;padding:9px 12px;font-weight:700;font-size:13px;cursor:pointer}
+.dm-pasos{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:-16px 14px 0;position:relative;z-index:2}
+.dm-paso{background:#fff;border-radius:14px;padding:9px 4px 8px;text-align:center;font-size:11px;font-weight:800;color:${GRIS};box-shadow:0 4px 14px rgba(4,37,82,.08);transition:all .3s}
+.dm-paso b{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;margin:0 auto 4px;background:#e8eef7;color:${GRIS};font-size:12px}
+.dm-paso.hecho b{background:${VERDE};color:#fff}.dm-paso.ahora{color:${AZUL};outline:2px solid ${NARANJA}}.dm-paso.ahora b{background:${NARANJA};color:#fff}
+.dm-cuerpo{max-width:560px;margin:0 auto;padding:16px 14px 0}
+.dm-card{background:#fff;border-radius:22px;padding:18px;margin-bottom:14px;box-shadow:0 6px 24px rgba(4,37,82,.07);animation:dmSube .35s ease both}
+.dm-titulo{font-size:21px;font-weight:900;letter-spacing:-.01em;margin:0}
+.dm-sub{color:${GRIS};font-size:15px;margin:4px 0 0;line-height:1.4}
+.dm-et{font-size:12px;font-weight:800;color:${GRIS};margin:16px 0 7px;text-transform:uppercase;letter-spacing:.06em}
+.dm-in{width:100%;border:2px solid #dbe3ef;border-radius:14px;padding:14px 15px;font-size:17px;font-family:inherit;background:#f8fafd;color:${AZUL};outline:none;transition:border-color .2s,background .2s}
+.dm-in:focus{border-color:${NARANJA};background:#fff}
+.dm-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:56px;border-radius:16px;border:0;font-family:inherit;font-size:17px;font-weight:900;cursor:pointer;text-decoration:none;transition:transform .12s,opacity .2s,box-shadow .2s}
+.dm-btn:active{transform:scale(.97)}.dm-btn:disabled{opacity:.55}
+.dm-naranja{background:linear-gradient(135deg,#F27B13,#ff9b3f);color:#fff;box-shadow:0 8px 20px rgba(242,123,19,.35)}
+.dm-verde{background:linear-gradient(135deg,#059669,#10b981);color:#fff;box-shadow:0 8px 20px rgba(5,150,105,.3)}
+.dm-azul{background:${AZUL};color:#fff}
+.dm-linea{background:#fff;color:${AZUL};border:2px solid #dbe3ef}
+.dm-gris{background:#dfe5ee;color:${GRIS}}
+.dm-fotos{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.dm-foto{position:relative;aspect-ratio:1/1;border-radius:18px;border:2px dashed #c9d4e4;background:#f6f8fc;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;overflow:hidden;transition:transform .12s}
+.dm-foto:active{transform:scale(.96)}
+.dm-foto span{font-size:30px}.dm-foto small{font-size:12px;font-weight:800;color:${GRIS};text-align:center;padding:0 4px;line-height:1.15}
+.dm-foto img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.dm-foto.lista{border:3px solid ${VERDE}}
+.dm-foto .ok{position:absolute;right:6px;top:6px;background:${VERDE};color:#fff;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:14px;font-weight:900;z-index:1}
+.dm-seg{display:grid;grid-template-columns:repeat(5,1fr);background:#eef2f9;border-radius:14px;padding:4px;gap:4px}
+.dm-seg button{border:0;background:transparent;border-radius:11px;padding:12px 2px;font-weight:800;font-size:14px;color:${GRIS};font-family:inherit;cursor:pointer;transition:all .2s}
+.dm-seg button.si{background:#fff;color:${AZUL};box-shadow:0 2px 8px rgba(4,37,82,.12)}
+.dm-sig{background:linear-gradient(160deg,#fff 0%,#fff7ef 100%);border:2px solid ${NARANJA}}
+.dm-kicker{display:inline-block;background:${NARANJA};color:#fff;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:5px 10px}
+.dm-dos{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.dm-barra{height:10px;background:#e8eef7;border-radius:999px;overflow:hidden;margin:10px 0 4px}
+.dm-barra i{display:block;height:100%;background:linear-gradient(90deg,#059669,#34d399);border-radius:999px;transition:width .6s ease}
+.dm-tl{position:relative;margin-top:6px}
+.dm-tl-item{position:relative;padding:4px 0 16px 40px}
+.dm-tl-item:before{content:"";position:absolute;left:13px;top:30px;bottom:0;width:2px;background:#e2e8f2}
+.dm-tl-item:last-child:before{display:none}
+.dm-tl-dot{position:absolute;left:0;top:2px;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:900;background:#e8eef7;color:${GRIS}}
+.dm-tl-item.hecha .dm-tl-dot{background:${VERDE};color:#fff}.dm-tl-item.prob .dm-tl-dot{background:${NARANJA};color:#fff}.dm-tl-item.sig .dm-tl-dot{background:${AZUL};color:#fff;box-shadow:0 0 0 5px rgba(4,37,82,.12)}
+.dm-ind{background:#fff7ed;border-left:5px solid ${NARANJA};border-radius:12px;padding:12px 14px;font-size:16px;margin-top:12px;line-height:1.4}
+.dm-vivo{display:flex;align-items:center;gap:10px;border-radius:16px;padding:12px 14px;font-weight:800;font-size:14px;margin-bottom:14px;animation:dmSube .35s ease both}
+.dm-pulso{width:12px;height:12px;border-radius:50%;background:${VERDE};box-shadow:0 0 0 0 rgba(5,150,105,.6);animation:dmPulso 1.8s infinite;flex:none}
+.dm-pie{position:fixed;left:0;right:0;bottom:0;padding:12px 14px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(180deg,rgba(238,242,249,0),#eef2f9 35%);z-index:30}
+.dm-pie>div{max-width:560px;margin:0 auto}
+.dm-toast{position:fixed;left:14px;right:14px;top:calc(12px + env(safe-area-inset-top));z-index:80;border-radius:16px;padding:14px 16px;color:#fff;font-weight:800;font-size:15px;box-shadow:0 10px 30px rgba(0,0,0,.2);animation:dmBaja .3s ease both;max-width:560px;margin:0 auto}
+.dm-velo{position:fixed;inset:0;background:rgba(4,37,82,.55);backdrop-filter:blur(3px);z-index:60;animation:dmAparece .2s ease both}
+.dm-hoja{position:fixed;left:0;right:0;bottom:0;max-height:92dvh;overflow-y:auto;background:#fff;border-radius:26px 26px 0 0;z-index:61;padding:10px 18px calc(20px + env(safe-area-inset-bottom));animation:dmHoja .32s cubic-bezier(.2,.8,.2,1) both;max-width:620px;margin:0 auto}
+.dm-asa{width:44px;height:5px;border-radius:999px;background:#d5dde8;margin:0 auto 12px}
+.dm-vacio{text-align:center;padding:30px 18px}.dm-vacio div{font-size:56px;margin-bottom:6px;animation:dmFlota 3s ease-in-out infinite}
+.dm-login{min-height:100dvh;background:linear-gradient(160deg,#042552 0%,#0b3b7d 60%,#13509f 100%);padding:calc(48px + env(safe-area-inset-top)) 20px 30px;display:flex;flex-direction:column}
+.dm-logo{width:64px;height:64px;border-radius:20px;background:${NARANJA};display:grid;place-items:center;font-size:30px;box-shadow:0 10px 30px rgba(242,123,19,.45);margin-bottom:18px}
+.dm-ojo{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:0;font-size:20px;cursor:pointer;padding:8px}
+@keyframes dmSube{from{transform:translateY(10px)}to{transform:none}}
+@keyframes dmBaja{from{transform:translateY(-14px)}to{transform:none}}
+@keyframes dmAparece{from{opacity:0}to{opacity:1}}
+@keyframes dmHoja{from{transform:translateY(100%)}to{transform:none}}
+@keyframes dmPulso{0%{box-shadow:0 0 0 0 rgba(5,150,105,.55)}70%{box-shadow:0 0 0 12px rgba(5,150,105,0)}100%{box-shadow:0 0 0 0 rgba(5,150,105,0)}}
+@keyframes dmFlota{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+@media (prefers-reduced-motion:reduce){.dm *{animation:none!important;transition:none!important}}
+`;
+const Estilos = () => <style>{CSS}</style>;
+const Falla = ({ children }) => children ? <div style={{ background: "#fef2f2", color: ROJO, borderRadius: 12, padding: "10px 12px", fontWeight: 700, marginTop: 12, fontSize: 15 }}>{children}</div> : null;
+const hoyTexto = () => new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
 
-function Foto({ titulo, archivo, onCambio, frontal = false }){
+function Foto({ titulo, icono, archivo, onCambio, frontal = false }){
   const url = archivo ? URL.createObjectURL(archivo) : "";
   useEffect(() => () => url && URL.revokeObjectURL(url), [url]);
   return (
-    <label style={{ display: "block", marginBottom: 10 }}>
-      <div style={{ ...boton(archivo ? VERDE : AZUL, !archivo), display: "flex", alignItems: "center", gap: 12, justifyContent: "center" }}>
-        {archivo ? <img src={url} alt="" style={{ width: 44, height: 44, objectFit: "cover", borderRadius: 8 }}/> : <span style={{ fontSize: 24 }}>📷</span>}
-        <span>{archivo ? "✓ " + titulo + " (cambiar)" : titulo}</span>
-      </div>
+    <label className={"dm-foto" + (archivo ? " lista" : "")}>
+      {archivo ? <><img src={url} alt=""/><i className="ok">✓</i></> : <><span>{icono}</span><small>{titulo}</small></>}
       <input type="file" accept="image/*" capture={frontal ? "user" : "environment"} style={{ display: "none" }} onChange={e => e.target.files?.[0] && onCambio(e.target.files[0])}/>
     </label>
   );
@@ -76,7 +145,7 @@ function Foto({ titulo, archivo, onCambio, frontal = false }){
 
 /* ── Entrar ───────────────────────────────────────────────────────────────── */
 function Entrar({ auth }){
-  const [usuario, setUsuario] = useState(""), [clave, setClave] = useState(""), [error, setError] = useState(""), [ocupado, setOcupado] = useState(false);
+  const [usuario, setUsuario] = useState(""), [clave, setClave] = useState(""), [ver, setVer] = useState(false), [error, setError] = useState(""), [ocupado, setOcupado] = useState(false);
   const entrar = async () => {
     const correo = correoDeChofer(usuario);
     if(!correo){ setError("Escribe tu celular de 10 dígitos."); return; }
@@ -86,18 +155,24 @@ function Entrar({ auth }){
     catch(e){ setError(mensaje(e)); setOcupado(false); }
   };
   return (
-    <div style={{ minHeight: "100vh", background: AZUL, padding: "48px 20px", boxSizing: "border-box", fontFamily: LETRA }}>
-      <div style={{ maxWidth: 420, margin: "0 auto" }}>
-        <div style={{ color: NARANJA, fontWeight: 900, fontSize: 30 }}>DMovimiento</div>
-        <div style={{ color: "#fff", fontSize: 20, fontWeight: 700, margin: "6px 0 28px" }}>Choferes</div>
-        <div style={tarjeta}>
-          <Etiqueta>Tu celular</Etiqueta>
-          <input style={caja} inputMode="tel" autoComplete="username" value={usuario} onChange={e => setUsuario(e.target.value)} placeholder="55 1234 5678"/>
-          <Etiqueta>Tu contraseña</Etiqueta>
-          <input style={caja} type="password" autoComplete="current-password" value={clave} onChange={e => setClave(e.target.value)} onKeyDown={e => e.key === "Enter" && entrar()}/>
-          {error && <div style={{ color: ROJO, fontWeight: 700, marginTop: 12 }}>{error}</div>}
-          <button onClick={entrar} disabled={ocupado} style={{ ...boton(NARANJA), marginTop: 18, opacity: ocupado ? .6 : 1 }}>{ocupado ? "Entrando…" : "Entrar"}</button>
-          <p style={{ color: GRIS, fontSize: 14, marginTop: 14 }}>¿No tienes contraseña? Pídele a la oficina tu enlace por WhatsApp.</p>
+    <div className="dm"><Estilos/>
+      <div className="dm-login">
+        <div style={{ maxWidth: 420, width: "100%", margin: "0 auto" }}>
+          <div className="dm-logo">🚚</div>
+          <div style={{ color: "#fff", fontSize: 30, fontWeight: 900, letterSpacing: "-.02em" }}>Hola, chofer</div>
+          <div style={{ color: "rgba(255,255,255,.75)", fontSize: 16, margin: "6px 0 26px" }}>Entra para ver tus rutas de hoy.</div>
+          <div className="dm-card" style={{ padding: 20 }}>
+            <div className="dm-et" style={{ marginTop: 0 }}>Tu celular</div>
+            <input className="dm-in" inputMode="tel" autoComplete="username" value={usuario} onChange={e => setUsuario(e.target.value)} placeholder="55 1234 5678"/>
+            <div className="dm-et">Tu contraseña</div>
+            <div style={{ position: "relative" }}>
+              <input className="dm-in" type={ver ? "text" : "password"} autoComplete="current-password" value={clave} onChange={e => setClave(e.target.value)} onKeyDown={e => e.key === "Enter" && entrar()} style={{ paddingRight: 48 }}/>
+              <button type="button" className="dm-ojo" onClick={() => setVer(v => !v)} aria-label={ver ? "Ocultar contraseña" : "Ver contraseña"}>{ver ? "🙈" : "👁️"}</button>
+            </div>
+            <Falla>{error}</Falla>
+            <button onClick={entrar} disabled={ocupado} className="dm-btn dm-naranja" style={{ marginTop: 18 }}>{ocupado ? "Entrando…" : "Entrar"}</button>
+          </div>
+          <p style={{ color: "rgba(255,255,255,.7)", fontSize: 14, textAlign: "center", marginTop: 8 }}>¿No tienes contraseña? Pídele a la oficina tu enlace por WhatsApp.</p>
         </div>
       </div>
     </div>
@@ -110,9 +185,9 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
   const [placa, setPlaca] = useState(placaSugerida || ""), [km, setKm] = useState(""), [gas, setGas] = useState("");
   const [error, setError] = useState(""), [paso, setPaso] = useState("");
   useEffect(() => { if(placaSugerida && !placa) setPlaca(placaSugerida); }, [placaSugerida]);   // eslint-disable-line react-hooks/exhaustive-deps
-  const listo = selfie && placas && tablero && placa.trim() && km !== "" && gas !== "";
+  const faltan = [!selfie && "tu foto", !placas && "foto de placas", !tablero && "foto del tablero", !placa.trim() && "placas", km === "" && "kilómetros", gas === "" && "gasolina"].filter(Boolean);
   const enviar = async () => {
-    if(!listo){ setError("Faltan fotos o datos."); return; }
+    if(faltan.length){ setError("Falta: " + faltan.join(", ") + "."); return; }
     setError("");
     try {
       setPaso("Leyendo tu ubicación…"); const p = await posicionAhora();
@@ -127,34 +202,40 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
     setPaso("");
   };
   return (
-    <div style={tarjeta}>
-      <div style={{ fontSize: 22, fontWeight: 900, color: AZUL }}>☀️ Empieza tu día</div>
-      <p style={{ color: GRIS, marginTop: 4 }}>Tres fotos y dos datos. Solo una vez al día.</p>
-      <Foto titulo="Tu foto (selfie)" archivo={selfie} onCambio={setSelfie} frontal/>
-      <Foto titulo="Foto de las placas" archivo={placas} onCambio={setPlacas}/>
-      <Foto titulo="Foto del tablero (kilómetros)" archivo={tablero} onCambio={setTablero}/>
-      <Etiqueta>Placas de la camioneta</Etiqueta>
-      <input style={caja} value={placa} onChange={e => setPlaca(e.target.value)} placeholder="ABC1234"/>
-      <Etiqueta>Kilómetros que marca</Etiqueta>
-      <input style={caja} inputMode="numeric" value={km} onChange={e => setKm(e.target.value.replace(/[^\d]/g, ""))} placeholder="Ej. 85230"/>
-      <Etiqueta>Gasolina</Etiqueta>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6 }}>
-        {[["Reserva", 10], ["1/4", 25], ["1/2", 50], ["3/4", 75], ["Lleno", 100]].map(([l, v]) => (
-          <button key={v} onClick={() => setGas(String(v))} style={{ ...boton(AZUL, gas === String(v)), padding: "12px 4px", fontSize: 14 }}>{l}</button>))}
+    <div className="dm-card">
+      <h2 className="dm-titulo">☀️ Empieza tu día</h2>
+      <p className="dm-sub">Toca cada cuadro para tomar la foto. Solo una vez al día.</p>
+      <div className="dm-et">Fotos</div>
+      <div className="dm-fotos">
+        <Foto titulo="Tú" icono="🤳" archivo={selfie} onCambio={setSelfie} frontal/>
+        <Foto titulo="Placas" icono="🚚" archivo={placas} onCambio={setPlacas}/>
+        <Foto titulo="Tablero" icono="⏱️" archivo={tablero} onCambio={setTablero}/>
       </div>
-      {error && <div style={{ color: ROJO, fontWeight: 700, marginTop: 12 }}>{error}</div>}
-      <button onClick={enviar} disabled={!!paso} style={{ ...boton(listo ? VERDE : GRIS), marginTop: 16, opacity: paso ? .6 : 1 }}>{paso || "Listo, empezar mi día"}</button>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div><div className="dm-et">Placas</div><input className="dm-in" value={placa} onChange={e => setPlaca(e.target.value.toUpperCase())} placeholder="ABC1234" autoCapitalize="characters"/></div>
+        <div><div className="dm-et">Kilómetros</div><input className="dm-in" inputMode="numeric" value={km} onChange={e => setKm(e.target.value.replace(/[^\d]/g, ""))} placeholder="85230"/></div>
+      </div>
+      <div className="dm-et">Gasolina</div>
+      <div className="dm-seg">
+        {[["Reserva", 10], ["1/4", 25], ["1/2", 50], ["3/4", 75], ["Lleno", 100]].map(([l, v]) => (
+          <button key={v} type="button" className={gas === String(v) ? "si" : ""} onClick={() => setGas(String(v))}>{l}</button>))}
+      </div>
+      <Falla>{error}</Falla>
+      <button onClick={enviar} disabled={!!paso} className={"dm-btn " + (faltan.length ? "dm-gris" : "dm-verde")} style={{ marginTop: 18 }}>
+        {paso || (faltan.length ? `Faltan ${faltan.length} cosas` : "✓ Listo, empezar mi día")}</button>
     </div>
   );
 }
 
-/* ── Entregar en una parada ──────────────────────────────────────────────── */
+/* ── Entregar en una parada (hoja que sube desde abajo) ─────────────────── */
 function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerrar }){
   const [foto, setFoto] = useState(null), [foto2, setFoto2] = useState(null), [recibe, setRecibe] = useState(""), [notas, setNotas] = useState("");
-  const [problema, setProblema] = useState(""), [error, setError] = useState(""), [paso, setPaso] = useState(""), [firma, setFirma] = useState(null);
+  const [problema, setProblema] = useState(""), [error, setError] = useState(""), [paso, setPaso] = useState(""), [firma, setFirma] = useState(null), [hayProblema, setHayProblema] = useState(false);
+  const carga = parada.tipo === "carga";
   const enviar = async () => {
+    if(hayProblema && !problema){ setError("Elige qué problema hubo."); return; }
     if(!foto){ setError(problema ? "Toma una foto del lugar (sirve de prueba)." : "Toma la foto de la entrega."); return; }
-    if(!problema && !recibe.trim()){ setError("Escribe el nombre de quien recibe."); return; }
+    if(!problema && !recibe.trim()){ setError(carga ? "Escribe quién te entregó la mercancía." : "Escribe el nombre de quien recibe."); return; }
     setError("");
     try {
       setPaso("Confirmando que estás en el lugar…"); await mandarAhora();
@@ -169,75 +250,100 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
     } catch(e){ setError(mensaje(e)); }
     setPaso("");
   };
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(4,37,82,.6)", zIndex: 50, overflowY: "auto", padding: 12 }}>
-      <div style={{ ...tarjeta, maxWidth: 480, margin: "20px auto" }}>
-        <div style={{ fontSize: 20, fontWeight: 900, color: AZUL }}>{parada.tipo === "carga" ? "📦 Cargué en" : "✅ Entregué en"} {parada.nombre}</div>
-        <p style={{ color: GRIS, margin: "4px 0 12px" }}>{parada.direccion}</p>
-        <Foto titulo="Foto de la entrega" archivo={foto} onCambio={setFoto}/>
-        {foto && <Foto titulo="Otra foto (opcional)" archivo={foto2} onCambio={setFoto2}/>}
-        <Etiqueta>¿Todo bien?</Etiqueta>
-        <select style={caja} value={problema} onChange={e => setProblema(e.target.value)}>
-          <option value="">Sí, todo bien</option>
-          {INCIDENCIAS.map(x => <option key={x} value={x}>Hubo un problema: {x}</option>)}
-        </select>
-        <Etiqueta>{problema ? "¿Quién te atendió? (si hubo alguien)" : "¿Quién recibió?"}</Etiqueta>
-        <input style={caja} value={recibe} onChange={e => setRecibe(e.target.value)} placeholder="Nombre de la persona"/>
-        {!problema && <><Etiqueta>Firma de quien recibe (opcional)</Etiqueta><FirmaPad onCambio={setFirma}/></>}
-        <Etiqueta>Comentarios (opcional)</Etiqueta>
-        <textarea style={{ ...caja, minHeight: 70 }} value={notas} onChange={e => setNotas(e.target.value)}/>
-        {error && <div style={{ color: ROJO, fontWeight: 700, marginTop: 12 }}>{error}</div>}
-        <button onClick={enviar} disabled={!!paso} style={{ ...boton(VERDE), marginTop: 16, opacity: paso ? .6 : 1 }}>{paso || "Mandar"}</button>
-        <button onClick={() => onCerrar(false)} disabled={!!paso} style={{ ...boton(GRIS, false), marginTop: 10 }}>Regresar</button>
+  return (<>
+    <div className="dm-velo" onClick={() => !paso && onCerrar(false)}/>
+    <div className="dm-hoja" role="dialog" aria-label={"Cerrar parada " + parada.nombre}>
+      <div className="dm-asa"/>
+      <span className="dm-kicker" style={{ background: carga ? AZUL : VERDE }}>{carga ? "Recoger" : "Entregar"}</span>
+      <h2 className="dm-titulo" style={{ marginTop: 8 }}>{parada.nombre}</h2>
+      <p className="dm-sub">{parada.direccion}</p>
+      <div className="dm-et">¿Cómo salió?</div>
+      <div className="dm-seg" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        <button type="button" className={!hayProblema ? "si" : ""} onClick={() => { setHayProblema(false); setProblema(""); }}>✅ Todo bien</button>
+        <button type="button" className={hayProblema ? "si" : ""} onClick={() => setHayProblema(true)}>⚠️ Hubo un problema</button>
       </div>
+      {hayProblema && <select className="dm-in" style={{ marginTop: 10 }} value={problema} onChange={e => setProblema(e.target.value)}>
+        <option value="">— ¿Qué pasó? —</option>{INCIDENCIAS.map(x => <option key={x} value={x}>{x}</option>)}</select>}
+      <div className="dm-et">{problema ? "Foto del lugar" : carga ? "Foto de la carga" : "Foto de la entrega"}</div>
+      <div className="dm-fotos">
+        <Foto titulo="Foto" icono="📷" archivo={foto} onCambio={setFoto}/>
+        {foto && <Foto titulo="Otra (opcional)" icono="➕" archivo={foto2} onCambio={setFoto2}/>}
+      </div>
+      <div className="dm-et">{problema ? "¿Quién te atendió? (si hubo alguien)" : carga ? "¿Quién te entregó?" : "¿Quién recibió?"}</div>
+      <input className="dm-in" value={recibe} onChange={e => setRecibe(e.target.value)} placeholder="Nombre de la persona"/>
+      {!problema && <><div className="dm-et">Firma (opcional)</div><FirmaPad onCambio={setFirma}/></>}
+      <div className="dm-et">Comentarios (opcional)</div>
+      <textarea className="dm-in" style={{ minHeight: 70, resize: "vertical" }} value={notas} onChange={e => setNotas(e.target.value)}/>
+      <Falla>{error}</Falla>
+      <button onClick={enviar} disabled={!!paso} className="dm-btn dm-verde" style={{ marginTop: 16 }}>{paso || "Mandar"}</button>
+      <button onClick={() => onCerrar(false)} disabled={!!paso} className="dm-btn dm-linea" style={{ marginTop: 10 }}>Regresar</button>
     </div>
-  );
+  </>);
 }
 
-/* ── Un servicio con sus paradas ─────────────────────────────────────────── */
-function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarAhora, avisar }){
+/* ── Un servicio: siguiente parada en grande + línea de tiempo ──────────── */
+function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarAhora, avisar, onPaso }){
   const [paradas, setParadas] = useState([]), [abierta, setAbierta] = useState(null), [ocupado, setOcupado] = useState(false);
   useEffect(() => onSnapshot(query(collection(db, "servicios", servicio.id, "paradas"), orderBy("orden")),
     s => setParadas(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setParadas([])), [db, servicio.id]);
   const enRuta = servicio.estado === "En ruta";
-  const hechas = paradas.filter(p => ["Entregada", "Incidencia"].includes(p.estado)).length;
-  const siguiente = paradas.find(p => !["Entregada", "Incidencia"].includes(p.estado));
+  const hecha = p => ["Entregada", "Incidencia"].includes(p.estado);
+  const hechas = paradas.filter(hecha).length;
+  const siguiente = paradas.find(p => !hecha(p));
+  useEffect(() => { onPaso?.(servicio.id, { enRuta, total: paradas.length, hechas }); }, [enRuta, paradas.length, hechas]);   // eslint-disable-line react-hooks/exhaustive-deps
   const iniciar = async () => {
     setOcupado(true);
-    try { await llamar("choferIniciarRuta", { servicioId: servicio.id }); await mandarAhora(servicio.id).catch(() => {}); avisar("¡Buen viaje! Ya te vemos en el mapa."); }
+    try { await llamar("choferIniciarRuta", { servicioId: servicio.id }); await mandarAhora(servicio.id).catch(() => {}); avisar("¡Buen viaje! 🚚 Ya te vemos en el mapa."); }
     catch(e){ avisar(mensaje(e), true); }
     setOcupado(false);
   };
-  return (
-    <div style={tarjeta}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
-        <div style={{ fontSize: 20, fontWeight: 900, color: AZUL }}>{servicio.empresa || "Ruta"}</div>
-        <div style={{ fontSize: 13, color: GRIS, fontWeight: 700 }}>{servicio.folio}</div>
+  const pct = paradas.length ? Math.round(hechas / paradas.length * 100) : 0;
+  return (<>
+    <div className="dm-card">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+        <div><div className="dm-et" style={{ margin: 0 }}>Tu ruta</div><h2 className="dm-titulo">{servicio.empresa || "Ruta"}</h2></div>
+        <span className="dm-chip" style={{ background: enRuta ? "#e0f2fe" : "#fff7ed", color: enRuta ? "#0369a1" : "#c2410c" }}>{enRuta ? "En camino" : "Por salir"}</span>
       </div>
-      <div style={{ color: GRIS, marginTop: 2 }}>{[servicio.fechaServicio, servicio.horaServicio, servicio.unidadPlaca && "Camioneta " + servicio.unidadPlaca].filter(Boolean).join(" · ")}</div>
-      {(servicio.indicaciones || servicio.notas) && <div style={{ background: "#fff7ed", border: "2px solid " + NARANJA, borderRadius: 12, padding: 12, marginTop: 10, fontSize: 16, color: AZUL }}>
-        <b>Indicaciones:</b> {servicio.indicaciones || servicio.notas}</div>}
-      <div style={{ margin: "12px 0 4px", fontWeight: 800, color: AZUL }}>{paradas.length ? `Paradas: ${hechas} de ${paradas.length} listas` : "Cargando paradas…"}</div>
-      {paradas.map(p => {
-        const lista = ["Entregada", "Incidencia"].includes(p.estado), esSiguiente = siguiente?.id === p.id;
-        return (
-          <div key={p.id} style={{ border: "2px solid " + (esSiguiente ? NARANJA : "#e5ebf3"), borderRadius: 14, padding: 12, marginTop: 8, opacity: lista ? .6 : 1 }}>
-            <div style={{ fontWeight: 900, color: AZUL, fontSize: 17 }}>{p.orden}. {p.tipo === "carga" ? "Recoger en" : "Entregar en"} {p.nombre}</div>
-            <div style={{ color: GRIS, fontSize: 15 }}>{p.direccion}</div>
-            {(p.contacto || p.telefono) && <div style={{ fontSize: 15, marginTop: 4 }}>👤 {p.contacto} {p.telefono && <a href={"tel:" + p.telefono} style={{ color: AZUL, fontWeight: 800 }}>📞 {p.telefono}</a>}</div>}
-            {lista ? <div style={{ color: p.estado === "Incidencia" ? NARANJA : VERDE, fontWeight: 800, marginTop: 6 }}>{p.estado === "Incidencia" ? "⚠️ " + (p.incidencia || "Con problema") : "✓ Listo"}</div>
-              : <div style={{ display: "grid", gridTemplateColumns: enRuta ? "1fr 1fr" : "1fr", gap: 8, marginTop: 10 }}>
-                  <a href={enlaceNavegar({ lat: p.lat, lng: p.lng })} target="_blank" rel="noreferrer" style={{ ...boton(AZUL, false), textDecoration: "none", textAlign: "center", boxSizing: "border-box", padding: "12px 6px", fontSize: 16 }}>🧭 Cómo llegar</a>
-                  {enRuta && <button onClick={() => setAbierta(p)} style={{ ...boton(VERDE), padding: "12px 6px", fontSize: 16 }}>Llegué</button>}
-                </div>}
-          </div>);
-      })}
-      {!enRuta && paradas.length > 0 && <button onClick={iniciar} disabled={ocupado || !jornadaAbierta} style={{ ...boton(jornadaAbierta ? NARANJA : GRIS), marginTop: 14, opacity: ocupado ? .6 : 1 }}>
-        {jornadaAbierta ? (ocupado ? "Iniciando…" : "🚚 Salir a la ruta") : "Primero empieza tu día (arriba)"}</button>}
-      {abierta && <Entregar chofer={chofer} servicio={servicio} parada={abierta} llamar={llamar} subir={subir} mandarAhora={() => mandarAhora(servicio.id)}
-        onCerrar={ok => { setAbierta(null); if(ok) avisar("Listo, quedó registrado."); }}/>}
+      <p className="dm-sub">{[servicio.horaServicio && "Sale " + servicio.horaServicio, servicio.unidadPlaca && "🚚 " + servicio.unidadPlaca, servicio.folio].filter(Boolean).join(" · ")}</p>
+      {(servicio.indicaciones || servicio.notas) && <div className="dm-ind"><b>📝 Indicaciones:</b> {servicio.indicaciones || servicio.notas}</div>}
+      {paradas.length > 0 && <><div className="dm-barra"><i style={{ width: pct + "%" }}/></div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: GRIS }}>{hechas} de {paradas.length} paradas listas</div></>}
     </div>
-  );
+
+    {enRuta && siguiente && <div className="dm-card dm-sig" key={siguiente.id}>
+      <span className="dm-kicker">Siguiente · {siguiente.tipo === "carga" ? "Recoger" : "Entregar"}</span>
+      <h2 className="dm-titulo" style={{ marginTop: 10, fontSize: 24 }}>{siguiente.nombre}</h2>
+      <p className="dm-sub" style={{ fontSize: 16 }}>{siguiente.direccion}</p>
+      {(siguiente.contacto || siguiente.telefono) && <p className="dm-sub" style={{ color: AZUL, fontWeight: 700 }}>👤 {siguiente.contacto} {siguiente.telefono && <a href={"tel:" + siguiente.telefono} style={{ color: AZUL }}>📞 {siguiente.telefono}</a>}</p>}
+      <div className="dm-dos">
+        <a className="dm-btn dm-linea" href={enlaceNavegar({ lat: siguiente.lat, lng: siguiente.lng })} target="_blank" rel="noreferrer">🧭 Cómo llegar</a>
+        <button className="dm-btn dm-verde" onClick={() => setAbierta(siguiente)}>📍 Llegué</button>
+      </div>
+    </div>}
+
+    {paradas.length > 0 && <div className="dm-card">
+      <div className="dm-et" style={{ marginTop: 0 }}>Paradas</div>
+      <div className="dm-tl">
+        {paradas.map(p => {
+          const lista = hecha(p), esSig = enRuta && siguiente?.id === p.id;
+          return (
+            <div key={p.id} className={"dm-tl-item" + (p.estado === "Incidencia" ? " prob" : lista ? " hecha" : esSig ? " sig" : "")}>
+              <div className="dm-tl-dot">{p.estado === "Incidencia" ? "!" : lista ? "✓" : p.orden}</div>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>{p.tipo === "carga" ? "Recoger · " : "Entregar · "}{p.nombre}</div>
+              <div style={{ color: GRIS, fontSize: 14 }}>{p.direccion}</div>
+              {p.estado === "Incidencia" && <div style={{ color: "#c2410c", fontWeight: 800, fontSize: 13, marginTop: 2 }}>⚠️ {p.incidencia || "Con problema"}</div>}
+              {!lista && !esSig && <a href={enlaceNavegar({ lat: p.lat, lng: p.lng })} target="_blank" rel="noreferrer" style={{ color: AZUL, fontWeight: 800, fontSize: 14, textDecoration: "none" }}>🧭 Cómo llegar</a>}
+            </div>);
+        })}
+      </div>
+    </div>}
+
+    {!enRuta && paradas.length > 0 && <div className="dm-pie"><div>
+      <button onClick={iniciar} disabled={ocupado || !jornadaAbierta} className={"dm-btn " + (jornadaAbierta ? "dm-naranja" : "dm-gris")}>
+        {jornadaAbierta ? (ocupado ? "Saliendo…" : "🚚 Salir a la ruta") : "Primero empieza tu día ☝️"}</button></div></div>}
+    {abierta && <Entregar chofer={chofer} servicio={servicio} parada={abierta} llamar={llamar} subir={subir} mandarAhora={() => mandarAhora(servicio.id)}
+      onCerrar={ok => { setAbierta(null); if(ok) avisar(abierta.tipo === "carga" ? "📦 Carga registrada." : "✅ Entrega registrada. ¡Bien!"); }}/>}
+  </>);
 }
 
 /* ── Pantalla principal ──────────────────────────────────────────────────── */
@@ -246,12 +352,18 @@ export default function ChoferWeb({ db, auth, app }){
   const [chofer, setChofer] = useState(null), [errorCuenta, setErrorCuenta] = useState("");
   const [servicios, setServicios] = useState(null), [jornada, setJornada] = useState(undefined);
   const [aviso, setAviso] = useState(null), [ultimoEnvio, setUltimoEnvio] = useState(0), [errorGps, setErrorGps] = useState("");
-  const [vuelta, setVuelta] = useState(0), [errorRutas, setErrorRutas] = useState("");
+  const [vuelta, setVuelta] = useState(0), [errorRutas, setErrorRutas] = useState(""), [avance, setAvance] = useState({});
   const [, setReloj] = useState(0);
   const disp = useRef(dispositivoId()), buffer = useRef([]), bateria = useRef(null);
   const fns = useRef(getFunctions(app, "us-central1")), almacen = useRef(getStorage(app));
 
-  useEffect(() => { const l = document.querySelector('link[rel="manifest"]'); if(l) l.href = "/manifest-chofer.json"; document.title = "DMovimiento · Choferes"; }, []);
+  useEffect(() => {
+    const l = document.querySelector('link[rel="manifest"]'); if(l) l.href = "/manifest-chofer.json";
+    document.title = "DMovimiento · Choferes";
+    let tema = document.querySelector('meta[name="theme-color"]');
+    if(!tema){ tema = document.createElement("meta"); tema.name = "theme-color"; document.head.appendChild(tema); }
+    tema.content = AZUL;
+  }, []);
   useEffect(() => onAuthStateChanged(auth, u => { setUsuario(u || null); if(!u){ setChofer(null); setErrorCuenta(""); } }), [auth]);
   useEffect(() => { navigator.getBattery?.().then(b => { bateria.current = Math.round(b.level * 100); b.onlevelchange = () => { bateria.current = Math.round(b.level * 100); }; }).catch(() => {}); }, []);
   useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 15000); return () => clearInterval(t); }, []);
@@ -259,21 +371,22 @@ export default function ChoferWeb({ db, auth, app }){
   const llamar = useCallback((nombre, datos = {}) => httpsCallable(fns.current, nombre)({ dispositivoId: disp.current, ...datos }).then(r => r.data), []);
   const subir = useCallback(async (ruta, archivo) => { const b = await comprimir(archivo);
     await uploadBytes(refStorage(almacen.current, ruta), b, { contentType: /^image\//.test(b.type) ? b.type : "image/jpeg" }); return ruta; }, []);
-  const avisar = (texto, error = false) => { setAviso({ texto, error }); setTimeout(() => setAviso(null), 6000); };
+  const avisar = (texto, error = false) => { setAviso({ texto, error }); setTimeout(() => setAviso(null), 5000); };
 
   /* Al entrar: el servidor liga este celular a su cuenta (la primera vez) y dice quién es. */
   useEffect(() => {
     if(!usuario) return;
     if(usuario.isAnonymous || !usuario.email){ setErrorCuenta("Esta sesión no es de chofer."); return; }
     llamar("choferRegistrarDispositivo", { modelo: navigator.userAgent.slice(0, 80) })
-      .then(r => setChofer({ id: r.choferId, nombre: r.nombre }))
+      /* Token nuevo: trae el permiso de subir sus fotos (choferId dentro de la cuenta). */
+      .then(async r => { await usuario.getIdToken(true).catch(() => {}); setChofer({ id: r.choferId, nombre: r.nombre }); })
       .catch(e => setErrorCuenta(mensaje(e)));
   }, [usuario, llamar]);
 
   useEffect(() => {
     if(!chofer) return;
     const u1 = onSnapshot(query(collection(db, "servicios"), where("choferId", "==", chofer.id), where("estado", "in", ["Asignada", "En ruta"])),
-      s => setServicios(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.estado === "En ruta") - (a.estado === "En ruta") || String(a.fechaServicio || "").localeCompare(String(b.fechaServicio || "")))),
+      s => { setErrorRutas(""); setServicios(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.estado === "En ruta") - (a.estado === "En ruta") || String(a.fechaServicio || "").localeCompare(String(b.fechaServicio || "")))); },
       e => { setServicios([]); setErrorRutas("No se pudieron cargar tus rutas (" + mensaje(e) + "). Revisa tu señal y vuelve a abrir la app."); });
     const u2 = onSnapshot(doc(db, "jornadas", `${chofer.id}_${fechaCDMX()}`), s => setJornada(s.exists() ? s.data() : null), () => setJornada(null));
     return () => { u1(); u2(); };
@@ -297,7 +410,7 @@ export default function ChoferWeb({ db, auth, app }){
   useEffect(() => {
     if(!enRuta || !navigator.geolocation) return;
     const w = navigator.geolocation.watchPosition(p => { setErrorGps(""); buffer.current.push(aPunto(p, bateria.current)); if(buffer.current.length > 300) buffer.current.splice(0, 100); },
-      e => setErrorGps(e.code === 1 ? "Permite la ubicación para esta página: toca el candado junto a la dirección → Ubicación → Permitir." : "Buscando señal de GPS…"),
+      e => setErrorGps(e.code === 1 ? "Permite la ubicación: toca el candado junto a la dirección → Ubicación → Permitir." : "Buscando señal de GPS…"),
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });
     const t = setInterval(() => enviar(enRuta.id).catch(() => {}), ENVIO_MS);
     let candado = null;
@@ -319,47 +432,60 @@ export default function ChoferWeb({ db, auth, app }){
     if(km === null) return;
     let pos = {};
     try { const p = await posicionAhora(8000); pos = { lat: p.coords.latitude, lng: p.coords.longitude }; } catch {}
-    try { await llamar("choferTerminarJornada", { ...pos, ...(km.trim() ? { odometroKm: Number(km.replace(/[^\d]/g, "")) } : {}) }); avisar("¡Gracias! Tu día quedó cerrado."); }
+    try { await llamar("choferTerminarJornada", { ...pos, ...(km.trim() ? { odometroKm: Number(km.replace(/[^\d]/g, "")) } : {}) }); avisar("🙌 ¡Gracias! Tu día quedó cerrado."); }
     catch(e){ avisar(mensaje(e), true); }
   };
 
-  if(usuario === undefined) return <div style={{ padding: 40, textAlign: "center", color: GRIS, fontFamily: LETRA }}>Cargando…</div>;
+  const Cargando = ({ texto }) => <div className="dm"><Estilos/><div className="dm-vacio" style={{ paddingTop: 120 }}><div>🚚</div><p className="dm-sub">{texto}</p></div></div>;
+  if(usuario === undefined) return <Cargando texto="Cargando…"/>;
   if(!usuario) return <Entrar auth={auth}/>;
-  const salir = <button onClick={() => signOut(auth)} style={{ background: "none", border: "none", color: "#fff", fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Salir</button>;
   if(errorCuenta) return (
-    <div style={{ minHeight: "100vh", background: FONDO, padding: 20, fontFamily: LETRA }}>
-      <div style={{ ...tarjeta, maxWidth: 480, margin: "40px auto" }}>
-        <div style={{ fontSize: 20, fontWeight: 900, color: ROJO }}>No se pudo entrar</div>
-        <p style={{ fontSize: 17, color: AZUL }}>{errorCuenta}</p>
-        <button onClick={() => signOut(auth)} style={boton(AZUL)}>Salir</button>
-      </div>
-    </div>);
-  if(!chofer) return <div style={{ padding: 40, textAlign: "center", color: GRIS, fontFamily: LETRA }}>Revisando tu cuenta…</div>;
+    <div className="dm"><Estilos/><div className="dm-cuerpo" style={{ paddingTop: 60 }}>
+      <div className="dm-card"><h2 className="dm-titulo" style={{ color: ROJO }}>No se pudo entrar</h2><p className="dm-sub" style={{ color: AZUL, fontSize: 17 }}>{errorCuenta}</p>
+        <button onClick={() => signOut(auth)} className="dm-btn dm-azul" style={{ marginTop: 14 }}>Salir</button></div></div></div>);
+  if(!chofer) return <Cargando texto="Revisando tu cuenta…"/>;
 
+  /* Los 4 pasos del día */
+  const a = Object.values(avance);
+  /* Sal = ya salió hoy a una ruta · Entrega = ya no le quedan rutas pendientes (las terminó todas) · Termina = cerró su día. */
+  const cerrado = jornada?.estado === "Cerrada";
+  const salio = !!jornada && (!!enRuta || a.some(x => x.enRuta));
+  const sinPendientes = !!jornada && (servicios || []).length === 0;
+  const pasos = [["Empieza", !!jornada], ["Sal", salio || sinPendientes || cerrado], ["Entrega", sinPendientes || cerrado], ["Termina", cerrado]];
+  const actual = pasos.findIndex(p => !p[1]);
   const hace = ultimoEnvio ? Math.round((Date.now() - ultimoEnvio) / 60000) : null;
+  const nombre = String(chofer.nombre || "").split(" ")[0] || "chofer";
+  const estadoDia = cerrado ? ["Día cerrado", "rgba(255,255,255,.16)", "#fff"] : jornadaAbierta ? (enRuta ? ["● En camino", "#10b981", "#fff"] : ["Día iniciado", "rgba(16,185,129,.25)", "#a7f3d0"]) : ["Sin iniciar", "rgba(242,123,19,.25)", "#ffd5ad"];
   return (
-    <div style={{ minHeight: "100vh", background: FONDO, fontFamily: LETRA, paddingBottom: 90 }}>
-      <div style={{ background: AZUL, color: "#fff", padding: "14px 16px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 10 }}>
-        <div style={{ flex: 1 }}><div style={{ fontSize: 13, color: NARANJA, fontWeight: 900 }}>DMovimiento</div><div style={{ fontSize: 19, fontWeight: 800 }}>Hola, {String(chofer.nombre || "").split(" ")[0] || "chofer"}</div></div>
-        {salir}
+    <div className="dm"><Estilos/>
+      <div className="dm-hdr">
+        <div className="dm-top"><span className="dm-marca">DMovimiento</span>
+          <button className="dm-sos" onClick={sos} aria-label="Emergencia">SOS</button>
+          <button className="dm-salir" onClick={() => signOut(auth)}>Salir</button></div>
+        <div className="dm-hola">Hola, {nombre.charAt(0) + nombre.slice(1).toLowerCase()} 👋</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", position: "relative", zIndex: 1 }}>
+          <span className="dm-fecha">{hoyTexto()}</span>
+          <span className="dm-chip" style={{ background: estadoDia[1], color: estadoDia[2] }}>{estadoDia[0]}</span>
+        </div>
       </div>
-      {aviso && <div style={{ position: "fixed", left: 12, right: 12, top: 70, zIndex: 60, background: aviso.error ? ROJO : VERDE, color: "#fff", borderRadius: 14, padding: 14, fontWeight: 800, fontSize: 16 }}>{aviso.texto}</div>}
-      <div style={{ maxWidth: 560, margin: "0 auto", padding: 12 }}>
-        {enRuta && <div style={{ ...tarjeta, background: errorGps ? "#fef2f2" : "#ecfdf5", border: "2px solid " + (errorGps ? ROJO : VERDE) }}>
-          <div style={{ fontWeight: 900, color: errorGps ? ROJO : VERDE, fontSize: 16 }}>{errorGps ? "⚠️ " + errorGps : "📡 La oficina te ve en el mapa"}</div>
-          {!errorGps && <div style={{ color: AZUL, fontSize: 14, marginTop: 4 }}>Deja esta pantalla abierta mientras manejas.{hace !== null ? ` Última ubicación enviada hace ${hace < 1 ? "menos de 1" : hace} min.` : ""}</div>}
+      <div className="dm-pasos">{pasos.map(([t, ok], i) => <div key={t} className={"dm-paso" + (ok ? " hecho" : i === actual ? " ahora" : "")}><b>{ok ? "✓" : i + 1}</b>{t}</div>)}</div>
+      {aviso && <div className="dm-toast" style={{ background: aviso.error ? ROJO : VERDE }}>{aviso.texto}</div>}
+      <div className="dm-cuerpo">
+        {enRuta && <div className="dm-vivo" style={{ background: errorGps ? "#fef2f2" : "#ecfdf5", color: errorGps ? ROJO : "#047857" }}>
+          {errorGps ? "⚠️" : <span className="dm-pulso"/>}
+          <div>{errorGps || "La oficina te ve en el mapa"}{!errorGps && <div style={{ fontWeight: 600, color: AZUL, fontSize: 13 }}>Deja esta pantalla abierta mientras manejas{hace !== null ? ` · enviado hace ${hace < 1 ? "un momento" : hace + " min"}` : ""}.</div>}</div>
         </div>}
-        {jornada === undefined || servicios === null ? <div style={{ ...tarjeta, color: GRIS }}>Cargando tus rutas…</div> : <>
-          {!jornada && <EmpezarDia chofer={chofer} placaSugerida={(servicios[0] || {}).unidadPlaca || ""} llamar={llamar} subir={subir} onListo={() => { setVuelta(v => v + 1); avisar("¡Listo! Ya puedes salir a tu ruta."); }}/>}
-          {jornada?.estado === "Cerrada" && <div style={{ ...tarjeta, color: AZUL, fontWeight: 700 }}>Tu día de hoy ya está cerrado. ¡Buen descanso!</div>}
-          {errorRutas && <div style={{ ...tarjeta, color: ROJO, fontWeight: 700 }}>{errorRutas}</div>}
-          {servicios.length === 0 && !errorRutas && jornada?.estado !== "Cerrada" && <div style={{ ...tarjeta, textAlign: "center", color: GRIS, fontSize: 17 }}>Por ahora no tienes rutas asignadas.<br/>Cuando la oficina te asigne una, aparece aquí sola.</div>}
-          {servicios.map(s => <Servicio key={s.id} db={db} chofer={chofer} servicio={s} jornadaAbierta={jornadaAbierta} llamar={llamar} subir={subir} mandarAhora={mandarAhora} avisar={avisar}/>)}
-          {jornadaAbierta && !enRuta && <button onClick={terminar} style={{ ...boton(AZUL, false), marginTop: 6 }}>Terminar mi día</button>}
+        {jornada === undefined || servicios === null ? <div className="dm-card"><p className="dm-sub">Cargando tus rutas…</p></div> : <>
+          {!jornada && <EmpezarDia chofer={chofer} placaSugerida={(servicios[0] || {}).unidadPlaca || ""} llamar={llamar} subir={subir} onListo={() => { setVuelta(v => v + 1); avisar("☀️ ¡Listo! Ya puedes salir a tu ruta."); }}/>}
+          {cerrado && <div className="dm-card dm-vacio"><div>🌙</div><h2 className="dm-titulo">Tu día está cerrado</h2><p className="dm-sub">¡Buen descanso! Nos vemos mañana.</p></div>}
+          {errorRutas && <div className="dm-card"><Falla>{errorRutas}</Falla></div>}
+          {servicios.length === 0 && !errorRutas && !cerrado && <div className="dm-card dm-vacio"><div>🗺️</div><h2 className="dm-titulo">Sin rutas por ahora</h2><p className="dm-sub">Cuando la oficina te asigne una, aparece aquí sola.</p></div>}
+          {servicios.map(s => <Servicio key={s.id} db={db} chofer={chofer} servicio={s} jornadaAbierta={jornadaAbierta} llamar={llamar} subir={subir} mandarAhora={mandarAhora} avisar={avisar}
+            onPaso={(id, v) => setAvance(x => ({ ...x, [id]: v }))}/>)}
+          {jornadaAbierta && !enRuta && !(servicios || []).some(s => s.estado === "Asignada") && <div className="dm-pie"><div>
+            <button onClick={terminar} className="dm-btn dm-azul">🏁 Terminar mi día</button></div></div>}
         </>}
       </div>
-      <button onClick={sos} style={{ position: "fixed", right: 16, bottom: 16, width: 72, height: 72, borderRadius: "50%", background: ROJO, color: "#fff", border: "4px solid #fff",
-        fontWeight: 900, fontSize: 18, boxShadow: "0 4px 14px rgba(220,38,38,.5)", zIndex: 40, cursor: "pointer" }}>SOS</button>
     </div>
   );
 }
