@@ -9,18 +9,13 @@ import { collection, onSnapshot, query, where, limit } from "firebase/firestore"
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, boton, caja, Chip } from "./uiBasico.jsx";
 import { coordenadaDeTexto, esEnlaceCortoMaps, buscarEnCatalogo, correoDeChofer, telefono10 } from "./lugares.ts";
-import { crearServiciosStore } from "./serviciosStore.js";
-import { crearCatalogoStore } from "./catalogosStore.js";
-import { requisitosEstado } from "./servicios.ts";
+import { guardarLugares, datosServicio, crearServicioRuta, terminarAsignacion, sinUbicacion } from "./asignarRutaFlujo.js";
 
 const CDMX = [-99.1332, 19.4326];
 /* La dirección del sistema es la misma desde la que se abre (Firebase o Vercel). */
 const URL_CHOFER = (typeof window !== "undefined" ? window.location.origin : "https://salesflow-crm-13c4a.web.app") + "/chofer";
 const hoyCDMX = () => new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
-const ahoraLocal = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 const mensajeError = e => String(e?.message || "No se pudo").replace(/^(functions\/[a-z-]+:?\s*)/i, "");
-const distanciaM = (a, b) => { const R = 6371000, r = x => x * Math.PI / 180, dLat = r(b.lat - a.lat), dLng = r(b.lng - a.lng);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
 const mapaFijo = (token, c, ancho = 560, alto = 220) =>
   `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-l+F27B13(${c.lng},${c.lat})/${c.lng},${c.lat},16,0/${ancho}x${alto}@2x?access_token=${token}`;
 const Paso = ({ n, titulo, children }) => (
@@ -153,55 +148,32 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
     if(pendiente) return reintentar();   // hay un servicio creado a medias: se termina ese, no se crea otro
     if(faltan.length){ setError("Falta: " + faltan.join(", ") + "."); return; }
     if(!chofer?.authUid){ setError(`${chofer?.nombre || "El chofer"} todavía no tiene la app. Dale acceso primero (arriba).`); return; }
-    const sinUbicacion = paradas.filter(p => !Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lng)) || (Number(p.lat) === 0 && Number(p.lng) === 0));
-    if(sinUbicacion.length){ setError("Estos lugares no tienen ubicación en el mapa: " + sinUbicacion.map(p => p.nombre || p.direccion).join(", ") + ". Quítalos y búscalos otra vez."); return; }
+    const malos = sinUbicacion(paradas);
+    if(malos.length){ setError("Estos lugares no tienen ubicación en el mapa: " + malos.map(p => p.nombre || p.direccion).join(", ") + ". Quítalos y búscalos otra vez."); return; }
     setError(""); setListo(null);
-    const store = crearServiciosStore(db), catalogo = crearCatalogoStore(db, "puntos_entrega");
     try {
-      /* 1. Cada lugar queda guardado (o se reutiliza uno ya guardado a menos de 30 m) con su punto confirmado. */
       setOcupado("Guardando lugares…");
-      const conId = [];
-      for(const p of paradas){
-        let puntoId = p.puntoId;
-        const existente = !puntoId && lugares.find(l => l.activo !== false && l.pinConfirmado === true && Number.isFinite(Number(l.lat)) && distanciaM({ lat: Number(l.lat), lng: Number(l.lng) }, p) < 30);
-        if(existente) puntoId = existente.id;
-        if(!puntoId) puntoId = await catalogo.guardar(usuario, null, { nombre: p.nombre.trim(), direccion: p.direccion || `${p.lat}, ${p.lng}`, lat: p.lat, lng: p.lng, coordenada: `${p.lat}, ${p.lng}`,
-          pinConfirmado: true, radioM: "", horario: "", contacto: p.contacto || "", telefono: p.telefono || "", notasAcceso: "", origen: "Asignar ruta" });
-        else if(p.puntoId && !lugares.find(l => l.id === p.puntoId)?.pinConfirmado) {
-          const antes = lugares.find(l => l.id === p.puntoId);
-          await catalogo.guardar(usuario, antes, { ...antes, pinConfirmado: true });
-        }
-        conId.push({ ...p, puntoId });
-      }
-      const punto = p => ({ nombre: p.nombre.trim(), direccion: p.direccion || `${p.lat}, ${p.lng}`, puntoId: p.puntoId, contacto: p.contacto || "", telefono: p.telefono || "" });
-      /* 2. El servicio, con folio. */
+      const conId = await guardarLugares(db, usuario, paradas, lugares);
       setOcupado("Creando el servicio…");
-      const datos = { canal: "Asignación directa", recibidaEn: ahoraLocal(), empresa: cliente.trim(), solicitante: usuario.nombre || usuario.email || "",
-        fechaServicio: fecha, horaServicio: hora, origenes: conId.filter(p => p.tipo === "carga").map(punto), destinos: conId.filter(p => p.tipo === "entrega").map(punto),
-        asignacionTipo: "Flota propia", unidadPlaca: placa, choferNombre: chofer.nombre || "", indicaciones: indicaciones.trim(), notas: indicaciones.trim() };
-      const { id, folio } = await store.crear(usuario, datos);
+      const datos = datosServicio({ usuario, cliente, fecha, hora, paradas: conId, placa, chofer, indicaciones });
+      const { id, folio } = await crearServicioRuta(db, usuario, datos);
       const p = { id, folio, datos, choferId, choferNombre: chofer.nombre, ordenar };
       setPendiente(p);
-      await terminarAsignacion(p);
+      await terminar(p);
     } catch(e){ setError(mensajeError(e)); }
     setOcupado("");
   };
   /* Pasos 3 y 4 por separado: si fallan, "Reintentar" los repite sobre el MISMO servicio (no crea otro folio). */
-  const terminarAsignacion = async p => {
-    const store = crearServiciosStore(db);
+  const terminar = async p => {
     setOcupado("Mandando la ruta al chofer…");
-    try { await llamar("oficinaPrepararRuta", { servicioId: p.id, choferId: p.choferId, ordenar: p.ordenar }); }
-    catch(e){ if(e?.code !== "functions/already-exists") throw e; }   // ya estaba armada: se sigue
-    const faltantes = requisitosEstado({ ...p.datos, estado: "Solicitud" }, "Asignada");
-    await store.cambiarEstado(usuario, { id: p.id, estado: "Solicitud" }, "Asignada",
-      { motivo: faltantes.length ? "Asignada desde Asignar ruta; falta: " + faltantes.join(", ") : "Asignada desde Asignar ruta", faltantes });
+    await terminarAsignacion(db, usuario, llamar, p);
     setPendiente(null);
     setListo({ folio: p.folio, chofer: p.choferNombre });
     setParadas([]); setIndicaciones(""); setHora("");
   };
   const reintentar = async () => {
     setError("");
-    try { await terminarAsignacion(pendiente); } catch(e){ setError(mensajeError(e)); }
+    try { await terminar(pendiente); } catch(e){ setError(mensajeError(e)); }
     setOcupado("");
   };
 
