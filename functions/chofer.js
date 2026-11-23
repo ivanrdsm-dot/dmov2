@@ -5,7 +5,7 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
-import { validarLote, coordenadaValida, RADIO_GEOCERCA_DEFAULT_M } from "./lib/geo.js";
+import { validarLote, coordenadaValida, distanciaM, RADIO_GEOCERCA_DEFAULT_M } from "./lib/geo.js";
 import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA } from "./lib/paradas.js";
 import { ordenarParadas } from "./lib/rutas.js";
 import { fusionarClaims } from "./permisos.js";
@@ -123,6 +123,23 @@ export const choferSubirPosiciones = onCall(OPC, async req => {
         lat: fin.lat, lng: fin.lng, tMs: fin.tMs, precisionM: fin.precisionM, bateria: fin.bateria, confiable: fin.confiable, actualizadoEn: ahora(),
         ...(r.ultimaConfiable ? { confiableLat: r.ultimaConfiable.lat, confiableLng: r.ultimaConfiable.lng, confiableTMs: r.ultimaConfiable.tMs } : {}) });
     await lote.commit();
+  }
+  /* "Está por llegar": si el cliente tiene link de seguimiento y la camioneta ya está a < 1 km de su
+     siguiente entrega, se anota UNA vez en la bitácora (de ahí sale el aviso a su celular). */
+  const ultima = r.aceptadas.filter(p => p.confiable !== false).pop();
+  if(ultima && servicio.seguimientoToken && servicio.estado === "En ruta"){
+    try {
+      const ps = (await db().collection(`servicios/${servicio.id}/paradas`).orderBy("orden").get()).docs;
+      const sig = ps.find(d => d.data().tipo !== "carga" && !["Entregada", "Incidencia"].includes(d.data().estado));
+      if(sig && !sig.data().avisoCercaEn && coordenadaValida({ lat: sig.data().lat, lng: sig.data().lng }) && distanciaM(ultima, { lat: sig.data().lat, lng: sig.data().lng }) < 1000){
+        await db().runTransaction(async tx => {
+          const p = await tx.get(sig.ref);
+          if(p.data().avisoCercaEn) return;
+          tx.update(sig.ref, { avisoCercaEn: ahora() });
+          eventoServicio(tx, servicio.id, { tipo: "llegando", paradaId: sig.id, paradaNombre: p.data().nombre || "", ...actorChofer(chofer) });
+        });
+      }
+    } catch(e){ console.warn("aviso de llegada", e?.message); }
   }
   for(const a of r.alertas) await alerta({ type: a.tipo, choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: servicio.id,
     msg: a.tipo === "ubicacion_simulada" ? "Ubicación simulada detectada" : a.tipo === "velocidad_imposible" ? `Salto imposible: ${a.kmh} km/h` : "Reloj del equipo adelantado", lat: a.lat ?? null, lng: a.lng ?? null });

@@ -126,3 +126,6 @@ export { reflejarFacturaEnServicio } from "./facturas.js";
 
 /* Permisos dentro de la cuenta (custom claims) para Storage y la app */
 export { permisosOficina, permisosChofer } from "./permisos.js";
+
+/* Avisos al celular del cliente (Web Push) */
+export { avisarClientePush } from "./avisosPush.js";

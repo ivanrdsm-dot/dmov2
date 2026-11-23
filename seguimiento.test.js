@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { vistaPublica, validarEncuesta, paginaSeguimiento, tokenValido, estadoJSON, avisosCliente } from "./functions/lib/seguimiento.js";
+import { vistaPublica, validarEncuesta, paginaSeguimiento, tokenValido, estadoJSON, avisosCliente, notificacionDeEvento, suscripcionValida, manifestCliente } from "./functions/lib/seguimiento.js";
 
 const S = { folio: "SRV-2026-0007", empresa: "Cliente", estado: "En ruta", fechaServicio: "2026-11-12", horaServicio: "9:00",
   choferNombre: "Juan Pérez López", unidadPlaca: "ABC-123", precio: 3500, costoTotal: 2100, notas: "INTERNO: pagar rápido", choferTel: "5555555555",
@@ -67,5 +67,24 @@ describe("encuesta y token", () => {
     expect(tokenValido("a".repeat(43))).toBe(true);
     expect(tokenValido("corto")).toBe(false);
     expect(tokenValido("a".repeat(40) + "/../")).toBe(false);
+  });
+});
+
+describe("avisos al celular del cliente", () => {
+  it("'está por llegar' y la notificación lleva solo el texto para el cliente y su link", () => {
+    expect(avisosCliente([{ id: "x", tipo: "llegando", paradaNombre: "Tienda 2", ts: 1 }])[0].texto).toBe("📍 Tu envío está por llegar a Tienda 2 (a menos de 1 km).");
+    const n = notificacionDeEvento({ id: "e1", tipo: "estado", a: "En ruta" }, [], { folio: "SRV-2026-0007", precio: 3500 }, "TOKEN123");
+    expect(n).toEqual({ title: "D Movimiento · SRV-2026-0007", body: "🚚 Tu envío salió a ruta.", url: "/s/TOKEN123", tag: "dmov-SRV-2026-0007-e1" });
+    expect(notificacionDeEvento({ id: "e2", tipo: "costo_capturado", monto: 999 }, [], { folio: "X" }, "T")).toBeNull();
+  });
+  it("solo acepta suscripciones https con llaves con formato", () => {
+    const ok = { endpoint: "https://fcm.googleapis.com/fcm/send/abc123def456", keys: { p256dh: "B".repeat(87), auth: "a".repeat(22) } };
+    expect(suscripcionValida(ok)).toEqual(ok);
+    expect(suscripcionValida({ ...ok, endpoint: "http://inseguro.com/x" })).toBeNull();
+    expect(suscripcionValida({ ...ok, keys: { p256dh: "<script>", auth: "x" } })).toBeNull();
+    expect(suscripcionValida(null)).toBeNull();
+  });
+  it("manifest para agregar a inicio en iPhone abre su propio seguimiento", () => {
+    expect(manifestCliente("/s/TOKEN", "SRV-1")).toMatchObject({ start_url: "/s/TOKEN", scope: "/s/", display: "standalone" });
   });
 });
