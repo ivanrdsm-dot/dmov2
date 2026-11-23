@@ -62,14 +62,15 @@ export function validarLote(posiciones, { ahoraMs, ultimaConfiable = null } = {}
       bateria: Number.isFinite(p.bateria) && p.bateria >= 0 && p.bateria <= 100 ? Math.round(p.bateria) : null,
       simulada: p.simulada, confiable: true };
     if(p.simulada){ punto.confiable = false; alertas.push({ tipo: "ubicacion_simulada", tMs: p.tMs, lat: p.lat, lng: p.lng }); }
-    else if(previa){
+    else if(previa && !(punto.precisionM > PRECISION_MAX_M)){
       const v = velocidadKmh(previa, punto);
       if(v !== null && v > VELOCIDAD_MAX_KMH && distanciaM(previa, punto) > 500){
         punto.confiable = false; punto.velocidadImposibleKmh = Math.round(v);
         alertas.push({ tipo: "velocidad_imposible", tMs: p.tMs, kmh: Math.round(v), lat: p.lat, lng: p.lng });
       }
     }
-    if(punto.confiable) previa = punto;
+    /* La primera lectura del celular suele ser aproximada (wifi/antena): no sirve como referencia de velocidad. */
+    if(punto.confiable && !(punto.precisionM > PRECISION_MAX_M)) previa = punto;
     aceptadas.push(punto);
   }
   /* Una alerta por tipo y lote es suficiente para operaciones */

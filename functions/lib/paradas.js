@@ -7,13 +7,14 @@ export const TIPOS_INCIDENCIA = ["Cliente ausente", "Entrega rechazada", "Entreg
 export const POSICION_MAX_EDAD_MS = 5 * 60000;   // la presencia se valida con una lectura reciente
 
 /** ¿Se puede cerrar la parada? Devuelve el veredicto y por qué, para mostrárselo al chofer y dejarlo en bitácora. */
-export function evaluarCierreParada({ parada, posicion, ahoraMs, evidencia = {}, excepcion = null }){
+export function evaluarCierreParada({ parada, posicion, ahoraMs, evidencia = {}, excepcion = null, incidencia = "" }){
   const no = (motivo, extra = {}) => ({ permitido: false, motivo, ...extra });
   if(!parada) return no("Parada no encontrada");
   if(parada.estado === "Entregada") return no("Esta parada ya está cerrada");
   const fotos = Array.isArray(evidencia.fotos) ? evidencia.fotos.filter(Boolean) : [];
   if(fotos.length === 0) return no("Falta la foto de evidencia");
-  if(!String(evidencia.receptor ?? "").trim()) return no("Falta el nombre de quien recibe");
+  /* Con un problema (cliente ausente, rechazo…) puede no haber nadie que reciba: no se obliga a inventar un nombre. */
+  if(!incidencia && !String(evidencia.receptor ?? "").trim()) return no("Falta el nombre de quien recibe");
   const cant = Number(evidencia.cantidadEntregada);
   if(evidencia.cantidadEntregada !== undefined && evidencia.cantidadEntregada !== "" && !(cant >= 0)) return no("La cantidad entregada no es válida");
 

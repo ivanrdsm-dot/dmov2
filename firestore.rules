@@ -53,7 +53,9 @@ service cloud.firestore {
     match /driverLocations/{choferId}{ allow read: if esOficina(); allow create, update, delete: if esAdmin(); }
     match /choferes/{id}             { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('choferes', id); }
     match /gastosChofer/{id}         { allow read, create, update: if esOficina(); allow delete: if false; }
-    match /jornadas/{id}             { allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId()); allow create, update: if esOficina(); allow delete: if false; }
+    /* El chofer lee SU jornada aunque todavía no exista (antes de su check-in): se revisa por el nombre del documento,
+       {choferId}_{fecha}; si no, la app no se enteraba del check-in hasta recargar. */
+    match /jornadas/{id}             { allow read: if esOficina() || (esChofer() && id.matches(miChoferId() + '_[0-9]{4}-[0-9]{2}-[0-9]{2}') && (resource == null || resource.data.choferId == miChoferId())); allow create, update: if esOficina(); allow delete: if false; }
     match /mensajes/{id}             { allow read, create, update: if esOficina(); allow delete: if false; }
     match /alertas/{id}              { allow read, create, update: if esOficina(); allow delete: if false; }
     match /alerts/{id} {                          // legacy migrada — congelada

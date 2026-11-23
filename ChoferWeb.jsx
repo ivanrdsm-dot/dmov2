@@ -10,6 +10,7 @@ import { collection, doc, onSnapshot, query, where, orderBy } from "firebase/fir
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getStorage, ref as refStorage, uploadBytes } from "firebase/storage";
 import { correoDeChofer, enlaceNavegar } from "./lugares.ts";
+import FirmaPad from "./FirmaPad.jsx";
 
 const LETRA = "system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
 const AZUL = "#042552", NARANJA = "#F27B13", VERDE = "#059669", ROJO = "#dc2626", GRIS = "#5b6b80", FONDO = "#f1f4fb";
@@ -21,7 +22,10 @@ const mensaje = e => String(e?.message || "No se pudo. Intenta otra vez.").repla
   .replace(/\(auth\/(invalid-credential|wrong-password|user-not-found|invalid-login-credentials)\)\.?/i, "Celular o contraseña incorrectos.")
   .replace(/\(auth\/too-many-requests\)\.?/i, "Demasiados intentos. Espera unos minutos.")
   .replace(/\(auth\/network-request-failed\)\.?/i, "Sin internet. Revisa tu señal.")
-  .replace(/^Error\s+/, "");
+  .replace(/.*storage\/unauthorized.*/i, "No se pudo subir la foto: tu cuenta no tiene permiso. Avisa a la oficina.")
+  .replace(/.*storage\/(retry-limit-exceeded|canceled|unknown).*/i, "No se pudo subir la foto por la señal. Intenta otra vez.")
+  .replace(/^Error\s+/, "")
+  .replace(/ligada a otro equipo\. Avisa a operaciones\./, "ligada a otro equipo. Si acabas de poner la app en tu pantalla de inicio, pide a la oficina: En vivo → Cambió de teléfono.");
 function dispositivoId(){
   try {
     let d = localStorage.getItem("dmov_disp");
@@ -44,8 +48,10 @@ async function comprimir(file){
     const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
     const b = await new Promise(r => c.toBlob(r, "image/jpeg", 0.8));
-    return b || file;
-  } catch { return file; }
+    if(b) return b;
+  } catch {}
+  if(file.size >= 5 * 1024 * 1024) throw new Error("La foto pesa mucho. Tómala con la cámara (no de la galería) y vuelve a intentar.");
+  return file;
 }
 
 const boton = (color, lleno = true) => ({ background: lleno ? color : "#fff", color: lleno ? "#fff" : color, border: "2px solid " + color, borderRadius: 14,
@@ -145,10 +151,10 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
 /* ── Entregar en una parada ──────────────────────────────────────────────── */
 function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerrar }){
   const [foto, setFoto] = useState(null), [foto2, setFoto2] = useState(null), [recibe, setRecibe] = useState(""), [notas, setNotas] = useState("");
-  const [problema, setProblema] = useState(""), [error, setError] = useState(""), [paso, setPaso] = useState("");
+  const [problema, setProblema] = useState(""), [error, setError] = useState(""), [paso, setPaso] = useState(""), [firma, setFirma] = useState(null);
   const enviar = async () => {
-    if(!foto){ setError("Toma la foto de la entrega."); return; }
-    if(!recibe.trim()){ setError("Escribe el nombre de quien recibe."); return; }
+    if(!foto){ setError(problema ? "Toma una foto del lugar (sirve de prueba)." : "Toma la foto de la entrega."); return; }
+    if(!problema && !recibe.trim()){ setError("Escribe el nombre de quien recibe."); return; }
     setError("");
     try {
       setPaso("Confirmando que estás en el lugar…"); await mandarAhora();
@@ -156,8 +162,9 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
       const base = `evidencias/${chofer.id}/${servicio.id}/${parada.id}_${Date.now()}_`;
       const fotos = [await subir(base + "1.jpg", foto)];
       if(foto2) fotos.push(await subir(base + "2.jpg", foto2));
+      const firmaRuta = firma ? await subir(base + "firma.png", firma) : "";
       setPaso("Cerrando la parada…");
-      await llamar("choferCerrarParada", { servicioId: servicio.id, paradaId: parada.id, evidencia: { fotos, receptor: recibe.trim(), notas: notas.trim(), incidencia: problema } });
+      await llamar("choferCerrarParada", { servicioId: servicio.id, paradaId: parada.id, evidencia: { fotos, firmaRuta, receptor: recibe.trim(), notas: notas.trim(), incidencia: problema } });
       onCerrar(true);
     } catch(e){ setError(mensaje(e)); }
     setPaso("");
@@ -169,13 +176,14 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
         <p style={{ color: GRIS, margin: "4px 0 12px" }}>{parada.direccion}</p>
         <Foto titulo="Foto de la entrega" archivo={foto} onCambio={setFoto}/>
         {foto && <Foto titulo="Otra foto (opcional)" archivo={foto2} onCambio={setFoto2}/>}
-        <Etiqueta>¿Quién recibió?</Etiqueta>
-        <input style={caja} value={recibe} onChange={e => setRecibe(e.target.value)} placeholder="Nombre de la persona"/>
         <Etiqueta>¿Todo bien?</Etiqueta>
         <select style={caja} value={problema} onChange={e => setProblema(e.target.value)}>
           <option value="">Sí, todo bien</option>
           {INCIDENCIAS.map(x => <option key={x} value={x}>Hubo un problema: {x}</option>)}
         </select>
+        <Etiqueta>{problema ? "¿Quién te atendió? (si hubo alguien)" : "¿Quién recibió?"}</Etiqueta>
+        <input style={caja} value={recibe} onChange={e => setRecibe(e.target.value)} placeholder="Nombre de la persona"/>
+        {!problema && <><Etiqueta>Firma de quien recibe (opcional)</Etiqueta><FirmaPad onCambio={setFirma}/></>}
         <Etiqueta>Comentarios (opcional)</Etiqueta>
         <textarea style={{ ...caja, minHeight: 70 }} value={notas} onChange={e => setNotas(e.target.value)}/>
         {error && <div style={{ color: ROJO, fontWeight: 700, marginTop: 12 }}>{error}</div>}
@@ -238,6 +246,7 @@ export default function ChoferWeb({ db, auth, app }){
   const [chofer, setChofer] = useState(null), [errorCuenta, setErrorCuenta] = useState("");
   const [servicios, setServicios] = useState(null), [jornada, setJornada] = useState(undefined);
   const [aviso, setAviso] = useState(null), [ultimoEnvio, setUltimoEnvio] = useState(0), [errorGps, setErrorGps] = useState("");
+  const [vuelta, setVuelta] = useState(0), [errorRutas, setErrorRutas] = useState("");
   const [, setReloj] = useState(0);
   const disp = useRef(dispositivoId()), buffer = useRef([]), bateria = useRef(null);
   const fns = useRef(getFunctions(app, "us-central1")), almacen = useRef(getStorage(app));
@@ -248,7 +257,8 @@ export default function ChoferWeb({ db, auth, app }){
   useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 15000); return () => clearInterval(t); }, []);
 
   const llamar = useCallback((nombre, datos = {}) => httpsCallable(fns.current, nombre)({ dispositivoId: disp.current, ...datos }).then(r => r.data), []);
-  const subir = useCallback(async (ruta, archivo) => { await uploadBytes(refStorage(almacen.current, ruta), await comprimir(archivo), { contentType: "image/jpeg" }); return ruta; }, []);
+  const subir = useCallback(async (ruta, archivo) => { const b = await comprimir(archivo);
+    await uploadBytes(refStorage(almacen.current, ruta), b, { contentType: /^image\//.test(b.type) ? b.type : "image/jpeg" }); return ruta; }, []);
   const avisar = (texto, error = false) => { setAviso({ texto, error }); setTimeout(() => setAviso(null), 6000); };
 
   /* Al entrar: el servidor liga este celular a su cuenta (la primera vez) y dice quién es. */
@@ -264,10 +274,10 @@ export default function ChoferWeb({ db, auth, app }){
     if(!chofer) return;
     const u1 = onSnapshot(query(collection(db, "servicios"), where("choferId", "==", chofer.id), where("estado", "in", ["Asignada", "En ruta"])),
       s => setServicios(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.estado === "En ruta") - (a.estado === "En ruta") || String(a.fechaServicio || "").localeCompare(String(b.fechaServicio || "")))),
-      () => setServicios([]));
+      e => { setServicios([]); setErrorRutas("No se pudieron cargar tus rutas (" + mensaje(e) + "). Revisa tu señal y vuelve a abrir la app."); });
     const u2 = onSnapshot(doc(db, "jornadas", `${chofer.id}_${fechaCDMX()}`), s => setJornada(s.exists() ? s.data() : null), () => setJornada(null));
     return () => { u1(); u2(); };
-  }, [db, chofer]);
+  }, [db, chofer, vuelta]);
 
   const enRuta = (servicios || []).find(s => s.estado === "En ruta");
   const jornadaAbierta = jornada?.estado === "Abierta";
@@ -340,9 +350,10 @@ export default function ChoferWeb({ db, auth, app }){
           {!errorGps && <div style={{ color: AZUL, fontSize: 14, marginTop: 4 }}>Deja esta pantalla abierta mientras manejas.{hace !== null ? ` Última ubicación enviada hace ${hace < 1 ? "menos de 1" : hace} min.` : ""}</div>}
         </div>}
         {jornada === undefined || servicios === null ? <div style={{ ...tarjeta, color: GRIS }}>Cargando tus rutas…</div> : <>
-          {!jornada && <EmpezarDia chofer={chofer} placaSugerida={(servicios[0] || {}).unidadPlaca || ""} llamar={llamar} subir={subir} onListo={() => avisar("¡Listo! Ya puedes salir a tu ruta.")}/>}
+          {!jornada && <EmpezarDia chofer={chofer} placaSugerida={(servicios[0] || {}).unidadPlaca || ""} llamar={llamar} subir={subir} onListo={() => { setVuelta(v => v + 1); avisar("¡Listo! Ya puedes salir a tu ruta."); }}/>}
           {jornada?.estado === "Cerrada" && <div style={{ ...tarjeta, color: AZUL, fontWeight: 700 }}>Tu día de hoy ya está cerrado. ¡Buen descanso!</div>}
-          {servicios.length === 0 && jornada?.estado !== "Cerrada" && <div style={{ ...tarjeta, textAlign: "center", color: GRIS, fontSize: 17 }}>Por ahora no tienes rutas asignadas.<br/>Cuando la oficina te asigne una, aparece aquí sola.</div>}
+          {errorRutas && <div style={{ ...tarjeta, color: ROJO, fontWeight: 700 }}>{errorRutas}</div>}
+          {servicios.length === 0 && !errorRutas && jornada?.estado !== "Cerrada" && <div style={{ ...tarjeta, textAlign: "center", color: GRIS, fontSize: 17 }}>Por ahora no tienes rutas asignadas.<br/>Cuando la oficina te asigne una, aparece aquí sola.</div>}
           {servicios.map(s => <Servicio key={s.id} db={db} chofer={chofer} servicio={s} jornadaAbierta={jornadaAbierta} llamar={llamar} subir={subir} mandarAhora={mandarAhora} avisar={avisar}/>)}
           {jornadaAbierta && !enRuta && <button onClick={terminar} style={{ ...boton(AZUL, false), marginTop: 6 }}>Terminar mi día</button>}
         </>}

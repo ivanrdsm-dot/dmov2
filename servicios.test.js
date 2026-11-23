@@ -164,3 +164,14 @@ describe("resumenRuta", () => {
     expect(ESTADOS_SERVICIO).toEqual(["Solicitud", "Cotizada", "Confirmada", "Asignada", "En ruta", "Entregada", "Cerrada", "Conciliada", "Facturada", "Cobrada"]);
   });
 });
+
+import { validarServicio as _vs } from "./servicios.ts";
+describe("asignación directa", () => {
+  it("sin recolección queda pendiente (no bloquea) solo si se asignó directo", () => {
+    const base = { canal: "Asignación directa", recibidaEn: "2026-11-23T09:00", empresa: "Cliente", solicitante: "Ilse", origenes: [], destinos: [{ direccion: "Av. 1", contacto: "Ana" }] };
+    const r = _vs(base);
+    expect(r.ok).toBe(true);
+    expect(r.pendientes).toContain("Al menos un origen con dirección");
+    expect(_vs({ ...base, canal: "Correo" }).errores).toContain("Al menos un origen con dirección");
+  });
+});

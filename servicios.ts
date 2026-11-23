@@ -15,7 +15,7 @@ export const ESTADOS_SERVICIO = [
 export type EstadoLineal = typeof ESTADOS_SERVICIO[number];
 export type EstadoServicio = EstadoLineal | "Cancelada";
 
-export const CANALES_SOLICITUD = ["Slack", "Correo", "WhatsApp", "Teléfono", "En persona"] as const;
+export const CANALES_SOLICITUD = ["Slack", "Correo", "WhatsApp", "Teléfono", "En persona", "Asignación directa"] as const;
 export const TIPOS_ASIGNACION = ["Flota propia", "Unidad del grupo", "Proveedor externo"] as const;
 
 export interface PuntoServicio {
@@ -65,7 +65,8 @@ export function validarServicio(s: Servicio): { ok: boolean; errores: string[]; 
   if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(_txt(s.recibidaEn))) errores.push("Fecha y hora en que se recibió");
   if(!_txt(s.empresa)) errores.push("Empresa o cliente");
   if(!_txt(s.solicitante)) errores.push("Nombre de quien solicita");
-  if(_puntosConDireccion(s.origenes).length === 0) errores.push("Al menos un origen con dirección");
+  /* Una ruta asignada directo (reparto desde nuestra bodega) puede no traer recolección: queda pendiente, no bloquea. */
+  if(_puntosConDireccion(s.origenes).length === 0) (_txt(s.canal) === "Asignación directa" ? pendientes : errores).push("Al menos un origen con dirección");
   if(_puntosConDireccion(s.destinos).length === 0) errores.push("Al menos un destino con dirección");
 
   if(!/^\d{4}-\d{2}-\d{2}$/.test(_txt(s.fechaServicio))) pendientes.push("Fecha del servicio");
