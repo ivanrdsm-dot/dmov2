@@ -13,6 +13,7 @@ export const UMBRALES_CHOFER = {
   fueraDeRutaM: 1500,           // lejos del camino trazado
   fueraDeRutaMin: 3,            // y así por más de esto (evita falsas alarmas por un rodeo)
   sinUbicacionMin: 10,          // en ruta sin mandar ubicación
+  enteradoMin: 5,               // la oficina cambió la ruta y el chofer no ha tocado "Enterado"
   sinUbicacionJornadaMin: 30,   // con jornada abierta (sin ruta) sin mandar ubicación
   /* Horario LOCAL (lo dio el director): entrada 7:00, salida 17:00. */
   horaCheckIn: "07:00",         // entrada
@@ -30,6 +31,7 @@ export const TIPOS_ALERTA_CHOFER = {
   sin_checkin: "Chofer con ruta y sin check-in",
   sin_checkout: "Jornada sin check-out",
   ruta_excedida: "Ruta foránea pasada de días",
+  cambio_sin_enterado: "El chofer no ha confirmado un cambio de ruta",
 };
 const dur = min => min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? " " + (min % 60) + " min" : ""}`;
 
@@ -125,6 +127,16 @@ export function alertasChoferes({ ubicaciones = {}, enRuta = [], conRutaHoy = []
         add(`chf-ruta-${s.choferId}-${u.fueraDesdeMs}`, "fuera_de_ruta", s, `${s.choferNombre || "El chofer"} (${s.folio}) va a ${(u.fueraM / 1000).toFixed(1)} km de su ruta desde hace ${dur(min)}.`,
           { lat: u.lat ?? null, lng: u.lng ?? null, distanciaM: u.fueraM });
     }
+  }
+  /* Cambio de ruta sin "Enterado": la oficina cambió algo (quitar, agregar, detener) y el chofer no lo confirmó. */
+  const vistos = new Set();
+  for(const s of [...enRuta, ...conRutaHoy]){
+    const c = s.cambioPendiente;
+    if(!s.id || vistos.has(s.id) || !c || !c.id || Number(c.enteradoMs) > 0 || !(Number(c.enMs) > 0)) continue;
+    vistos.add(s.id);
+    const min = Math.floor((ahoraMs - Number(c.enMs)) / 60000);
+    if(min >= U.enteradoMin)
+      add(`chf-ent-${s.id}-${c.id}`, "cambio_sin_enterado", s, `${s.choferNombre || "El chofer"} (${s.folio}) no ha confirmado el cambio de su ruta desde hace ${dur(min)}: ${(c.lineas || []).join(" · ") || c.resumen || "cambio de ruta"}. Llámale.`);
   }
   const limite = msDeHora(hoy, U.horaCheckIn) + U.toleranciaEntradaMin * 60000;
   if(ahoraMs >= limite){

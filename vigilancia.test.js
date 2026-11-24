@@ -139,3 +139,28 @@ describe("horario local y rutas foráneas", () => {
     expect(alertasChoferes({ enRuta: [{ ...s, regresoEstimado: "2026-11-23" }], jornadas: [j()], ubicaciones: { c1: { tMs: H("12:00"), servicioId: "s9" } } }, H("12:00")).map(a => a.type)).toEqual(["ruta_excedida"]);
   });
 });
+
+import { evaluarCierreParada, resumenCambio, estaDetenida } from "./functions/lib/paradas.js";
+describe("detener entrega y Enterado del chofer", () => {
+  const parada = { id: "p1", nombre: "Soriana Miyana", estado: "Pendiente", lat: 19.44, lng: -99.2, detenida: { activa: true, motivo: "No entregar hoy, se reprograma" } };
+  it("una parada detenida no se puede cerrar, aunque traiga todo y esté en el punto", () => {
+    const r = evaluarCierreParada({ parada, posicion: { lat: 19.44, lng: -99.2, tMs: T0, confiable: true }, ahoraMs: T0, evidencia: { fotos: ["f.jpg"], receptor: "Ana" } });
+    expect(r).toMatchObject({ permitido: false, detenida: true });
+    expect(r.motivo).toMatch(/No entregar hoy/);
+    expect(estaDetenida({ ...parada, detenida: { activa: false } })).toBe(false);
+  });
+  it("el aviso al chofer dice clarito qué cambió", () => {
+    expect(resumenCambio({ detenidas: [{ nombre: "Soriana Miyana", motivo: "se reprograma" }], quitadas: ["Tienda C"], agregadas: ["Tienda D"], reanudadas: ["Chedraui"] }))
+      .toEqual(["⛔ NO ENTREGAR en Soriana Miyana — se reprograma", "✅ Ya puedes entregar en Chedraui", "➖ Se quitó: Tienda C", "➕ Nueva parada: Tienda D"]);
+    expect(resumenCambio({})).toEqual([]);
+  });
+  it("si el chofer no toca Enterado en 5 min, alerta a la oficina", () => {
+    const s = { id: "s1", folio: "SRV-1", choferId: "c1", choferNombre: "Israel", estado: "En ruta", paradas: [], enRutaMs: T0,
+      cambioPendiente: { id: "abc", enMs: T0, lineas: ["⛔ NO ENTREGAR en Soriana Miyana"], enteradoMs: null } };
+    const u = { c1: { tMs: T0 + 6 * MIN, servicioId: "s1" } };
+    expect(alertasChoferes({ enRuta: [s], ubicaciones: u }, T0 + 4 * MIN).filter(a => a.type === "cambio_sin_enterado")).toHaveLength(0);
+    const a = alertasChoferes({ enRuta: [s], ubicaciones: u }, T0 + 6 * MIN).find(x => x.type === "cambio_sin_enterado");
+    expect(a).toMatchObject({ id: "chf-ent-s1-abc" }); expect(a.message).toMatch(/NO ENTREGAR en Soriana Miyana/);
+    expect(alertasChoferes({ enRuta: [{ ...s, cambioPendiente: { ...s.cambioPendiente, enteradoMs: T0 + MIN } }], ubicaciones: u }, T0 + 6 * MIN).filter(x => x.type === "cambio_sin_enterado")).toHaveLength(0);
+  });
+});

@@ -195,6 +195,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
           {servicios.map(s => <div key={s.id} style={tarjeta}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
+              {s.cambioPendiente && (s.cambioPendiente.enteradoMs ? <Chip color={GREEN}>✓ Chofer enterado del cambio</Chip> : <Chip color={ROSE}>⏳ Chofer sin confirmar cambio</Chip>)}
               {s.foraneo && <Chip color={A}>🛣️ Foránea · {s.diasFuera || 1} días{s.regresoEstimado ? ` · regresa ${s.regresoEstimado}` : ""}</Chip>}
               <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
                 <Chip color={s.estado === "En ruta" ? BLUE : ["Entregada", "Cerrada"].includes(s.estado) ? GREEN : A}>{s.estado === "Asignada" ? "Por salir" : s.estado}</Chip>

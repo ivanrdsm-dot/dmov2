@@ -131,6 +131,22 @@ test("4b · Ilse edita la ruta ya enviada: agrega una tienda y la vuelve a quita
   const sd = (await admin.firestore().doc("servicios/" + servicioId).get()).data();
   assert.equal(sd.diasFueraManual, true); assert.ok(sd.regresoEstimado > sd.fechaServicio);
   await assert.rejects(ilse.llamar("oficinaEditarRuta", { servicioId, diasFuera: 99 }), /1 a 30/);
+  // ⛔ Detener entrega: Ilse frena Tienda A; el chofer ve el aviso y confirma con "Enterado"; luego se reanuda.
+  const pa = (await getDocs(query(collection(chofer.db, "servicios", servicioId, "paradas"), orderBy("orden")))).docs.find(d => d.data().nombre === "Tienda A");
+  await assert.rejects(ilse.llamar("oficinaDetenerParada", { servicioId, paradaId: pa.id, detener: true, motivo: "" }), /motivo/);
+  await assert.rejects(chofer.llamar("oficinaDetenerParada", { servicioId, paradaId: pa.id, detener: true, motivo: "no entregar hoy" }));   // el chofer no puede
+  const d1 = await ilse.llamar("oficinaDetenerParada", { servicioId, paradaId: pa.id, detener: true, motivo: "No entregar hoy, se reprograma" });
+  let sv = (await getDoc(doc(chofer.db, "servicios", servicioId))).data();
+  assert.equal(sv.cambioPendiente.id, d1.cambioId); assert.equal(sv.cambioPendiente.enteradoMs, null);
+  assert.match(sv.cambioPendiente.lineas[0], /NO ENTREGAR en Tienda A/);
+  assert.equal((await getDoc(doc(chofer.db, "servicios", servicioId, "paradas", pa.id))).data().detenida.activa, true);
+  assert.equal((await chofer.llamar("choferEnterado", { dispositivoId: "equipo-prueba-0001", servicioId, cambioId: d1.cambioId })).ok, true);
+  sv = (await getDoc(doc(chofer.db, "servicios", servicioId))).data();
+  assert.ok(sv.cambioPendiente.enteradoMs > 0, "queda la hora del Enterado");
+  const d2 = await ilse.llamar("oficinaDetenerParada", { servicioId, paradaId: pa.id, detener: false });
+  assert.ok(d2.cambioId && d2.cambioId !== d1.cambioId);
+  await chofer.llamar("choferEnterado", { dispositivoId: "equipo-prueba-0001", servicioId, cambioId: d2.cambioId });
+  assert.equal((await getDoc(doc(chofer.db, "servicios", servicioId, "paradas", pa.id))).data().detenida.activa, false);
 });
 
 test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () => {
