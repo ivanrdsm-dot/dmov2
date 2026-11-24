@@ -44,6 +44,20 @@ const Paso = ({ n, titulo, children }) => (
     {children}
   </div>);
 
+/* Local o foránea (lo calcula el sistema al armar la ruta). En foránea, los días fuera se pueden corregir. */
+function DiasFuera({ s, llamar, editable }){
+  const [estado, setEstado] = useState("");
+  if(!s.foraneo) return <Chip color={MUTED}>🏙️ Local</Chip>;
+  const cambiar = async v => { setEstado("…"); try { await llamar("oficinaEditarRuta", { servicioId: s.id, diasFuera: Number(v) }); setEstado(""); } catch(e){ setEstado(mensajeError(e)); } };
+  return <span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+    <Chip color={A}>🛣️ Foránea{s.kmMaxDesdeBase ? ` · ${s.kmMaxDesdeBase} km` : ""}</Chip>
+    {editable ? <select value={s.diasFuera || 1} onChange={e => cambiar(e.target.value)} style={{ ...caja, width: "auto", padding: "3px 6px", fontSize: 12 }} title="Días fuera">
+      {Array.from({ length: 15 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n} {n === 1 ? "día" : "días"} fuera</option>)}</select>
+      : <span style={{ fontSize: 12, color: MUTED }}>{s.diasFuera || 1} días</span>}
+    {s.regresoEstimado && <span style={{ fontSize: 12, color: MUTED }}>regresa {s.regresoEstimado}{s.diasFueraManual ? "" : " (estimado)"}</span>}
+    {estado && <span style={{ fontSize: 12, color: ROSE }}>{estado}</span>}</span>;
+}
+
 /* ── Acceso del chofer a su app (solo admin): cuenta con su celular + enlace por WhatsApp ── */
 function AccesoChofer({ chofer, llamar, esAdmin, enlace, setEnlace }){
   const [error, setError] = useState(""), [ocupado, setOcupado] = useState(false);
@@ -228,6 +242,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
               return <div key={s.id} style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 12, padding: "10px 14px", marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                   <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
+                  {s.foraneo != null && <DiasFuera s={s} llamar={llamar} editable={editable}/>}
                   <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     {editable && <button onClick={() => setEditando(editando === s.id ? "" : s.id)} style={{ ...boton(A, false), padding: "5px 10px", minHeight: 30, fontSize: 12 }}>✏️ {editando === s.id ? "Cerrar" : "Editar paradas"}</button>}
                     <button onClick={() => repetir(s)} style={{ ...boton(BLUE, false), padding: "5px 10px", minHeight: 30, fontSize: 12 }}>↺ Repetir</button>

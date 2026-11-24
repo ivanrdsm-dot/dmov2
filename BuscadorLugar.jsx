@@ -29,7 +29,7 @@ export function BuscadorLugar({ token, lugares, onElegir, llamar, cerca = null }
     let vivo = true; setCargando(true); setAviso("");
     llamar("oficinaResolverEnlace", { url: q.trim() }).then(r => {
       if(!vivo) return;
-      if(r.sinCoordenada){ setAviso(r.texto ? `Ese link no trae la ubicación exacta. Busca: "${r.texto}"` : "Ese link no trae la ubicación. Abre el lugar en Google Maps, toca Compartir y copia el link otra vez."); if(r.texto) setQ(r.texto); return; }
+      if(r.sinCoordenada || !Number.isFinite(Number(r.lat)) || !Number.isFinite(Number(r.lng))){ setAviso(r.texto ? `Ese link no trae la ubicación exacta. Busca: "${r.texto}"` : "Ese link no trae la ubicación. Abre el lugar en Google Maps, toca Compartir y copia el link otra vez."); if(r.texto) setQ(r.texto); return; }
       onElegir({ nombre: r.nombre || "", direccion: r.direccion || `${r.lat}, ${r.lng}`, lat: r.lat, lng: r.lng, puntoId: "", confirmada: false, fuente: "link" });
       limpiar();
     }).catch(e => vivo && setAviso("No se pudo leer el link: " + String(e?.message || "").replace(/^.*?:\s*/, ""))).finally(() => vivo && setCargando(false));
@@ -134,7 +134,7 @@ async function buscarRenglon(token, lugares, linea, llamar){
   if(c) return { nombre: "", direccion: `${c.lat}, ${c.lng}`, lat: c.lat, lng: c.lng, puntoId: "", confirmada: false };
   if(llamar && esLink(linea)){
     const r = await llamar("oficinaResolverEnlace", { url: linea }).catch(() => null);
-    return r && !r.sinCoordenada ? { nombre: r.nombre || "", direccion: r.direccion || `${r.lat}, ${r.lng}`, lat: r.lat, lng: r.lng, puntoId: "", confirmada: false } : null;
+    return r && !r.sinCoordenada && Number.isFinite(Number(r.lat)) ? { nombre: r.nombre || "", direccion: r.direccion || `${r.lat}, ${r.lng}`, lat: r.lat, lng: r.lng, puntoId: "", confirmada: false } : null;
   }
   if(llamar){
     const sesion = nuevaSesion();

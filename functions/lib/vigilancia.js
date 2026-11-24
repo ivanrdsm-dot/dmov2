@@ -14,8 +14,14 @@ export const UMBRALES_CHOFER = {
   fueraDeRutaMin: 3,            // y así por más de esto (evita falsas alarmas por un rodeo)
   sinUbicacionMin: 10,          // en ruta sin mandar ubicación
   sinUbicacionJornadaMin: 30,   // con jornada abierta (sin ruta) sin mandar ubicación
-  horaCheckIn: "09:00",         // si tiene ruta hoy y a esta hora no hay check-in → falta
-  jornadaMaxHoras: 14,          // jornada abierta más tiempo → falta el check-out
+  /* Horario LOCAL (lo dio el director): entrada 7:00, salida 17:00. */
+  horaCheckIn: "07:00",         // entrada
+  toleranciaEntradaMin: 10,     // a las 7:10 sin check-in → falta
+  horaSalida: "17:00",          // salida
+  toleranciaSalidaMin: 30,      // a las 17:30 sin check-out (y sin ruta en curso) → avisa
+  /* Ruta FORÁNEA: el horario cambia. Cada día hace check-in y check-out donde esté; de noche descansa. */
+  horaCheckInForaneo: "09:00",  // en foránea, a esta hora sin check-in → avisa
+  jornadaMaxHoras: 16,          // cualquier jornada abierta más de esto → falta el check-out
 };
 export const TIPOS_ALERTA_CHOFER = {
   detenido: "Chofer detenido mucho tiempo",
@@ -23,6 +29,7 @@ export const TIPOS_ALERTA_CHOFER = {
   sin_ubicacion: "La app del chofer no manda ubicación",
   sin_checkin: "Chofer con ruta y sin check-in",
   sin_checkout: "Jornada sin check-out",
+  ruta_excedida: "Ruta foránea pasada de días",
 };
 const dur = min => min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? " " + (min % 60) + " min" : ""}`;
 
@@ -81,7 +88,21 @@ export function alertasChoferes({ ubicaciones = {}, enRuta = [], conRutaHoy = []
   const out = [];
   const add = (id, type, s, message, extra = {}) => out.push({ id, type, folio: s?.folio || "", choferId: s?.choferId || extra.choferId || "", choferNombre: s?.choferNombre || extra.choferNombre || "",
     servicioId: s?.id || "", message, ref: s?.id ? { coleccion: "servicios", id: s.id } : { coleccion: "choferes", id: s?.choferId || extra.choferId || "" }, ...extra });
+  const hoy = fechaCDMX(ahoraMs);
+  const jornadaHoy = id => jornadas.find(j => j.choferId === id && j.fecha === hoy);
   for(const s of enRuta){
+    /* Foránea: si ya cerró su día (descansando) o aún no empieza el de hoy, no se le vigila la ubicación. */
+    if(s.foraneo){
+      const j = jornadaHoy(s.choferId);
+      if(s.regresoEstimado && hoy > s.regresoEstimado)
+        add(`chf-exc-${s.id}-${hoy}`, "ruta_excedida", s, `${s.choferNombre || "El chofer"} (${s.folio}) sigue en ruta foránea; debía regresar el ${s.regresoEstimado}.`);
+      if(!j){
+        if(ahoraMs >= msDeHora(hoy, U.horaCheckInForaneo) && Number(s.enRutaMs) < msDeHora(hoy, "00:00"))
+          add(`chf-asis-${s.choferId}-${hoy}`, "sin_checkin", s, `${s.choferNombre || "El chofer"} va en ruta foránea (${s.folio}) y hoy no ha hecho check-in (límite ${U.horaCheckInForaneo}).`);
+        if(Number(s.enRutaMs) < msDeHora(hoy, "00:00")) continue;   // día 2 en adelante: sin check-in de hoy no se vigila ubicación
+      }
+      else if(j.estado === "Cerrada") continue;                    // descansando
+    }
     const u = ubicaciones[s.choferId];
     const ult = Number(u?.tMs) || 0;
     const sinMin = ult > 0 ? Math.floor((ahoraMs - ult) / 60000) : null;
@@ -105,12 +126,12 @@ export function alertasChoferes({ ubicaciones = {}, enRuta = [], conRutaHoy = []
           { lat: u.lat ?? null, lng: u.lng ?? null, distanciaM: u.fueraM });
     }
   }
-  const hoy = fechaCDMX(ahoraMs), limite = msDeHora(hoy, U.horaCheckIn);
+  const limite = msDeHora(hoy, U.horaCheckIn) + U.toleranciaEntradaMin * 60000;
   if(ahoraMs >= limite){
     const conJornada = new Set(jornadas.filter(j => j.fecha === hoy).map(j => j.choferId));
     const avisados = new Set();
     for(const s of conRutaHoy){
-      if(s.fechaServicio !== hoy || !s.choferId || conJornada.has(s.choferId) || avisados.has(s.choferId)) continue;
+      if(s.fechaServicio !== hoy || !s.choferId || conJornada.has(s.choferId) || avisados.has(s.choferId) || s.estado === "En ruta") continue;
       avisados.add(s.choferId);
       add(`chf-asis-${s.choferId}-${hoy}`, "sin_checkin", s, `${s.choferNombre || "Un chofer"} tiene ruta hoy (${s.folio}) y no ha hecho check-in (hora límite ${U.horaCheckIn}).`);
     }
@@ -123,11 +144,16 @@ export function alertasChoferes({ ubicaciones = {}, enRuta = [], conRutaHoy = []
     if(min > U.sinUbicacionJornadaMin && (ahoraMs - j.checkInMs) / 3600000 < U.jornadaMaxHoras)
       add(`chf-sinubi-j-${j.id}`, "sin_ubicacion", { choferId: j.choferId, choferNombre: j.choferNombre }, `${j.choferNombre || "Un chofer"} está en jornada y su celular no manda ubicación desde hace ${dur(min)}. Debe tener la app abierta.`, { choferId: j.choferId });
   }
+  /* Salida: local a las 17:30 sin check-out y sin ruta en curso (si sigue en ruta, su horario se extiende).
+     Cualquier jornada de más de 16 h también avisa. */
+  const salida = msDeHora(hoy, U.horaSalida) + U.toleranciaSalidaMin * 60000;
   for(const j of jornadas){
     if(j.estado !== "Abierta" || !(Number(j.checkInMs) > 0)) continue;
     const h = (ahoraMs - j.checkInMs) / 3600000;
     if(h >= U.jornadaMaxHoras)
       add(`chf-out-${j.id}`, "sin_checkout", { choferId: j.choferId, choferNombre: j.choferNombre }, `${j.choferNombre || "Un chofer"} abrió su jornada hace ${Math.floor(h)} h y no ha hecho check-out.`, { choferId: j.choferId });
+    else if(j.fecha === hoy && ahoraMs >= salida && !choferesEnRuta.has(j.choferId))
+      add(`chf-out-${j.id}`, "sin_checkout", { choferId: j.choferId, choferNombre: j.choferNombre }, `${j.choferNombre || "Un chofer"} no ha hecho check-out y ya pasó su hora de salida (${U.horaSalida}).`, { choferId: j.choferId });
   }
   return out;
 }

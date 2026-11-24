@@ -49,3 +49,24 @@ export function ordenarParadas(paradas){
   /* Nunca empeora: si el orden capturado ya era mejor, se respeta. */
   return kmDespues <= antes ? { paradas: orden, kmAntes: antes, kmDespues } : { paradas, kmAntes: antes, kmDespues: antes };
 }
+
+/* ── LOCAL O FORÁNEA · y cuántos días estará fuera ─────────────────────────
+   Foránea: alguna parada a más de 80 km de la base (CDMX). Los días se estiman con el tiempo
+   de manejo (Mapbox, o línea recta × 1.3 a 60 km/h), el regreso a la base, 20 min por parada y
+   9 h de manejo por día. Es una ESTIMACIÓN: la oficina la puede corregir. Supuestos a confirmar. */
+export const BASE_CDMX = { lat: 19.4326, lng: -99.1332 };
+export const RUTA = { foraneaKm: 80, horasPorDia: 9, minPorParada: 20, kmhSinTrazo: 60, factorCalles: 1.3 };
+const sumaDias = (fecha, n) => { const t = Date.parse(fecha + "T12:00:00Z"); return Number.isFinite(t) ? new Date(t + n * 86400000).toISOString().slice(0, 10) : ""; };
+
+export function clasificarRuta(paradas, { base = BASE_CDMX, duracionSeg = null, fechaServicio = "" } = {}, R = RUTA){
+  const ps = (paradas || []).filter(p => Number.isFinite(p?.lat) && Number.isFinite(p?.lng));
+  if(ps.length === 0) return { foraneo: false, kmMaxDesdeBase: 0, dias: 1, horasEstimadas: 0, regresoEstimado: fechaServicio || "" };
+  const kmMax = Math.round(Math.max(...ps.map(p => d(base, p))) / 1000);
+  const foraneo = kmMax > R.foraneaKm;
+  const manejo = Number(duracionSeg) > 0 ? Number(duracionSeg) / 3600 : kmRecorrido([base, ...ps]) * R.factorCalles / R.kmhSinTrazo;
+  const regreso = foraneo ? d(ps[ps.length - 1], base) / 1000 * R.factorCalles / R.kmhSinTrazo : 0;
+  const horas = Math.round((manejo + regreso + ps.length * R.minPorParada / 60) * 10) / 10;
+  const dias = foraneo ? Math.max(1, Math.ceil(horas / R.horasPorDia)) : 1;
+  return { foraneo, kmMaxDesdeBase: kmMax, dias, horasEstimadas: horas, regresoEstimado: fechaServicio ? sumaDias(fechaServicio, dias - 1) : "" };
+}
+export const fechaMasDias = sumaDias;

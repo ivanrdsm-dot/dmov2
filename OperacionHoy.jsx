@@ -15,7 +15,7 @@ const hora = v => { const t = ms(v); return t ? new Date(t).toLocaleTimeString("
 const hace = min => min === null ? "sin datos" : min < 1 ? "ahora" : min < 60 ? `hace ${min} min` : `hace ${Math.floor(min / 60)} h ${min % 60} min`;
 const mapa = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
 const tarjeta = { background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, padding: "12px 14px" };
-const COLOR_ASIS = { "Trabajando": GREEN, "Terminó": BLUE, "Faltó": ROSE, "Sin ruta hoy": MUTED, "Por llegar": AMBER };
+const COLOR_ASIS = { "Trabajando": GREEN, "Terminó": BLUE, "Faltó": ROSE, "Sin ruta hoy": MUTED, "Por llegar": AMBER, "Descansando (foránea)": BLUE };
 
 /* 🔔 Avisos al celular: la persona activa en SU celular las alertas de choferes (llegan aunque el sistema esté cerrado). */
 function AvisosCelular({ app }){
@@ -42,7 +42,9 @@ function AvisosCelular({ app }){
 export default function OperacionHoy({ db, app, usuario }){
   const esAdmin = usuario?.rol === "admin";
   const [pestana, setPestana] = useState("ahora"), [dia, setDia] = useState(hoyCDMX());
-  const [choferes, setChoferes] = useState([]), [jornadas, setJornadas] = useState([]), [ubic, setUbic] = useState({}), [servicios, setServicios] = useState([]);
+  const [choferes, setChoferes] = useState([]), [jornadas, setJornadas] = useState([]), [ubic, setUbic] = useState({});
+  const [delDia, setDelDia] = useState([]), [enCurso, setEnCurso] = useState([]);
+  const servicios = useMemo(() => [...new Map([...delDia, ...enCurso].map(x => [x.id, x])).values()], [delDia, enCurso]);
   const [alertas, setAlertas] = useState([]), [gastos, setGastos] = useState([]), [abierto, setAbierto] = useState(""), [paradas, setParadas] = useState({});
   const [, setReloj] = useState(0);
   useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 30000); return () => clearInterval(t); }, []);
@@ -58,8 +60,11 @@ export default function OperacionHoy({ db, app, usuario }){
   useEffect(() => {
     const us = [
       onSnapshot(query(collection(db, "jornadas"), where("fecha", "==", dia)), s => setJornadas(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setJornadas([])),
-      onSnapshot(query(collection(db, "servicios"), where("fechaServicio", "==", dia), limit(300)), s => setServicios(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId && !x.historico)), () => setServicios([])),
+      onSnapshot(query(collection(db, "servicios"), where("fechaServicio", "==", dia), limit(300)), s => setDelDia(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId && !x.historico)), () => setDelDia([])),
+      /* Rutas foráneas de varios días: siguen "En ruta" aunque su fecha sea de antes. */
     ];
+    if(dia === hoyCDMX()) us.push(onSnapshot(query(collection(db, "servicios"), where("estado", "==", "En ruta"), limit(200)), s => setEnCurso(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId)), () => setEnCurso([])));
+    else setEnCurso([]);
     return () => us.forEach(u => u());
   }, [db, dia]);
   const verParadas = async id => {
@@ -138,6 +143,7 @@ export default function OperacionHoy({ db, app, usuario }){
           {servicios.map(s => <div key={s.id} style={tarjeta}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
+              {s.foraneo && <Chip color={A}>🛣️ Foránea · {s.diasFuera || 1} días{s.regresoEstimado ? ` · regresa ${s.regresoEstimado}` : ""}</Chip>}
               <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
                 <Chip color={s.estado === "En ruta" ? BLUE : ["Entregada", "Cerrada"].includes(s.estado) ? GREEN : A}>{s.estado === "Asignada" ? "Por salir" : s.estado}</Chip>
                 <button onClick={() => verParadas(s.id)} style={{ ...boton(BLUE, false), padding: "4px 10px", minHeight: 30, fontSize: 12 }}>{abierto === s.id ? "Cerrar" : "Ver paradas y fotos"}</button></span>

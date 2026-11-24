@@ -55,15 +55,16 @@ describe("sin ubicación y asistencia", () => {
   it("falta: tiene ruta hoy y no hizo check-in a la hora", () => {
     const hoy = "2026-11-24", r = [{ id: "s1", folio: "SRV-1", choferId: "c1", choferNombre: "Elías", fechaServicio: hoy, estado: "Asignada" }];
     const nueve = Date.parse(`${hoy}T${UMBRALES_CHOFER.horaCheckIn}:00-06:00`);
-    expect(alertasChoferes({ conRutaHoy: r }, nueve - MIN)).toHaveLength(0);
-    expect(alertasChoferes({ conRutaHoy: r }, nueve + MIN)[0]).toMatchObject({ type: "sin_checkin", id: `chf-asis-c1-${hoy}` });
+    expect(UMBRALES_CHOFER.horaCheckIn).toBe("07:00");
+    expect(alertasChoferes({ conRutaHoy: r }, nueve + 9 * MIN)).toHaveLength(0);          // tolerancia de 10 min
+    expect(alertasChoferes({ conRutaHoy: r }, nueve + 11 * MIN)[0]).toMatchObject({ type: "sin_checkin", id: `chf-asis-c1-${hoy}` });
     expect(alertasChoferes({ conRutaHoy: r, ubicaciones: { c1: { tMs: nueve } }, jornadas: [{ id: "c1_" + hoy, choferId: "c1", fecha: hoy, estado: "Abierta", checkInMs: nueve - 30 * MIN }] }, nueve + MIN)).toHaveLength(0);
   });
   it("jornada sin ubicación (sin ruta) y jornada sin check-out", () => {
     const j = { id: "c1_2026-11-24", choferId: "c1", choferNombre: "Elías", fecha: "2026-11-24", estado: "Abierta", checkInMs: T0 };
     expect(alertasChoferes({ jornadas: [j], ubicaciones: { c1: { tMs: T0 + 20 * MIN } } }, T0 + 40 * MIN)).toHaveLength(0);
     expect(alertasChoferes({ jornadas: [j], ubicaciones: { c1: { tMs: T0 + 5 * MIN } } }, T0 + 40 * MIN)[0].type).toBe("sin_ubicacion");
-    const tarde = alertasChoferes({ jornadas: [j], ubicaciones: { c1: { tMs: T0 + 15 * 3600000 } } }, T0 + 15 * 3600000);
+    const tarde = alertasChoferes({ jornadas: [j], ubicaciones: { c1: { tMs: T0 + 17 * 3600000 } } }, T0 + 17 * 3600000);
     expect(tarde.map(a => a.type)).toEqual(["sin_checkout"]);
   });
 });
@@ -96,5 +97,45 @@ describe("avisos al celular de la oficina", () => {
     expect(avisoDeAlerta({ id: "a2", type: "sos", choferNombre: "Elías", msg: "SOS del chofer" }).title).toBe("🚨 SOS del chofer · Elías");
     expect(avisoDeAlerta({ id: "a3", type: "solicitud_sin_respuesta", message: "x" })).toBe(null);
     expect(avisoDeAlerta({ id: "a4", type: "sos", atendida: true })).toBe(null);
+  });
+});
+
+import { clasificarRuta } from "./functions/lib/rutas.js";
+describe("ruta local o foránea", () => {
+  it("dentro de la ciudad es local y de un día", () => {
+    expect(clasificarRuta([{ lat: 19.35, lng: -99.16 }, { lat: 19.5, lng: -99.2 }], { fechaServicio: "2026-11-24" })).toMatchObject({ foraneo: false, dias: 1, regresoEstimado: "2026-11-24" });
+  });
+  it("Puebla ida y vuelta: foránea; Tuxtla: varios días", () => {
+    const puebla = clasificarRuta([{ lat: 19.04, lng: -98.2 }], { fechaServicio: "2026-11-24" });
+    expect(puebla.foraneo).toBe(true); expect(puebla.dias).toBe(1);
+    const tuxtla = clasificarRuta([{ lat: 18.85, lng: -97.1 }, { lat: 17.06, lng: -96.72 }, { lat: 16.75, lng: -93.12 }], { fechaServicio: "2026-11-24", duracionSeg: 13 * 3600 });
+    expect(tuxtla).toMatchObject({ foraneo: true }); expect(tuxtla.dias).toBeGreaterThanOrEqual(3);
+    expect(tuxtla.regresoEstimado > "2026-11-25").toBe(true);
+  });
+});
+
+describe("horario local y rutas foráneas", () => {
+  const hoy = "2026-11-24", H = h => Date.parse(`${hoy}T${h}:00-06:00`);
+  const j = (estado = "Abierta") => ({ id: "c1_" + hoy, choferId: "c1", choferNombre: "Elías", fecha: hoy, estado, checkInMs: H("07:00") });
+  it("local: a las 17:30 sin check-out avisa, salvo que siga en ruta", () => {
+    const u = { c1: { tMs: H("17:35"), servicioId: "s1" } };
+    expect(alertasChoferes({ jornadas: [j()], ubicaciones: u }, H("17:20"))).toHaveLength(0);
+    expect(alertasChoferes({ jornadas: [j()], ubicaciones: u }, H("17:35"))[0]).toMatchObject({ type: "sin_checkout" });
+    const enRuta = [{ id: "s1", folio: "SRV-1", choferId: "c1", paradas: [], enRutaMs: H("08:00") }];
+    expect(alertasChoferes({ jornadas: [j()], ubicaciones: u, enRuta }, H("17:35")).filter(a => a.type === "sin_checkout")).toHaveLength(0);
+  });
+  it("foránea: de noche descansando no alerta; al día siguiente pide check-in; si se pasa de días avisa", () => {
+    const ayer = Date.parse("2026-11-23T08:00:00-06:00");
+    const s = { id: "s9", folio: "SRV-9", choferId: "c1", choferNombre: "Elías", foraneo: true, regresoEstimado: "2026-11-25", enRutaMs: ayer, paradas: [] };
+    // Cerró su día ayer y hoy a las 06:00 no ha empezado: sin alertas aunque no mande ubicación.
+    expect(alertasChoferes({ enRuta: [s], ubicaciones: { c1: { tMs: ayer + 10 * 3600000, servicioId: "s9" } } }, H("06:00"))).toHaveLength(0);
+    // A las 9:10 sin check-in: avisa.
+    expect(alertasChoferes({ enRuta: [s], ubicaciones: {} }, H("09:10")).map(a => a.type)).toEqual(["sin_checkin"]);
+    // Hoy ya cerró su día (descanso): no se vigila la ubicación.
+    expect(alertasChoferes({ enRuta: [s], jornadas: [j("Cerrada")], ubicaciones: {} }, H("22:00"))).toHaveLength(0);
+    // Con su jornada abierta sí se vigila.
+    expect(alertasChoferes({ enRuta: [s], jornadas: [j()], ubicaciones: {} }, H("12:00")).map(a => a.type)).toEqual(["sin_ubicacion"]);
+    // Se pasó del regreso estimado.
+    expect(alertasChoferes({ enRuta: [{ ...s, regresoEstimado: "2026-11-23" }], jornadas: [j()], ubicaciones: { c1: { tMs: H("12:00"), servicioId: "s9" } } }, H("12:00")).map(a => a.type)).toEqual(["ruta_excedida"]);
   });
 });

@@ -595,6 +595,9 @@ export default function ChoferWeb({ db, auth, app }){
             onPaso={(id, v) => setAvance(x => ({ ...x, [id]: v }))}/>)}
           {jornadaAbierta && !enRuta && !(servicios || []).some(s => s.estado === "Asignada") && <div className="dm-pie"><div>
             <button onClick={terminar} className="dm-btn dm-azul">🏁 Terminar mi día</button></div></div>}
+          {jornadaAbierta && enRuta?.foraneo && <div className="dm-card" style={{ textAlign: "center" }}>
+            <p className="dm-sub" style={{ marginTop: 0 }}>Ruta foránea{enRuta.regresoEstimado ? ` · regreso estimado ${enRuta.regresoEstimado}` : ""}. Al terminar de manejar hoy, cierra tu día; mañana haces check-in otra vez.</p>
+            <button onClick={terminar} className="dm-btn dm-linea">🌙 Terminar mi día (sigo mañana)</button></div>}
         </>}
       </div>
     </div>

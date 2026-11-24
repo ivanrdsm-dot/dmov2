@@ -125,6 +125,12 @@ test("4b · Ilse edita la ruta ya enviada: agrega una tienda y la vuelve a quita
   assert.equal(q.estado, "Quitada"); assert.equal(q.quitadaPor, "Ilse Prueba");
   const ev = (await admin.firestore().collection(`servicios/${servicioId}/eventos`).where("tipo", "==", "ruta_editada").get()).size;
   assert.equal(ev, 2);
+  // El sistema la marcó local (todo cerca de CDMX); la oficina puede corregir los días fuera y queda en la bitácora.
+  assert.equal((await admin.firestore().doc("servicios/" + servicioId).get()).data().foraneo, false);
+  assert.equal((await ilse.llamar("oficinaEditarRuta", { servicioId, diasFuera: 3 })).diasFuera, 3);
+  const sd = (await admin.firestore().doc("servicios/" + servicioId).get()).data();
+  assert.equal(sd.diasFueraManual, true); assert.ok(sd.regresoEstimado > sd.fechaServicio);
+  await assert.rejects(ilse.llamar("oficinaEditarRuta", { servicioId, diasFuera: 99 }), /1 a 30/);
 });
 
 test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () => {

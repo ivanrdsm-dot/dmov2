@@ -8,7 +8,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getStorage } from "firebase-admin/storage";
 import { validarLote, coordenadaValida, distanciaM, RADIO_GEOCERCA_DEFAULT_M } from "./lib/geo.js";
 import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA } from "./lib/paradas.js";
-import { ordenarParadas } from "./lib/rutas.js";
+import { ordenarParadas, clasificarRuta, fechaMasDias } from "./lib/rutas.js";
 import { fusionarClaims } from "./permisos.js";
 import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER } from "./lib/vigilancia.js";
 import { revisarFotoJornada, lineaDeTexto, lineaATexto } from "./lib/evidencia.js";
@@ -78,18 +78,19 @@ async function trazarRuta(servicioId, desde = null){
   const ref = db().doc("servicios/" + servicioId);
   const ps = (await ref.collection("paradas").orderBy("orden").get()).docs.map(d => d.data()).filter(p => p.estado === "Pendiente" && coordenadaValida(p));
   const puntos = [...(desde && coordenadaValida(desde) ? [desde] : []), ...ps].slice(0, 25);
-  let linea = lineaDeParadas(puntos), fuente = "paradas";
+  let linea = lineaDeParadas(puntos), fuente = "paradas", duracionSeg = null, distanciaM = null;
   const token = String(process.env.MAPBOX_TOKEN || "");
   if(token && puntos.length >= 2){
     try {
       const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${puntos.map(p => `${p.lng},${p.lat}`).join(";")}?geometries=geojson&overview=simplified&access_token=${token}`;
       const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      const c = r.ok ? (await r.json()).routes?.[0]?.geometry?.coordinates : null;
-      if(Array.isArray(c) && c.length >= 2){ linea = c; fuente = "calles"; }
+      const ruta = r.ok ? (await r.json()).routes?.[0] : null, c = ruta?.geometry?.coordinates;
+      if(Array.isArray(c) && c.length >= 2){ linea = c; fuente = "calles"; duracionSeg = Number(ruta.duration) || null; distanciaM = Number(ruta.distance) || null; }
     } catch(e){ console.warn("trazo de ruta", e?.message); }
   }
-  await ref.update({ rutaLinea: lineaATexto(linea), rutaLineaFuente: fuente, rutaLineaEn: ahora() });
-  return { puntos: linea.length, fuente };
+  await ref.update({ rutaLinea: lineaATexto(linea), rutaLineaFuente: fuente, rutaLineaEn: ahora(),
+    ...(duracionSeg ? { rutaDuracionSeg: Math.round(duracionSeg), rutaKm: Math.round((distanciaM || 0) / 100) / 10 } : {}) });
+  return { puntos: linea.length, fuente, duracionSeg, ps };
 }
 
 async function servicioDelChofer(servicioId, chofer){
@@ -215,7 +216,7 @@ export const choferSubirPosiciones = onCall(OPC, async req => {
       const ps = (await db().collection(`servicios/${servicio.id}/paradas`).get()).docs.map(d => d.data()).filter(p => p.estado === "Pendiente");
       const fin = r.aceptadas[r.aceptadas.length - 1] || {};
       const alertas = alertasChoferes({ ubicaciones: { [chofer.id]: { tMs: fin.tMs || U.tMs, servicioId: servicio.id, lat: fin.lat, lng: fin.lng, ...quieto, ...fuera } },
-        enRuta: [{ id: servicio.id, folio: servicio.folio || "", choferId: chofer.id, choferNombre: chofer.nombre || "", paradas: ps }] }, ahoraMs);
+        enRuta: [{ id: servicio.id, folio: servicio.folio || "", choferId: chofer.id, choferNombre: chofer.nombre || "", paradas: ps }] }, ahoraMs);   // sin "foraneo": si manda ubicación, está trabajando
       for(const a of alertas.filter(x => ["detenido", "fuera_de_ruta"].includes(x.type))) await alertaUnica(a);
     } catch(e){ console.warn("vigilancia al momento", e?.message); }
   }
@@ -312,7 +313,9 @@ export const choferTerminarJornada = onCall(OPC, async req => {
   if(abiertas.empty) throw falla("failed-precondition", "No tienes una jornada abierta");
   const ref = abiertas.docs.map(d => d.ref).sort((a, b) => b.id.localeCompare(a.id))[0];
   const enRuta = await db().collection("servicios").where("choferId", "==", chofer.id).where("estado", "==", "En ruta").limit(1).get();
-  if(!enRuta.empty) throw falla("failed-precondition", "Primero termina tu ruta: aún tienes paradas pendientes");
+  /* Ruta local: primero se termina la ruta. Foránea: cierra su día para descansar y mañana hace check-in otra vez. */
+  const foranea = !enRuta.empty && enRuta.docs[0].data().foraneo === true;
+  if(!enRuta.empty && !foranea) throw falla("failed-precondition", "Primero termina tu ruta: aún tienes paradas pendientes");
   const pos = { lat: Number(req.data?.lat), lng: Number(req.data?.lng) }, km = Number(req.data?.odometroKm), precisionM = Number(req.data?.precisionM);
   if(!coordenadaValida(pos)) throw falla("failed-precondition", "No llegó tu ubicación. Prende el GPS y permite la ubicación para cerrar tu día.");
   if(!(km > 0 && km < 2000000)) throw falla("invalid-argument", "Escribe los kilómetros que marca el tablero");
@@ -325,7 +328,8 @@ export const choferTerminarJornada = onCall(OPC, async req => {
     const kmIni = Number(j.data().odometroKm);
     if(Number.isFinite(kmIni) && km < kmIni) throw falla("invalid-argument", `Los kilómetros (${km}) son menos que los de la mañana (${kmIni}). Revisa el tablero.`);
     tx.update(ref, { estado: "Cerrada", checkOutEn: ahora(), ubicacionSalida: pos, precisionSalidaM: Number.isFinite(precisionM) ? Math.round(precisionM) : null,
-      odometroFinalKm: km, kmRecorridos: Number.isFinite(kmIni) ? km - kmIni : null, fotosSalida: fotos, dudasSalida: dudas });
+      odometroFinalKm: km, kmRecorridos: Number.isFinite(kmIni) ? km - kmIni : null, fotosSalida: fotos, dudasSalida: dudas,
+      ...(foranea ? { descansoEnRuta: true, servicioForaneoId: enRuta.docs[0].id } : {}) });
     return { yaEstaba: false, kmIni };
   });
   if(!r.yaEstaba){
@@ -427,7 +431,15 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
   lote.set(db().collection(`servicios/${servicioId}/eventos`).doc(), { tipo: "ruta_armada", paradas: paradas.length, choferId, ordenadaPorCercania: ordenar,
     kmLineaRectaAntes: o.kmAntes, kmLineaRectaDespues: o.kmDespues, ...actorOficina(of), ts: ahora() });
   await lote.commit();
-  return { ok: true, paradas: paradas.length, ordenada: ordenar, kmAntes: o.kmAntes, kmDespues: o.kmDespues };
+  /* Local o foránea, y cuántos días fuera (estimado; la oficina lo puede corregir). */
+  let clase = null;
+  try {
+    const t = await trazarRuta(servicioId, null);
+    clase = clasificarRuta(paradas, { duracionSeg: t.duracionSeg, fechaServicio: servicio.fechaServicio || fechaCDMX() });
+    await refS.update({ foraneo: clase.foraneo, kmMaxDesdeBase: clase.kmMaxDesdeBase, horasEstimadas: clase.horasEstimadas, diasEstimados: clase.dias,
+      ...(servicio.diasFueraManual ? {} : { diasFuera: clase.dias, regresoEstimado: clase.regresoEstimado }) });
+  } catch(e){ console.warn("clasificar ruta", e?.message); }
+  return { ok: true, paradas: paradas.length, ordenada: ordenar, kmAntes: o.kmAntes, kmDespues: o.kmDespues, foraneo: clase?.foraneo ?? null, dias: clase?.dias ?? null };
 });
 
 /** Edita una ruta YA enviada: agrega paradas (lugares verificados) o quita pendientes.
@@ -441,6 +453,18 @@ export const oficinaEditarRuta = onCall(OPC, async req => {
   if(!["Asignada", "En ruta"].includes(s.data().estado)) throw falla("failed-precondition", `El servicio está en "${s.data().estado}": su ruta ya no se puede cambiar`);
   const quitar = [...new Set((Array.isArray(req.data?.quitar) ? req.data.quitar : []).map(x => txt(x, 80)).filter(Boolean))].slice(0, 50);
   const agregar = (Array.isArray(req.data?.agregar) ? req.data.agregar : []).slice(0, 50);
+  /* Días fuera (ruta foránea): la oficina corrige la estimación. Queda en la bitácora. */
+  const dias = req.data?.diasFuera == null ? null : Math.round(Number(req.data.diasFuera));
+  if(dias !== null){
+    if(!(dias >= 1 && dias <= 30)) throw falla("invalid-argument", "Los días fuera van de 1 a 30");
+    if(!quitar.length && !agregar.length){
+      const lote = db().batch(), base = s.data().fechaServicio || fechaCDMX();
+      lote.update(refS, { diasFuera: dias, diasFueraManual: true, regresoEstimado: fechaMasDias(base, dias - 1), actualizadoEn: ahora() });
+      lote.set(refS.collection("eventos").doc(), { tipo: "dias_fuera", de: s.data().diasFuera ?? null, a: dias, ...actorOficina(of), ts: ahora() });
+      await lote.commit();
+      return { ok: true, diasFuera: dias };
+    }
+  }
   if(!quitar.length && !agregar.length) throw falla("invalid-argument", "No hay cambios");
   const existentes = (await refS.collection("paradas").get()).docs, porId = new Map(existentes.map(d => [d.id, d]));
   for(const id of quitar){
