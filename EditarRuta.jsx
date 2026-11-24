@@ -51,8 +51,8 @@ export default function EditarRuta({ db, usuario, servicio, lugares, token, llam
         </div>;
       })}
       <div style={{ marginTop: 12, fontWeight: 800, color: TEXT, fontSize: 14 }}>Agregar parada</div>
-      <div style={{ marginTop: 6 }}><BuscadorLugar token={token} lugares={lugares} onElegir={agregar}/></div>
-      <PegarLista token={token} lugares={lugares} onAgregar={agregar}/>
+      <div style={{ marginTop: 6 }}><BuscadorLugar token={token} lugares={lugares} onElegir={agregar} llamar={llamar} cerca={nuevas[nuevas.length - 1] || actuales.filter(x => x.estado === "Pendiente").pop()}/></div>
+      <PegarLista token={token} lugares={lugares} onAgregar={agregar} llamar={llamar}/>
       {nuevas.map((p, i) => <TarjetaParada key={p.clave} p={p} i={actuales.length + i} token={token} cambiar={cambiar} quitar={sacar}/>)}
       {error && <div style={{ color: ROSE, fontWeight: 700, marginTop: 10 }}>{error}</div>}
       {hecho && !cambios && <div style={{ color: GREEN, fontWeight: 700, marginTop: 10 }}>{hecho}</div>}

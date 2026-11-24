@@ -1,6 +1,6 @@
 // Service Worker para DMvimiento — cache básico y offline fallback
 // v9: HTML network-first (los deploys se ven de inmediato); assets cache-first
-const CACHE_NAME = 'dmov-v9';
+const CACHE_NAME = 'dmov-v10';
 const CORE_ASSETS = ['/', '/index.html', '/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -57,4 +57,22 @@ self.addEventListener('fetch', (e) => {
       }).catch(() => caches.match('/'));
     })
   );
+});
+
+// v10: avisos al celular de la oficina (alertas de choferes en tiempo real)
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) { d = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'D Movimiento', {
+    body: d.body || 'Hay una alerta nueva.', icon: '/icon.svg', badge: '/icon.svg', tag: d.tag || undefined, renotify: true,
+    requireInteraction: true, data: { url: d.url || '/' }, vibrate: [200, 100, 200, 100, 200],
+  }));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(vs => {
+    for (const v of vs) if (v.url.startsWith(self.location.origin) && 'focus' in v) { v.navigate && v.navigate(url); return v.focus(); }
+    return self.clients.openWindow(url);
+  }));
 });

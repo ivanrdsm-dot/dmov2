@@ -18,6 +18,8 @@ const PROYECTO = "demo-dmov-e2e", BUCKET = PROYECTO + ".appspot.com";
 const require = createRequire(new URL("../functions/package.json", import.meta.url));
 const admin = require("firebase-admin");
 const JPG = new Uint8Array([255, 216, 255, 224, 0, 16, 74, 70, 73, 70]);
+/* Foto de check-in: el servidor exige un archivo de tamaño real (≥ 8 KB) y subido hace minutos. */
+const FOTO = (() => { const a = new Uint8Array(12 * 1024); a.set(JPG); return a; })();
 const fechaCDMX = (ms = Date.now()) => new Date(ms - 6 * 3600000).toISOString().slice(0, 10);
 const MIN = 60000;
 
@@ -123,26 +125,42 @@ test("4b · Ilse edita la ruta ya enviada: agrega una tienda y la vuelve a quita
   assert.equal(q.estado, "Quitada"); assert.equal(q.quitadaPor, "Ilse Prueba");
   const ev = (await admin.firestore().collection(`servicios/${servicioId}/eventos`).where("tipo", "==", "ruta_editada").get()).size;
   assert.equal(ev, 2);
+  // El sistema la marcó local (todo cerca de CDMX); la oficina puede corregir los días fuera y queda en la bitácora.
+  assert.equal((await admin.firestore().doc("servicios/" + servicioId).get()).data().foraneo, false);
+  assert.equal((await ilse.llamar("oficinaEditarRuta", { servicioId, diasFuera: 3 })).diasFuera, 3);
+  const sd = (await admin.firestore().doc("servicios/" + servicioId).get()).data();
+  assert.equal(sd.diasFueraManual, true); assert.ok(sd.regresoEstimado > sd.fechaServicio);
+  await assert.rejects(ilse.llamar("oficinaEditarRuta", { servicioId, diasFuera: 99 }), /1 a 30/);
 });
 
 test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () => {
   await assert.rejects(chofer.llamar("choferIniciarRuta", { dispositivoId: "equipo-prueba-0001", servicioId }), /check-in/);
-  const base = `jornadas/ch1/${fechaCDMX()}_${Date.now()}_`, subir = async n => { await uploadBytes(ref(chofer.st, base + n), JPG, { contentType: "image/jpeg" }); return base + n; };
+  const base = `jornadas/ch1/${fechaCDMX()}_${Date.now()}_`, sello = { sello: "D MOVIMIENTO · CHECK-IN · prueba", tomadaMs: String(Date.now()) };
+  const subir = async (n, datos = FOTO) => { await uploadBytes(ref(chofer.st, base + n), datos, { contentType: "image/jpeg", customMetadata: sello }); return base + n; };
   const [s, pl, od] = [await subir("selfie.jpg"), await subir("placas.jpg"), await subir("odometro.jpg")];
-  await chofer.llamar("choferCheckIn", { dispositivoId: "equipo-prueba-0001", selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: "ABC1234",
-    odometroKm: 85000, combustiblePct: 75, lat: BODEGA.lat, lng: BODEGA.lng, simulada: false });
+  const datos = { dispositivoId: "equipo-prueba-0001", selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: "ABC1234", odometroKm: 85000, combustiblePct: 75, simulada: false };
+  await assert.rejects(chofer.llamar("choferCheckIn", datos), /ubicación/);                                       // sin GPS no hay check-in
+  await assert.rejects(chofer.llamar("choferCheckIn", { ...datos, lat: BODEGA.lat, lng: BODEGA.lng, selfieRuta: await subir("vacia.jpg", JPG) }), /vacía|pequeña/);   // foto falsa
+  await chofer.llamar("choferCheckIn", { ...datos, lat: BODEGA.lat, lng: BODEGA.lng, precisionM: 12, posTMs: Date.now() - 2 * MIN });
   const j = await getDoc(doc(chofer.db, "jornadas", `ch1_${fechaCDMX()}`));
   assert.equal(j.data().estado, "Abierta");
+  assert.ok(j.data().fotos.selfie.md5, "huella de la foto");
+  assert.ok(j.data().fotos.selfie.subidaEnMs > Date.now() - 5 * MIN, "hora real de subida (la pone Google)");
+  assert.deepEqual(j.data().dudas, []);
+  // Con la jornada abierta (aún sin ruta) su ubicación también se registra.
+  const r = await chofer.llamar("choferSubirPosiciones", { dispositivoId: "equipo-prueba-0001", servicioId: "", posiciones: [{ ...BODEGA, tMs: Date.now() - 2 * MIN + 1000, precisionM: 10 }] });   // antes de salir a ruta
+  assert.equal(r.aceptadas, 1);
+  assert.equal((await getDocs(collection(ilse.db, "jornadas", `ch1_${fechaCDMX()}`, "posiciones"))).size, 1);
 });
 
 test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con problema, sin nombre de quien recibe)", async () => {
   const c = chofer.llamar, D = "equipo-prueba-0001";
   assert.equal((await c("choferIniciarRuta", { dispositivoId: D, servicioId })).estado, "En ruta");
-  const ahora = Date.now(), tiempos = [ahora - 4 * MIN, ahora - 2 * MIN, ahora - 10000];
+  const ahora = Date.now(), tiempos = [ahora - 100000, ahora - 60000, ahora - 10000];
   const sitios = [BODEGA, TIENDA_A, TIENDA_B];
   for(const [i, p] of paradas.entries()){
     // Primera lectura aproximada (wifi) lejos: no debe causar "salto imposible".
-    const pos = [...(i === 0 ? [{ lat: 19.45, lng: -99.20, tMs: tiempos[i] - 30000, precisionM: 2500 }] : []), { ...sitios[i], tMs: tiempos[i], precisionM: 10 }];
+    const pos = [...(i === 0 ? [{ lat: 19.45, lng: -99.20, tMs: tiempos[i] - 15000, precisionM: 2500 }] : []), { ...sitios[i], tMs: tiempos[i], precisionM: 10 }];
     const r = await c("choferSubirPosiciones", { dispositivoId: D, servicioId, posiciones: pos });
     assert.equal(r.aceptadas, pos.length);
     if(i === 1){
@@ -191,7 +209,13 @@ test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con pro
 test("7 · la oficina lo ve en vivo y el chofer termina su día", async () => {
   const u = await getDoc(doc(ilse.db, "ubicaciones", "ch1"));
   assert.equal(u.exists(), true); assert.equal(u.data().servicioId, servicioId);
-  await chofer.llamar("choferTerminarJornada", { dispositivoId: "equipo-prueba-0001", lat: TIENDA_B.lat, lng: TIENDA_B.lng, odometroKm: 85012 });
+  const D = "equipo-prueba-0001", salida = `jornadas/ch1/${fechaCDMX()}_${Date.now()}_odometro_salida.jpg`;
+  await uploadBytes(ref(chofer.st, salida), FOTO, { contentType: "image/jpeg", customMetadata: { sello: "CHECK-OUT", tomadaMs: String(Date.now()) } });
+  await assert.rejects(chofer.llamar("choferTerminarJornada", { dispositivoId: D, lat: TIENDA_B.lat, lng: TIENDA_B.lng, odometroKm: 85012 }), /fotos|foto/i);   // sin foto no
+  await assert.rejects(chofer.llamar("choferTerminarJornada", { dispositivoId: D, lat: TIENDA_B.lat, lng: TIENDA_B.lng, odometroKm: 84000, fotoOdometroRuta: salida }), /menos/);
+  await chofer.llamar("choferTerminarJornada", { dispositivoId: D, lat: TIENDA_B.lat, lng: TIENDA_B.lng, odometroKm: 85012, fotoOdometroRuta: salida });
+  const jc = (await getDoc(doc(ilse.db, "jornadas", `ch1_${fechaCDMX()}`))).data();
+  assert.equal(jc.kmRecorridos, 12); assert.ok(jc.fotosSalida.odometroSalida.md5);
   assert.equal((await getDoc(doc(chofer.db, "jornadas", `ch1_${fechaCDMX()}`))).data().estado, "Cerrada");
   // Otro chofer (o alguien sin cuenta) no ve esta ruta.
   await assert.rejects(getDocs(query(collection(cliente("anonimo").db, "servicios"), where("choferId", "==", "ch1"))));

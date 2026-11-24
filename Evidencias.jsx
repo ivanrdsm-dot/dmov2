@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { getStorage, ref, getDownloadURL } from "firebase/storage";
 import { GREEN, AMBER, MUTED, TEXT, BORDER, fechaHora, Chip } from "./uiBasico.jsx";
 
-function Miniatura({ ruta, etiqueta }){
+export function Miniatura({ ruta, etiqueta }){
   const [url, setUrl] = useState(""), [error, setError] = useState(false);
   useEffect(() => { let vivo = true; getDownloadURL(ref(getStorage(), ruta)).then(u => vivo && setUrl(u)).catch(() => vivo && setError(true)); return () => { vivo = false; }; }, [ruta]);
   const caja = { width: 92, height: 92, borderRadius: 12, border: "1px solid " + BORDER, background: "#f1f5f9", display: "grid", placeItems: "center", overflow: "hidden", flex: "none" };

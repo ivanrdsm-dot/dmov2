@@ -52,22 +52,40 @@ test('nadie sin perfil de oficina escribe ubicaciones, rutas, choferes ni alerta
   }
 });
 
-test('operaciones lee, crea y edita lo operativo, pero no borra ni falsea ubicaciones', async () => {
+test('operaciones (Ilse) ve todo lo operativo, pero no edita choferes, gastos, asistencia ni alertas', async () => {
   const db = ctx('ops').firestore();
   for(const col of COLS){
     await assertSucceeds(getDoc(doc(db, col, 'uno')));
     await assertSucceeds(getDocs(collection(db, col)));
     await assertFails(deleteDoc(doc(db, col, 'uno')));
   }
-  for(const col of COLS.filter(c => c !== 'driverLocations')){
+  for(const col of ['rutas', 'mensajes']){
     await assertSucceeds(setDoc(doc(db, col, 'nuevo'), { nombre: 'Nuevo' }));
     await assertSucceeds(updateDoc(doc(db, col, 'uno'), { nombre: 'Editado' }));
   }
+  for(const col of ['choferes', 'gastosChofer', 'jornadas']){
+    await assertFails(setDoc(doc(db, col, 'nuevo'), { nombre: 'Nuevo' }));
+    await assertFails(updateDoc(doc(db, col, 'uno'), { nombre: 'Editado' }));
+  }
+  await assertSucceeds(setDoc(doc(db, 'alertas', 'nueva-ops'), { type: 'nota' }));            // puede levantar una alerta
+  await assertFails(updateDoc(doc(db, 'alertas', 'uno'), { atendida: true }));                 // pero no darla por atendida
+  for(const col of ['viaticos', 'unidades']) await assertFails(setDoc(doc(db, col, 'nuevo-ops'), { nombre: 'x' }));
   await assertFails(setDoc(doc(db, 'driverLocations', 'uno'), { lat: 0, lng: 0 }));
+});
+
+test('nadie edita un check-in: ni operaciones ni el administrador (solo el servidor)', async () => {
+  for(const uid of ['admin', 'ops']){
+    const db = ctx(uid).firestore();
+    await assertFails(setDoc(doc(db, 'jornadas', 'nueva-' + uid), { choferId: 'x' }));
+    await assertFails(updateDoc(doc(db, 'jornadas', 'uno'), { checkInEn: new Date() }));
+    await assertFails(setDoc(doc(db, 'avisos_oficina', 'x'), { endpoint: 'https://x' }));
+  }
+  await assertSucceeds(getDocs(collection(ctx('ops').firestore(), 'jornadas', 'uno', 'posiciones')));
 });
 
 test('admin borra y administra ubicaciones; rutas y choferes solo con copia en la papelera', async () => {
   const db = ctx('admin').firestore();
+  for(const col of ['choferes', 'gastosChofer', 'alertas']) await assertSucceeds(updateDoc(doc(db, col, 'uno'), { nombre: 'Editado' }));
   await assertSucceeds(setDoc(doc(db, 'driverLocations', 'limpieza'), { lat: 1, lng: 1 }));
   for(const col of ['rutas', 'choferes']){
     await assertFails(deleteDoc(doc(db, col, 'uno')));                                  // sin copia no se borra
