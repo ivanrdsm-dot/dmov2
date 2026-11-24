@@ -48,6 +48,8 @@ const ReportesOperacionVista = lazy(()=>import("./ReportesOperacion.jsx"));
 /* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
 const OperacionVista = lazy(()=>import("./OperacionHoy.jsx"));
+const FinanzasVista = lazy(()=>import("./Finanzas.jsx"));
+const SociosVista = lazy(()=>import("./Socios.jsx"));
 const ChoferWebVista = lazy(()=>import("./ChoferWeb.jsx"));
 const PapeleraVista = lazy(()=>import("./Papelera.jsx"));
 /* Bandera de módulo: VITE_FF_SERVICIOS=off lo apaga sin tocar código. */
@@ -3191,35 +3193,40 @@ const MENU=[
     /* UNA sola sección para choferes y rutas: asignar, mapa en vivo, asistencia, alertas, choferes, gastos e historial. */
     {label:"Operación",icon:Truck,alias:["asignarRuta","despacho","historialRutas","choferes","unidades","alertas","tracking","rutas","entregas","jornadas","chat"],tabs:[{id:"operacion",label:"Operación",ff:true}]},
   ]},
-  {section:"Trabajo",items:[
-    {label:"Pedidos",icon:Bell,tabs:[{id:"solicitudes",label:"Pedidos que llegan",ff:true}]},
-    {label:"Cotizar",icon:DollarSign,tabs:[
-      {id:"cotizadorAuto",label:"Por carga",ff:true},
-      {id:"cotizador",label:"Por destino",adminOnly:true},
-      {id:"cotizaciones",label:"Mis cotizaciones",ff:true},
-      {id:"presupuestos",label:"Presupuestos",adminOnly:true}]},
-    {label:"Servicios",icon:ClipboardList,tabs:[
+  {section:"Negocio",items:[
+    /* Ventas: del pedido al servicio, y los clientes. */
+    {label:"Ventas",icon:Bell,tabs:[
+      {id:"solicitudes",label:"Pedidos",ff:true},
+      {id:"cotizadorAuto",label:"Cotizar",ff:true},
+      {id:"cotizaciones",label:"Cotizaciones",ff:true},
       {id:"servicios",label:"Servicios",ff:true},
+      {id:"reportesOperacion",label:"Reporte comercial",ff:true},
+      {id:"clientes",label:"Clientes (datos)",adminOnly:true},
+      {id:"prospeccion",label:"Prospectos",adminOnly:true},
+      {id:"cotizador",label:"Cotizar por destino",adminOnly:true},
+      {id:"presupuestos",label:"Presupuestos",adminOnly:true},
       {id:"nacional",label:"Proyectos nacionales",adminOnly:true}]},
+    /* Finanzas: todo el dinero en un solo lugar. */
+    {label:"Finanzas",icon:DollarSign,tabs:[
+      {id:"finanzasResumen",label:"Resumen",adminOnly:true,ff:true},
+      {id:"finanzasClientes",label:"Clientes",adminOnly:true,ff:true},
+      {id:"facturas",label:"Facturación"},
+      {id:"cobranza",label:"Cobranza",adminOnly:true,ff:true},
+      {id:"pagos",label:"Pagos a proveedores",adminOnly:true},
+      {id:"viaticos",label:"Viáticos y gastos",adminOnly:true},
+      {id:"gastosAdmin",label:"Gastos de choferes"},
+      {id:"cierre",label:"Estado de resultados",adminOnly:true},
+      {id:"finanzas",label:"Análisis",adminOnly:true},
+      {id:"reportes",label:"Reportes y exportar",adminOnly:true},
+      {id:"socios",label:"Presentación a socios",adminOnly:true,ff:true}]},
   ]},
-  {section:"Mis datos",items:[
-    {label:"Clientes",icon:Building2,adminOnly:true,tabs:[{id:"clientes",label:"Clientes"},{id:"prospeccion",label:"Prospectos"}]},
-    {label:"Lugares",icon:MapPin,tabs:[{id:"puntos",label:"Lugares de carga y entrega",ff:true}]},
-    {label:"Proveedores",icon:Users,tabs:[{id:"proveedores",label:"Proveedores",ff:true}]},
-  ]},
-  {section:"Dinero",items:[
-    {label:"Precios",icon:Hash,tabs:[{id:"tarifario",label:"Precios",ff:true}]},
-    {label:"Facturación",icon:FileText,tabs:[{id:"facturas",label:"Facturación"}]},
-    {label:"Pagos y gastos",icon:CreditCard,tabs:[{id:"pagos",label:"Pagos a proveedores",adminOnly:true},{id:"viaticos",label:"Viáticos y gastos",adminOnly:true},{id:"gastosAdmin",label:"Gastos de choferes"}]},
-    {label:"Reportes",icon:BarChart2,tabs:[
-      {id:"reportesOperacion",label:"Operación",ff:true},
-      {id:"reportes",label:"Dinero",adminOnly:true},
-      {id:"ejecutivo",label:"Resumen ejecutivo",adminOnly:true},
-      {id:"finanzas",label:"Portal financiero",adminOnly:true},
-      {id:"cierre",label:"Cierre contable",adminOnly:true}]},
-  ]},
-  {section:"Configuración",items:[
-    {label:"Usuarios",icon:Shield,adminOnly:true,tabs:[{id:"usuarios",label:"Usuarios"},{id:"papelera",label:"Papelera",adminOnly:true}]},
+  {section:"Ajustes",items:[
+    {label:"Ajustes",icon:Shield,tabs:[
+      {id:"puntos",label:"Lugares",ff:true},
+      {id:"proveedores",label:"Proveedores",ff:true},
+      {id:"tarifario",label:"Precios",ff:true},
+      {id:"usuarios",label:"Usuarios",adminOnly:true},
+      {id:"papelera",label:"Papelera",adminOnly:true}]},
   ]},
 ];
 /** Menú visible para un rol: cada opción con sus pestañas permitidas; `id` = primera pestaña. */
@@ -15130,6 +15137,10 @@ export default function App(){
       asignarRuta:operacionEn("asignar"),
       historialRutas:operacionEn("historial"),
       operacion:operacionEn(""),
+      finanzasResumen:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><FinanzasVista key="fr" db={db} usuario={usuarioDe(authUser,userProfile)} vista="resumen"/></Suspense>:null,
+      finanzasClientes:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><FinanzasVista key="fc" db={db} usuario={usuarioDe(authUser,userProfile)} vista="clientes"/></Suspense>:null,
+      cobranza:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><FinanzasVista key="fb" db={db} usuario={usuarioDe(authUser,userProfile)} vista="cobranza"/></Suspense>:null,
+      socios:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><SociosVista db={db}/></Suspense>:null,
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,
       servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)} cotizacion={cotizacionAServicio} onCotizacionUsada={()=>setCotizacionAServicio(null)}/>}:{}),
