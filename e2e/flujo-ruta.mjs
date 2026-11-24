@@ -142,7 +142,7 @@ test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () =
   assert.ok(j.data().fotos.selfie.subidaEnMs > Date.now() - 5 * MIN, "hora real de subida (la pone Google)");
   assert.deepEqual(j.data().dudas, []);
   // Con la jornada abierta (aún sin ruta) su ubicación también se registra.
-  const r = await chofer.llamar("choferSubirPosiciones", { dispositivoId: "equipo-prueba-0001", servicioId: "", posiciones: [{ ...BODEGA, tMs: Date.now() - 1000, precisionM: 10 }] });
+  const r = await chofer.llamar("choferSubirPosiciones", { dispositivoId: "equipo-prueba-0001", servicioId: "", posiciones: [{ ...BODEGA, tMs: Date.now() - 10 * MIN, precisionM: 10 }] });   // antes de salir a ruta
   assert.equal(r.aceptadas, 1);
   assert.equal((await getDocs(collection(ilse.db, "jornadas", `ch1_${fechaCDMX()}`, "posiciones"))).size, 1);
 });
