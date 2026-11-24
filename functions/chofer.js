@@ -405,7 +405,8 @@ export const choferActivar = onCall(OPC, async req => {
   const ref = db().doc("activaciones/" + huella(token)), snap = await ref.get();
   if(!snap.exists) return { estado: "invalida" };
   const a = snap.data(), c = (await db().doc("choferes/" + a.choferId).get()).data() || {};
-  const info = { nombre: String(c.nombre || "").replace(/^jose\s+/i, "").split(/\s+/)[0] || "", tel: String(c.tel || "").replace(/\D/g, "").slice(-10) };
+  const pila = String(c.nombre || "").trim().replace(/^jos[eé]\s+/i, "").split(/\s+/)[0] || "";
+  const info = { nombre: pila ? pila[0].toUpperCase() + pila.slice(1).toLowerCase() : "", tel: String(c.tel || "").replace(/\D/g, "").slice(-10) };
   if(c.baja || c.activo === false || c.authUid !== a.uid) return { estado: "invalida" };
   if(a.usadoMs) return { estado: "usada", ...info };
   if(Date.now() > Number(a.venceMs)) return { estado: "vencida", ...info };
