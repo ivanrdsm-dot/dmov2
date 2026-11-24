@@ -47,8 +47,6 @@ const CotizacionesVista = lazy(()=>import("./Cotizaciones.jsx"));
 const ReportesOperacionVista = lazy(()=>import("./ReportesOperacion.jsx"));
 /* Servicios (Fase 0) vive en su propio archivo y carga bajo demanda: el monolito no crece. */
 const ServiciosVista = lazy(()=>import("./Servicios.jsx"));
-const AsignarRutaVista = lazy(()=>import("./AsignarRuta.jsx"));
-const HistorialRutasVista = lazy(()=>import("./HistorialRutas.jsx"));
 const OperacionVista = lazy(()=>import("./OperacionHoy.jsx"));
 const ChoferWebVista = lazy(()=>import("./ChoferWeb.jsx"));
 const PapeleraVista = lazy(()=>import("./Papelera.jsx"));
@@ -3190,11 +3188,11 @@ function MiniBar({pct,color=A,h=4}){
 const MENU=[
   {section:"Hoy",items:[
     {label:"Inicio",icon:LayoutDashboard,tabs:[{id:"dashboard",label:"Inicio"}]},
-    {label:"Centro de operación",icon:Radio,tabs:[{id:"operacion",label:"Centro de operación",ff:true}]},
+    /* UNA sola sección para choferes y rutas: asignar, mapa en vivo, asistencia, alertas, choferes, gastos e historial. */
+    {label:"Operación",icon:Truck,alias:["asignarRuta","despacho","historialRutas","choferes","unidades"],tabs:[{id:"operacion",label:"Operación",ff:true}]},
   ]},
   {section:"Trabajo",items:[
     {label:"Pedidos",icon:Bell,tabs:[{id:"solicitudes",label:"Pedidos que llegan",ff:true}]},
-    {label:"Asignar ruta",icon:Truck,tabs:[{id:"asignarRuta",label:"Asignar ruta",ff:true}]},
     {label:"Cotizar",icon:DollarSign,tabs:[
       {id:"cotizadorAuto",label:"Por carga",ff:true},
       {id:"cotizador",label:"Por destino",adminOnly:true},
@@ -3202,20 +3200,11 @@ const MENU=[
       {id:"presupuestos",label:"Presupuestos",adminOnly:true}]},
     {label:"Servicios",icon:ClipboardList,tabs:[
       {id:"servicios",label:"Servicios",ff:true},
-      {id:"historialRutas",label:"Historial de rutas",ff:true},
-      {id:"nacional",label:"Proyectos nacionales",adminOnly:true},
-      {id:"rutas",label:"Rutas (anterior)"},
-      {id:"entregas",label:"Entregas (anterior)"}]},
-    {label:"En vivo",icon:Radio,tabs:[
-      {id:"despacho",label:"Choferes en ruta",ff:true},
-      {id:"alertas",label:"Alertas"},
-      {id:"tracking",label:"Mapa (anterior)"},
-      {id:"chat",label:"Chat"}]},
+      {id:"nacional",label:"Proyectos nacionales",adminOnly:true}]},
   ]},
   {section:"Mis datos",items:[
     {label:"Clientes",icon:Building2,adminOnly:true,tabs:[{id:"clientes",label:"Clientes"},{id:"prospeccion",label:"Prospectos"}]},
     {label:"Lugares",icon:MapPin,tabs:[{id:"puntos",label:"Lugares de carga y entrega",ff:true}]},
-    {label:"Choferes y unidades",icon:Truck,tabs:[{id:"choferes",label:"Choferes"},{id:"unidades",label:"Unidades"},{id:"jornadas",label:"Jornadas"}]},
     {label:"Proveedores",icon:Users,tabs:[{id:"proveedores",label:"Proveedores",ff:true}]},
   ]},
   {section:"Dinero",items:[
@@ -3231,6 +3220,9 @@ const MENU=[
   ]},
   {section:"Configuración",items:[
     {label:"Usuarios",icon:Shield,adminOnly:true,tabs:[{id:"usuarios",label:"Usuarios"},{id:"papelera",label:"Papelera",adminOnly:true}]},
+    /* Pantallas de antes (nada se borró): solo el director, por si necesita consultar algo viejo. */
+    {label:"Pantallas anteriores",icon:History,adminOnly:true,tabs:[{id:"alertas",label:"Centro de alertas"},{id:"tracking",label:"Mapa (anterior)"},{id:"chat",label:"Chat"},
+      {id:"jornadas",label:"Jornadas (anterior)"},{id:"rutas",label:"Rutas (anterior)"},{id:"entregas",label:"Entregas (anterior)"}]},
   ]},
 ];
 /** Menú visible para un rol: cada opción con sus pestañas permitidas; `id` = primera pestaña. */
@@ -3243,7 +3235,7 @@ function getNavSections(rol){
 }
 /** Opción del menú a la que pertenece una pantalla. */
 function grupoDeVista(view,rol){
-  for(const s of getNavSections(rol)) for(const it of s.items) if(it.tabs.some(t=>t.id===view)) return it;
+  for(const s of getNavSections(rol)) for(const it of s.items) if(it.tabs.some(t=>t.id===view)||(it.alias||[]).includes(view)) return it;
   return null;
 }
 /* Pestañas de la opción actual (solo si tiene más de una). */
@@ -15115,30 +15107,36 @@ export default function App(){
      Un solo dato alimenta Dashboard, Dashboard Ejecutivo y Reportes. */
   const viatCombo=[...viat,...pagosComoCostos(pagosProv)];
 
+  /* ── Operación: una sola sección con pestañas (la usan varias entradas viejas) ── */
+  const operacionEn=inicial=><Suspense key={"op-"+inicial} fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><OperacionVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)}
+    mapboxToken={MAPBOX_TOKEN} inicial={inicial} onVer={setView}
+    vistas={{mapa:<DespachoModulo authUser={authUser} userProfile={userProfile}/>,choferes:<Choferes/>,unidades:<Unidades/>}}/></Suspense>;
+
   /* ── App principal ── */
   const VIEWS={
     /* Operaciones (Ilse) entra directo a su Centro de operación. */
-    dashboard:isOps&&FF_SERVICIOS?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><OperacionVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)}/></Suspense>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
+    dashboard:isOps&&FF_SERVICIOS?operacionEn(""):<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     ejecutivo:isAdmin?<DashboardEjecutivo facts={facts} viat={viatCombo} gastosCh={gastosCh} rutas={rutas} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     finanzas:isAdmin?<PortalFinanciero facts={facts} viat={viatCombo} clientes={clientes} setView={setView}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     cotizador:isAdmin?<Cotizador usuario={usuarioDe(authUser,userProfile)} onSaved={()=>setView(FF_SERVICIOS?"cotizaciones":"cotizador")}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     presupuestos:isAdmin?<Presupuestos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     prospeccion:isAdmin?<Prospeccion/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     ...(FF_SERVICIOS?{solicitudes:<SolicitudesModulo authUser={authUser} userProfile={userProfile} onCrearServicio={x=>{setCotizacionAServicio(null);setSolicitudAServicio(x);setView("servicios");}} onCotizar={x=>{setSolicitudACotizar(x);setView("cotizadorAuto");}}/>,
-      despacho:<DespachoModulo authUser={authUser} userProfile={userProfile}/>,
+      despacho:operacionEn("mapa"),
       cotizadorAuto:<CotizadorAutoModulo authUser={authUser} userProfile={userProfile} solicitud={solicitudACotizar} onGuardada={()=>{setSolicitudACotizar(null);setView("cotizaciones");}}/>,
       cotizaciones:<CotizacionesModulo authUser={authUser} userProfile={userProfile} onNueva={()=>{setSolicitudACotizar(null);setView("cotizadorAuto");}} onCrearServicio={c=>{setSolicitudAServicio(null);setCotizacionAServicio(c);setView("servicios");}}/>,
       reportesOperacion:<ReportesOperacionModulo userProfile={userProfile}/>,
       tarifario:<TarifarioModulo authUser={authUser} userProfile={userProfile}/>,
-      asignarRuta:<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><AsignarRutaVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)} mapboxToken={MAPBOX_TOKEN} onVer={setView}/></Suspense>,
-      operacion:<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><OperacionVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)}/></Suspense>,
-      historialRutas:<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><HistorialRutasVista db={db}/></Suspense>,
+      /* Las pantallas que ahora viven en Operación abren ahí, en su pestaña. */
+      asignarRuta:operacionEn("asignar"),
+      historialRutas:operacionEn("historial"),
+      operacion:operacionEn(""),
       puntos:<CatalogoModulo tipo="puntos" authUser={authUser} userProfile={userProfile}/>,
       proveedores:<CatalogoModulo tipo="proveedores" authUser={authUser} userProfile={userProfile}/>,
       servicios:<ServiciosModulo authUser={authUser} userProfile={userProfile} choferes={choferes} solicitud={solicitudAServicio} onSolicitudUsada={()=>setSolicitudAServicio(null)} cotizacion={cotizacionAServicio} onCotizacionUsada={()=>setCotizacionAServicio(null)}/>}:{}),
     papelera:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando papelera…</div>}><PapeleraVista db={db} usuario={usuarioDe(authUser,userProfile)}/></Suspense>:null,
-    choferes:<Choferes/>,
-    unidades:<Unidades/>,
+    choferes:FF_SERVICIOS?operacionEn("choferes"):<Choferes/>,
+    unidades:FF_SERVICIOS?operacionEn("choferes"):<Unidades/>,
     tracking:<LiveTracking/>,
     rutas:<PlanificadorRutas/>,
     nacional:isAdmin?<PlanificadorNacional/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
