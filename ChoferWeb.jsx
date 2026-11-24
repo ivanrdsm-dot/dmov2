@@ -179,8 +179,8 @@ function Foto({ titulo, icono, archivo, onCambio, camara = "", onError }){
 }
 
 /* ── Entrar ───────────────────────────────────────────────────────────────── */
-function Entrar({ auth }){
-  const [usuario, setUsuario] = useState(""), [clave, setClave] = useState(""), [ver, setVer] = useState(false), [error, setError] = useState(""), [ocupado, setOcupado] = useState(false);
+function Entrar({ auth, telInicial = "", aviso = "" }){
+  const [usuario, setUsuario] = useState(telInicial), [clave, setClave] = useState(""), [ver, setVer] = useState(false), [error, setError] = useState(""), [ocupado, setOcupado] = useState(false);
   const entrar = async () => {
     const correo = correoDeChofer(usuario);
     if(!correo){ setError("Escribe tu celular de 10 dígitos."); return; }
@@ -197,6 +197,7 @@ function Entrar({ auth }){
           <div style={{ color: "#fff", fontSize: 30, fontWeight: 900, letterSpacing: "-.02em" }}>Hola, chofer</div>
           <div style={{ color: "rgba(255,255,255,.75)", fontSize: 16, margin: "6px 0 26px" }}>Entra para ver tus rutas de hoy.</div>
           <div className="dm-card" style={{ padding: 20 }}>
+            {aviso && <div style={{ background: "#eff6ff", color: AZUL, borderRadius: 12, padding: "10px 12px", fontWeight: 700, marginBottom: 14, fontSize: 15 }}>{aviso}</div>}
             <div className="dm-et" style={{ marginTop: 0 }}>Tu celular</div>
             <input className="dm-in" inputMode="tel" autoComplete="username" value={usuario} onChange={e => setUsuario(e.target.value)} placeholder="55 1234 5678"/>
             <div className="dm-et">Tu contraseña</div>
@@ -208,6 +209,55 @@ function Entrar({ auth }){
             <button onClick={entrar} disabled={ocupado} className="dm-btn dm-naranja" style={{ marginTop: 18 }}>{ocupado ? "Entrando…" : "Entrar"}</button>
           </div>
           <p style={{ color: "rgba(255,255,255,.7)", fontSize: 14, textAlign: "center", marginTop: 8 }}>¿No tienes contraseña? Pídele a la oficina tu enlace por WhatsApp.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Activar la cuenta (enlace que manda la oficina por WhatsApp) ────────────
+   Dura 7 días. Si ya se usó o venció, no hay pantalla de error: sale "Entrar" con su celular escrito. */
+const tokenActivar = () => { try { return new URLSearchParams(window.location.search).get("activar") || ""; } catch { return ""; } };
+const quitarToken = () => { try { const u = new URL(window.location.href); u.searchParams.delete("activar"); window.history.replaceState(null, "", u.pathname + u.search + u.hash); } catch {} };
+function Activar({ auth, app, token }){
+  const [info, setInfo] = useState(null), [clave, setClave] = useState(""), [ver, setVer] = useState(false), [error, setError] = useState(""), [ocupado, setOcupado] = useState(false);
+  const activar = useCallback(datos => httpsCallable(getFunctions(app, "us-central1"), "choferActivar")({ token, ...datos }).then(r => r.data), [app, token]);
+  useEffect(() => { activar({}).then(setInfo).catch(() => setInfo({ estado: "sin-red" })); }, [activar]);
+  const crear = async () => {
+    if(clave.length < 6){ setError("Usa al menos 6 letras o números."); return; }
+    setOcupado(true); setError("");
+    try {
+      const r = await activar({ clave });
+      if(r.estado !== "creada"){ setInfo(r); setOcupado(false); return; }
+      quitarToken();
+      await signInWithEmailAndPassword(auth, r.correo, clave);
+    } catch(e){ setError(mensaje(e)); setOcupado(false); }
+  };
+  if(!info) return <div className="dm"><Estilos/><div className="dm-vacio" style={{ paddingTop: 120 }}><div>🚚</div><p className="dm-sub">Cargando…</p></div></div>;
+  if(info.estado === "sin-red") return <Entrar auth={auth} aviso="No hay señal. Cuando regrese, vuelve a abrir el enlace."/>;
+  if(info.estado !== "lista"){
+    const aviso = info.estado === "usada" ? "Ya creaste tu contraseña. Escríbela para entrar." : "Este enlace ya no sirve. Si no tienes contraseña, pide uno nuevo a la oficina.";
+    return <Entrar auth={auth} telInicial={info.tel || ""} aviso={aviso}/>;
+  }
+  return (
+    <div className="dm"><Estilos/>
+      <div className="dm-login">
+        <div style={{ maxWidth: 420, width: "100%", margin: "0 auto" }}>
+          <div className="dm-logo">🚚</div>
+          <div style={{ color: "#fff", fontSize: 30, fontWeight: 900, letterSpacing: "-.02em" }}>Hola{info.nombre ? ", " + info.nombre : ""} 👋</div>
+          <div style={{ color: "rgba(255,255,255,.75)", fontSize: 16, margin: "6px 0 26px" }}>Crea tu contraseña y listo.</div>
+          <div className="dm-card" style={{ padding: 20 }}>
+            <div className="dm-et" style={{ marginTop: 0 }}>Tu celular</div>
+            <div className="dm-in" style={{ display: "flex", alignItems: "center", color: AZUL, fontWeight: 800 }}>{info.tel}</div>
+            <div className="dm-et">Tu nueva contraseña</div>
+            <div style={{ position: "relative" }}>
+              <input className="dm-in" type={ver ? "text" : "password"} autoComplete="new-password" value={clave} onChange={e => setClave(e.target.value)} onKeyDown={e => e.key === "Enter" && crear()} placeholder="Mínimo 6" style={{ paddingRight: 48 }}/>
+              <button type="button" className="dm-ojo" onClick={() => setVer(v => !v)} aria-label={ver ? "Ocultar contraseña" : "Ver contraseña"}>{ver ? "🙈" : "👁️"}</button>
+            </div>
+            <p className="dm-sub" style={{ fontSize: 14, margin: "8px 0 0" }}>Apúntala. Con tu celular y esta contraseña entras siempre.</p>
+            <Falla>{error}</Falla>
+            <button onClick={crear} disabled={ocupado} className="dm-btn dm-naranja" style={{ marginTop: 18 }}>{ocupado ? "Creando…" : "Crear y entrar"}</button>
+          </div>
         </div>
       </div>
     </div>
@@ -630,7 +680,7 @@ export default function ChoferWeb({ db, auth, app }){
 
   const Cargando = ({ texto }) => <div className="dm"><Estilos/><div className="dm-vacio" style={{ paddingTop: 120 }}><div>🚚</div><p className="dm-sub">{texto}</p></div></div>;
   if(usuario === undefined) return <Cargando texto="Cargando…"/>;
-  if(!usuario) return <Entrar auth={auth}/>;
+  if(!usuario) return tokenActivar() ? <Activar auth={auth} app={app} token={tokenActivar()}/> : <Entrar auth={auth}/>;
   if(errorCuenta) return (
     <div className="dm"><Estilos/><div className="dm-cuerpo" style={{ paddingTop: 60 }}>
       <div className="dm-card"><h2 className="dm-titulo" style={{ color: ROJO }}>No se pudo entrar</h2><p className="dm-sub" style={{ color: AZUL, fontSize: 17 }}>{errorCuenta}</p>

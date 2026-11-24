@@ -27,7 +27,7 @@ function BotonAcceso({ chofer, app }){
     try {
       const { data } = await httpsCallable(getFunctions(app, "us-central1"), "oficinaVincularChofer")({ choferId: chofer.id, correo: correoDeChofer(tel) });
       const pila = String(chofer.nombre || "").replace(/^jose\s+/i, "").split(/\s+/)[0] || "";
-      const texto = `Hola ${pila}, soy de D Movimiento. Ya tienes tu cuenta en la app de choferes.\n\n1) Abre este enlace y crea tu contraseña:\n${data.enlace}\n\n2) Después entra aquí con tu celular ${tel} y tu contraseña:\n${window.location.origin}/chofer`;
+      const texto = `Hola ${pila}, soy de D Movimiento. Ya tienes tu cuenta en la app de choferes.\n\n1) Abre este enlace y crea tu contraseña (sirve 7 días):\n${data.enlace}\n\n2) Las siguientes veces entras aquí con tu celular ${tel} y tu contraseña:\nhttps://salesflow-crm-13c4a.web.app/chofer`;
       window.open(`https://wa.me/52${tel}?text=${encodeURIComponent(texto)}`, "_blank", "noopener");
       setEstado("✓ Abrí WhatsApp");
     } catch(e){ setEstado("No se pudo: " + String(e?.message || "").replace(/^.*?:\s*/, "")); }

@@ -56,10 +56,22 @@ after(async () => { for(const a of apps) await deleteApp(a).catch(() => {}); awa
 test("1 · un admin le da acceso al chofer con su celular; Ilse no puede", async () => {
   await assert.rejects(ilse.llamar("oficinaVincularChofer", { choferId: "ch1", correo: correoDeChofer(TEL) }), /administrador/);
   const r = await oficina.llamar("oficinaVincularChofer", { choferId: "ch1", correo: correoDeChofer(TEL) });
-  assert.match(r.enlace, /lang=es/);
-  // El chofer pone su contraseña con el enlace (aquí se hace directo en el Auth de prueba).
+  // Enlace propio de 7 días (no el de Firebase, que vencía en 1 hora).
+  assert.match(r.enlace, /^https:\/\/salesflow-crm-13c4a\.web\.app\/chofer\?activar=[A-Za-z0-9_-]{20,}$/);
+  const token = new URL(r.enlace).searchParams.get("activar");
+  const nadie = cliente("sin-sesion");
+  assert.equal((await nadie.llamar("choferActivar", { token: "inventado-xxxxxxxxxxxxxxxxxxxx" })).estado, "invalida");
+  const info = await nadie.llamar("choferActivar", { token });
+  assert.equal(info.estado, "lista"); assert.equal(info.tel, TEL);
+  await assert.rejects(nadie.llamar("choferActivar", { token, clave: "123" }), /al menos 6/);
+  const creada = await nadie.llamar("choferActivar", { token, clave: CLAVE_CHOFER });
+  assert.equal(creada.estado, "creada"); assert.equal(creada.correo, correoDeChofer(TEL));
+  // Abrir otra vez el mismo enlace no da error: dice que ya la creó (la app le pone "Entrar" con su celular).
+  assert.equal((await nadie.llamar("choferActivar", { token })).estado, "usada");
+  assert.equal((await nadie.llamar("choferActivar", { token, clave: "otra-clave-999" })).estado, "usada");
+  // Nadie lee los enlaces desde la app, ni el admin.
+  await assert.rejects(getDocs(collection(oficina.db, "activaciones")));
   const u = await admin.auth().getUserByEmail(correoDeChofer(TEL));
-  await admin.auth().updateUser(u.uid, { password: CLAVE_CHOFER });
   assert.equal((await admin.firestore().doc("choferes/ch1").get()).data().authUid, u.uid);
 });
 
