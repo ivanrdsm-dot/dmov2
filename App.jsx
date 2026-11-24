@@ -3189,7 +3189,7 @@ const MENU=[
   {section:"Hoy",items:[
     {label:"Inicio",icon:LayoutDashboard,tabs:[{id:"dashboard",label:"Inicio"}]},
     /* UNA sola sección para choferes y rutas: asignar, mapa en vivo, asistencia, alertas, choferes, gastos e historial. */
-    {label:"Operación",icon:Truck,alias:["asignarRuta","despacho","historialRutas","choferes","unidades"],tabs:[{id:"operacion",label:"Operación",ff:true}]},
+    {label:"Operación",icon:Truck,alias:["asignarRuta","despacho","historialRutas","choferes","unidades","alertas","tracking","rutas","entregas","jornadas","chat"],tabs:[{id:"operacion",label:"Operación",ff:true}]},
   ]},
   {section:"Trabajo",items:[
     {label:"Pedidos",icon:Bell,tabs:[{id:"solicitudes",label:"Pedidos que llegan",ff:true}]},
@@ -3220,9 +3220,6 @@ const MENU=[
   ]},
   {section:"Configuración",items:[
     {label:"Usuarios",icon:Shield,adminOnly:true,tabs:[{id:"usuarios",label:"Usuarios"},{id:"papelera",label:"Papelera",adminOnly:true}]},
-    /* Pantallas de antes (nada se borró): solo el director, por si necesita consultar algo viejo. */
-    {label:"Pantallas anteriores",icon:History,adminOnly:true,tabs:[{id:"alertas",label:"Centro de alertas"},{id:"tracking",label:"Mapa (anterior)"},{id:"chat",label:"Chat"},
-      {id:"jornadas",label:"Jornadas (anterior)"},{id:"rutas",label:"Rutas (anterior)"},{id:"entregas",label:"Entregas (anterior)"}]},
   ]},
 ];
 /** Menú visible para un rol: cada opción con sus pestañas permitidas; `id` = primera pestaña. */
@@ -4213,8 +4210,10 @@ function Dashboard({setView,cots,facts,rutas,entregas,viat=[],clientes=[],prospe
     const all=[];
     cots.slice(0,5).forEach(c=>all.push({icon:DollarSign,color:A,label:"Cotización "+((c.folio||"").slice(0,12)),sub:c.cliente||"",t:c.createdAt?.seconds||0,view:"cotizador"}));
     facts.slice(0,5).forEach(f=>all.push({icon:FileText,color:BLUE,label:"Factura "+(f.folio||"").slice(0,14),sub:f.empresa||"",t:f.createdAt?.seconds||0,view:"facturas"}));
-    rutas.slice(0,3).forEach(r=>all.push({icon:Map,color:VIOLET,label:r.nombre||"Ruta",sub:r.cliente||"",t:r.createdAt?.seconds||0,view:"rutas"}));
-    entregas.slice(0,3).forEach(e=>all.push({icon:Package,color:GREEN,label:e.pdv||"Entrega",sub:e.status||"",t:e.createdAt?.seconds||0,view:"entregas"}));
+    if(!FF_SERVICIOS){
+      rutas.slice(0,3).forEach(r=>all.push({icon:Map,color:VIOLET,label:r.nombre||"Ruta",sub:r.cliente||"",t:r.createdAt?.seconds||0,view:"rutas"}));
+      entregas.slice(0,3).forEach(e=>all.push({icon:Package,color:GREEN,label:e.pdv||"Entrega",sub:e.status||"",t:e.createdAt?.seconds||0,view:"entregas"}));
+    }
     return all.sort((a,b)=>b.t-a.t).slice(0,10);
   },[cots,facts,rutas,entregas]);
   // El camino de todos los días: pedido → cotizar → servicio → factura.
@@ -15137,8 +15136,10 @@ export default function App(){
     papelera:isAdmin?<Suspense fallback={<div style={{padding:40,color:MUTED}}>Cargando papelera…</div>}><PapeleraVista db={db} usuario={usuarioDe(authUser,userProfile)}/></Suspense>:null,
     choferes:FF_SERVICIOS?operacionEn("choferes"):<Choferes/>,
     unidades:FF_SERVICIOS?operacionEn("choferes"):<Unidades/>,
-    tracking:<LiveTracking/>,
-    rutas:<PlanificadorRutas/>,
+    /* Pantallas viejas que ya no funcionan: se quitaron. Sus links llevan a lo que las reemplazó en Operación.
+       Los datos viejos siguen guardados (nada se borra). */
+    tracking:FF_SERVICIOS?operacionEn("mapa"):<LiveTracking/>,
+    rutas:FF_SERVICIOS?operacionEn("asignar"):<PlanificadorRutas/>,
     nacional:isAdmin?<PlanificadorNacional/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     facturas:<Facturas rol={rol}/>,
     cierre:isAdmin?<CierreContable/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
@@ -15146,11 +15147,11 @@ export default function App(){
     pagos:isAdmin?<PagosProveedores userProfile={userProfile}/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     viaticos:isAdmin?<Viaticos/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
     gastosAdmin:<GastosAdmin/>,
-    jornadas:<JornadasAdmin/>,
-    chat:<ChatCentro/>,
-    alertas:<AlertasCentro setView={setView}/>,
+    jornadas:FF_SERVICIOS?operacionEn("asistencia"):<JornadasAdmin/>,
+    chat:FF_SERVICIOS?operacionEn("ahora"):<ChatCentro/>,
+    alertas:FF_SERVICIOS?operacionEn("alertas"):<AlertasCentro setView={setView}/>,
     clientes:isAdmin?<Clientes/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
-    entregas:<Entregas/>,
+    entregas:FF_SERVICIOS?operacionEn("rutas"):<Entregas/>,
     usuarios:isAdmin?<Usuarios/>:<Dashboard setView={setView} cots={cots} facts={facts} rutas={rutas} entregas={entregas} viat={viatCombo} clientes={clientes} prospectos={prospectos} choferes={choferes} rol={rol}/>,
   };
 
