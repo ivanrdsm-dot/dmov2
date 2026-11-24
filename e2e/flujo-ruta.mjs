@@ -141,14 +141,14 @@ test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () =
   const datos = { dispositivoId: "equipo-prueba-0001", selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: "ABC1234", odometroKm: 85000, combustiblePct: 75, simulada: false };
   await assert.rejects(chofer.llamar("choferCheckIn", datos), /ubicación/);                                       // sin GPS no hay check-in
   await assert.rejects(chofer.llamar("choferCheckIn", { ...datos, lat: BODEGA.lat, lng: BODEGA.lng, selfieRuta: await subir("vacia.jpg", JPG) }), /vacía|pequeña/);   // foto falsa
-  await chofer.llamar("choferCheckIn", { ...datos, lat: BODEGA.lat, lng: BODEGA.lng, precisionM: 12, posTMs: Date.now() - 12 * MIN });
+  await chofer.llamar("choferCheckIn", { ...datos, lat: BODEGA.lat, lng: BODEGA.lng, precisionM: 12, posTMs: Date.now() - 2 * MIN });
   const j = await getDoc(doc(chofer.db, "jornadas", `ch1_${fechaCDMX()}`));
   assert.equal(j.data().estado, "Abierta");
   assert.ok(j.data().fotos.selfie.md5, "huella de la foto");
   assert.ok(j.data().fotos.selfie.subidaEnMs > Date.now() - 5 * MIN, "hora real de subida (la pone Google)");
   assert.deepEqual(j.data().dudas, []);
   // Con la jornada abierta (aún sin ruta) su ubicación también se registra.
-  const r = await chofer.llamar("choferSubirPosiciones", { dispositivoId: "equipo-prueba-0001", servicioId: "", posiciones: [{ ...BODEGA, tMs: Date.now() - 10 * MIN, precisionM: 10 }] });   // antes de salir a ruta
+  const r = await chofer.llamar("choferSubirPosiciones", { dispositivoId: "equipo-prueba-0001", servicioId: "", posiciones: [{ ...BODEGA, tMs: Date.now() - 2 * MIN + 1000, precisionM: 10 }] });   // antes de salir a ruta
   assert.equal(r.aceptadas, 1);
   assert.equal((await getDocs(collection(ilse.db, "jornadas", `ch1_${fechaCDMX()}`, "posiciones"))).size, 1);
 });
@@ -156,11 +156,11 @@ test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () =
 test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con problema, sin nombre de quien recibe)", async () => {
   const c = chofer.llamar, D = "equipo-prueba-0001";
   assert.equal((await c("choferIniciarRuta", { dispositivoId: D, servicioId })).estado, "En ruta");
-  const ahora = Date.now(), tiempos = [ahora - 4 * MIN, ahora - 2 * MIN, ahora - 10000];
+  const ahora = Date.now(), tiempos = [ahora - 100000, ahora - 60000, ahora - 10000];
   const sitios = [BODEGA, TIENDA_A, TIENDA_B];
   for(const [i, p] of paradas.entries()){
     // Primera lectura aproximada (wifi) lejos: no debe causar "salto imposible".
-    const pos = [...(i === 0 ? [{ lat: 19.45, lng: -99.20, tMs: tiempos[i] - 30000, precisionM: 2500 }] : []), { ...sitios[i], tMs: tiempos[i], precisionM: 10 }];
+    const pos = [...(i === 0 ? [{ lat: 19.45, lng: -99.20, tMs: tiempos[i] - 15000, precisionM: 2500 }] : []), { ...sitios[i], tMs: tiempos[i], precisionM: 10 }];
     const r = await c("choferSubirPosiciones", { dispositivoId: D, servicioId, posiciones: pos });
     assert.equal(r.aceptadas, pos.length);
     if(i === 1){
