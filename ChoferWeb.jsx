@@ -10,6 +10,7 @@ import { collection, doc, onSnapshot, query, where, orderBy } from "firebase/fir
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { getStorage, ref as refStorage, uploadBytes } from "firebase/storage";
 import { correoDeChofer, enlaceNavegar, enlaceRutaCompleta } from "./lugares.ts";
+import { leerCola, agregarACola, quitarDeCola, marcarError, esErrorDeRed, yaEstabaCerrada } from "./colaChofer.ts";
 import FirmaPad from "./FirmaPad.jsx";
 
 const LETRA = "system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
@@ -80,6 +81,8 @@ const leerBorrador = k => { try { return JSON.parse(sessionStorage.getItem(k) ||
 const guardarBorrador = (k, v) => { try { v ? sessionStorage.setItem(k, JSON.stringify(v)) : sessionStorage.removeItem(k); } catch {} };
 const aDataURL = async archivo => { if(!archivo) return ""; try { const b = await comprimir(archivo, 1280, 0.72);
   return await new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(b); }); } catch { return ""; } };
+const almacenLocal = () => { try { return window.localStorage; } catch { return null; } };
+const blobADataURL = b => b ? new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = mal; r.readAsDataURL(b); }) : Promise.resolve("");
 const deDataURL = async url => { if(!url) return null; try { return await (await fetch(url)).blob(); } catch { return null; } };
 
 /* ── Diseño (celular primero): una sola hoja de estilos, animaciones suaves, áreas seguras del notch ── */
@@ -277,7 +280,7 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
 }
 
 /* ── Entregar en una parada (hoja que sube desde abajo) ─────────────────── */
-function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerrar }){
+function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerrar, onEnCola }){
   const [foto, setFoto] = useState(null), [foto2, setFoto2] = useState(null), [recibe, setRecibe] = useState(""), [notas, setNotas] = useState("");
   const [problema, setProblema] = useState(""), [error, setError] = useState(""), [paso, setPaso] = useState(""), [firma, setFirma] = useState(null), [hayProblema, setHayProblema] = useState(false);
   const carga = parada.tipo === "carga";
@@ -295,6 +298,7 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
     if(!foto){ setError(problema ? "Toma una foto del lugar (sirve de prueba)." : "Toma la foto de la entrega."); return; }
     if(!problema && !recibe.trim()){ setError(carga ? "Escribe quién te entregó la mercancía." : "Escribe el nombre de quien recibe."); return; }
     setError("");
+    const cerradaMs = Date.now();   // la hora real de la entrega (aunque se mande después)
     try {
       setPaso("Confirmando que estás en el lugar…"); await mandarAhora();
       setPaso("Subiendo fotos…");
@@ -305,7 +309,17 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
       setPaso("Cerrando la parada…");
       await llamar("choferCerrarParada", { servicioId: servicio.id, paradaId: parada.id, evidencia: { fotos, firmaRuta, receptor: recibe.trim(), notas: notas.trim(), incidencia: problema } });
       cerrar(true);
-    } catch(e){ setError(mensaje(e)); }
+    } catch(e){
+      /* Sin señal: se guarda en el celular con su hora y se manda sola al volver la señal. */
+      if(esErrorDeRed(e, navigator.onLine)){
+        setPaso("Sin señal: guardando la entrega en tu celular…");
+        const r = agregarACola(almacenLocal(), { id: `${servicio.id}_${parada.id}`, servicioId: servicio.id, paradaId: parada.id, paradaNombre: parada.nombre || "", cerradaMs,
+          fotos: [await aDataURL(foto), foto2 ? await aDataURL(foto2) : ""].filter(Boolean), firma: await blobADataURL(firma),
+          evidencia: { receptor: recibe.trim(), notas: notas.trim(), incidencia: problema } });
+        if(r.ok){ onEnCola?.(); cerrar(true); setPaso(""); return; }
+        setError(r.motivo);
+      } else setError(mensaje(e));
+    }
     setPaso("");
   };
   return (<>
@@ -340,7 +354,7 @@ function Entregar({ chofer, servicio, parada, llamar, subir, mandarAhora, onCerr
 }
 
 /* ── Un servicio: siguiente parada en grande + línea de tiempo ──────────── */
-function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarAhora, avisar, onPaso }){
+function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarAhora, avisar, onPaso, enCola = [], onEnCola }){
   const [paradas, setParadas] = useState([]), [abierta, setAbierta] = useState(null), [ocupado, setOcupado] = useState(false);
   useEffect(() => onSnapshot(query(collection(db, "servicios", servicio.id, "paradas"), orderBy("orden")),
     s => setParadas(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => p.estado !== "Quitada")), () => setParadas([])), [db, servicio.id]);   // las quitadas por la oficina desaparecen
@@ -352,7 +366,8 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
     const b = leerBorrador(BORR_ENTREGA), p = b && b.servicioId === servicio.id && paradas.find(x => x.id === b.paradaId && !["Entregada", "Incidencia"].includes(x.estado));
     if(p && enRuta) setAbierta(p);
   }, [paradas, enRuta, servicio.id]);
-  const hecha = p => ["Entregada", "Incidencia"].includes(p.estado);
+  const guardada = p => enCola.includes(`${servicio.id}_${p.id}`);   // cerrada sin señal, por mandar
+  const hecha = p => ["Entregada", "Incidencia"].includes(p.estado) || guardada(p);
   const hechas = paradas.filter(hecha).length;
   const siguiente = paradas.find(p => !hecha(p));
   useEffect(() => { onPaso?.(servicio.id, { enRuta, total: paradas.length, hechas }); }, [enRuta, paradas.length, hechas]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -399,6 +414,7 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
               <div style={{ fontWeight: 900, fontSize: 16 }}>{p.tipo === "carga" ? "Recoger · " : "Entregar · "}{p.nombre}</div>
               <div style={{ color: GRIS, fontSize: 14 }}>{p.direccion}</div>
               {p.estado === "Incidencia" && <div style={{ color: "#c2410c", fontWeight: 800, fontSize: 13, marginTop: 2 }}>⚠️ {p.incidencia || "Con problema"}</div>}
+              {guardada(p) && !["Entregada", "Incidencia"].includes(p.estado) && <div style={{ color: "#b45309", fontWeight: 800, fontSize: 13, marginTop: 2 }}>📶 Guardada sin señal · se manda sola</div>}
               {!lista && !esSig && <a href={enlaceNavegar({ lat: p.lat, lng: p.lng })} target="_blank" rel="noreferrer" style={{ color: AZUL, fontWeight: 800, fontSize: 14, textDecoration: "none" }}>🧭 Cómo llegar</a>}
             </div>);
         })}
@@ -409,7 +425,8 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
       <button onClick={iniciar} disabled={ocupado || !jornadaAbierta} className={"dm-btn " + (jornadaAbierta ? "dm-naranja" : "dm-gris")}>
         {jornadaAbierta ? (ocupado ? "Saliendo…" : "🚚 Salir a la ruta") : "Primero empieza tu día ☝️"}</button></div></div>}
     {abierta && <Entregar chofer={chofer} servicio={servicio} parada={abierta} llamar={llamar} subir={subir} mandarAhora={() => mandarAhora(servicio.id)}
-      onCerrar={ok => { setAbierta(null); if(ok) avisar(abierta.tipo === "carga" ? "📦 Carga registrada." : "✅ Entrega registrada. ¡Bien!"); }}/>}
+      onEnCola={() => { onEnCola?.(); avisar("📶 Sin señal: la entrega quedó guardada con su hora y se manda sola cuando vuelva la señal."); }}
+      onCerrar={ok => { setAbierta(null); if(ok && !enCola.includes(`${servicio.id}_${abierta.id}`)) avisar(abierta.tipo === "carga" ? "📦 Carga registrada." : "✅ Entrega registrada. ¡Bien!"); }}/>}
   </>);
 }
 
@@ -543,6 +560,41 @@ export default function ChoferWeb({ db, auth, app }){
     catch(e){ avisar(mensaje(e), true); }
   };
   const [terminando, setTerminando] = useState(false);
+  /* Entregas guardadas sin señal: se mandan solas al volver la señal (y cada 30 s). */
+  const [cola, setCola] = useState(() => leerCola(almacenLocal()));
+  const sincronizando = useRef(false);
+  const sincronizar = useCallback(async () => {
+    const a = almacenLocal();
+    if(sincronizando.current || !chofer || !a) return;
+    const items = leerCola(a);
+    setCola(items);
+    if(!items.length || !navigator.onLine) return;
+    sincronizando.current = true;
+    for(const it of items){
+      try {
+        await enviar(it.servicioId).catch(() => {});   // primero las ubicaciones guardadas: con ellas se valida la entrega
+        const base = `evidencias/${chofer.id}/${it.servicioId}/${it.paradaId}_${it.cerradaMs}_`, meta = { sinSenal: "1", cerradaMs: String(it.cerradaMs) };
+        const fotos = [];
+        for(const [i, d] of it.fotos.entries()) fotos.push(await subir(`${base}${i + 1}.jpg`, await deDataURL(d), meta));
+        const firmaRuta = it.firma ? await subir(base + "firma.png", await deDataURL(it.firma), meta) : "";
+        await llamar("choferCerrarParada", { servicioId: it.servicioId, paradaId: it.paradaId, cerradaMs: it.cerradaMs, evidencia: { ...it.evidencia, fotos, firmaRuta } });
+        quitarDeCola(a, it.id); avisar(`✓ Se mandó la entrega de ${it.paradaNombre || "la parada"}.`);
+      } catch(e){
+        if(yaEstabaCerrada(e)){ quitarDeCola(a, it.id); continue; }
+        if(esErrorDeRed(e, navigator.onLine)) break;
+        marcarError(a, it.id, mensaje(e));
+      }
+    }
+    setCola(leerCola(a));
+    sincronizando.current = false;
+  }, [chofer, llamar, subir, enviar]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if(!chofer) return;
+    sincronizar();
+    const t = setInterval(sincronizar, 30000);
+    window.addEventListener("online", sincronizar);
+    return () => { clearInterval(t); window.removeEventListener("online", sincronizar); };
+  }, [chofer, sincronizar]);
   const terminar = () => setTerminando(true);
 
   const Cargando = ({ texto }) => <div className="dm"><Estilos/><div className="dm-vacio" style={{ paddingTop: 120 }}><div>🚚</div><p className="dm-sub">{texto}</p></div></div>;
@@ -591,7 +643,13 @@ export default function ChoferWeb({ db, auth, app }){
           {cerrado && <div className="dm-card dm-vacio"><div>🌙</div><h2 className="dm-titulo">Tu día está cerrado</h2><p className="dm-sub">¡Buen descanso! Nos vemos mañana.</p></div>}
           {errorRutas && <div className="dm-card"><Falla>{errorRutas}</Falla></div>}
           {servicios.length === 0 && !errorRutas && !cerrado && <div className="dm-card dm-vacio"><div>🗺️</div><h2 className="dm-titulo">Sin rutas por ahora</h2><p className="dm-sub">Cuando la oficina te asigne una, aparece aquí sola.</p></div>}
+          {cola.length > 0 && <div className="dm-card" style={{ borderLeft: "5px solid #f59e0b" }}>
+            <b>📶 {cola.length} {cola.length === 1 ? "entrega guardada" : "entregas guardadas"} sin señal</b>
+            <p className="dm-sub" style={{ margin: "4px 0 0" }}>Se mandan solas cuando vuelva la señal. No cierres sesión.</p>
+            {cola.filter(x => x.error).map(x => <Falla key={x.id}>{x.paradaNombre || "Una entrega"}: {x.error}. Avisa a la oficina.</Falla>)}
+            <button onClick={sincronizar} className="dm-btn dm-linea" style={{ marginTop: 10 }}>Intentar mandar ahora</button></div>}
           {servicios.map(s => <Servicio key={s.id} db={db} chofer={chofer} servicio={s} jornadaAbierta={jornadaAbierta} llamar={llamar} subir={subir} mandarAhora={mandarAhora} avisar={avisar}
+            enCola={cola.map(x => x.id)} onEnCola={() => setCola(leerCola(almacenLocal()))}
             onPaso={(id, v) => setAvance(x => ({ ...x, [id]: v }))}/>)}
           {jornadaAbierta && !enRuta && !(servicios || []).some(s => s.estado === "Asignada") && <div className="dm-pie"><div>
             <button onClick={terminar} className="dm-btn dm-azul">🏁 Terminar mi día</button></div></div>}
