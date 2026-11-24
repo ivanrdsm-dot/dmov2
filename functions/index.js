@@ -48,7 +48,10 @@ async function ingresar(cuerpo){
     tx.set(evento(ref), { tipo: "recibida", ...ACTOR(d.canal), ts: FieldValue.serverTimestamp() });
     return { folio, nuevo: true, acuseEnviado: false };
   });
-  return { ...r, acusar: !r.acuseEnviado && !d.automatico, acuse: acuseTexto(r.folio, d.remitenteNombre) };
+  /* El acuse automático al cliente va APAGADO salvo que el director lo prenda (sistema/conectores.acuseAutomatico = true):
+     nada sale a un cliente a nombre de DMOV sin su OK. El pedido se registra igual. */
+  const prendido = (await db.collection("sistema").doc("conectores").get()).data()?.acuseAutomatico === true;
+  return { ...r, acusar: prendido && !r.acuseEnviado && !d.automatico, acuse: acuseTexto(r.folio, d.remitenteNombre) };
 }
 
 async function marcar(cuerpo, tipo){
