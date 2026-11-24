@@ -20,6 +20,17 @@ export default function EditarRuta({ db, usuario, servicio, lugares, token, llam
   const sacar = clave => setNuevas(ps => ps.filter(p => p.clave !== clave));
   const alternar = id => setQuitar(q => q.includes(id) ? q.filter(x => x !== id) : [...q, id]);
   const cambios = quitar.length + nuevas.length;
+  /* ⛔ Detener / reanudar una entrega: al chofer le sale "NO ENTREGAR" y el servidor no le deja cerrarla. */
+  const detener = async (p, detenerla) => {
+    const motivo = detenerla ? prompt(`Motivo para detener la entrega en "${p.nombre}" (lo ve el chofer):`, "No entregar hoy, se reprograma") : "";
+    if(detenerla && (motivo === null || !motivo.trim())) return;
+    setError(""); setOcupado(detenerla ? "Deteniendo…" : "Reanudando…");
+    try { await llamar("oficinaDetenerParada", { servicioId: servicio.id, paradaId: p.id, detener: detenerla, motivo: (motivo || "").trim() });
+      setHecho(detenerla ? `⛔ Entrega detenida en ${p.nombre}. El chofer tiene que confirmar con "Enterado".` : `✅ ${p.nombre} reanudada. El chofer tiene que confirmar con "Enterado".`); }
+    catch(e){ setError(mensajeError(e)); }
+    setOcupado("");
+  };
+  const cp = servicio.cambioPendiente, horaDe = ms => ms ? new Date(ms).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : "";
   const faltan = [nuevas.some(p => !p.confirmada) && "confirmar en el mapa cada lugar nuevo", nuevas.some(p => !String(p.nombre).trim()) && "nombre de cada lugar nuevo"].filter(Boolean);
 
   const guardar = async () => {
@@ -39,12 +50,18 @@ export default function EditarRuta({ db, usuario, servicio, lugares, token, llam
 
   return (
     <div style={{ borderTop: "1px solid " + BORDER, marginTop: 10, paddingTop: 10 }}>
-      <div style={{ fontSize: 13, color: MUTED, marginBottom: 8 }}>Toca <b>Quitar</b> en lo que ya no va, o agrega lugares abajo. Luego <b>Guardar cambios</b>.</div>
+      {cp && <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, padding: "8px 10px", borderRadius: 10,
+        background: cp.enteradoMs ? GREEN + "14" : AMBER + "18", color: cp.enteradoMs ? GREEN : AMBER }}>
+        {cp.enteradoMs ? `✓ El chofer confirmó el último cambio a las ${horaDe(cp.enteradoMs)}` : `⏳ Cambio enviado a las ${horaDe(cp.enMs)}: esperando que el chofer toque "Enterado". Si no lo hace en 5 min, te llega alerta.`}
+        <div style={{ fontWeight: 400, color: TEXT, marginTop: 2 }}>{(cp.lineas || []).join(" · ")}</div></div>}
+      <div style={{ fontSize: 13, color: MUTED, marginBottom: 8 }}>Toca <b>Quitar</b> en lo que ya no va, <b>⛔ Detener</b> si no se debe entregar, o agrega lugares abajo.</div>
       {actuales.map(p => {
         const marcada = quitar.includes(p.id), pendiente = p.estado === "Pendiente";
         return <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px dashed " + BORDER, opacity: p.estado === "Quitada" ? .55 : 1 }}>
           <b style={{ fontFamily: MONO, minWidth: 22 }}>{p.orden}.</b>
           <span style={{ flex: 1, color: TEXT, textDecoration: marcada || p.estado === "Quitada" ? "line-through" : "none" }}>{p.tipo === "carga" ? "Recoger" : "Entregar"} · {p.nombre}</span>
+          {pendiente && p.detenida?.activa && <Chip color={ROSE}>⛔ Detenida</Chip>}
+          {pendiente && <button disabled={!!ocupado} onClick={() => detener(p, !p.detenida?.activa)} style={{ ...boton(p.detenida?.activa ? GREEN : ROSE, false), padding: "4px 10px", minHeight: 28, fontSize: 12 }}>{p.detenida?.activa ? "Reanudar" : "⛔ Detener"}</button>}
           {pendiente
             ? <button onClick={() => alternar(p.id)} style={{ ...boton(marcada ? MUTED : ROSE, false), padding: "4px 10px", minHeight: 28, fontSize: 12 }}>{marcada ? "Dejarla" : "Quitar"}</button>
             : <Chip color={p.estado === "Entregada" ? GREEN : p.estado === "Incidencia" ? AMBER : MUTED}>{p.estado === "Quitada" ? "Quitada" : p.estado}</Chip>}

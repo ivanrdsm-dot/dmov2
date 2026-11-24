@@ -369,7 +369,19 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
   const guardada = p => enCola.includes(`${servicio.id}_${p.id}`);   // cerrada sin señal, por mandar
   const hecha = p => ["Entregada", "Incidencia"].includes(p.estado) || guardada(p);
   const hechas = paradas.filter(hecha).length;
-  const siguiente = paradas.find(p => !hecha(p));
+  const detenida = p => p?.detenida?.activa === true;   // ⛔ la oficina la frenó: no se entrega
+  const siguiente = paradas.find(p => !hecha(p) && !detenida(p)) || paradas.find(p => !hecha(p));
+  /* Cambio de ruta que hay que confirmar con "Enterado" (no se quita hasta tocarlo). */
+  const [yaEnterado, setYaEnterado] = useState("");   // id confirmado aquí: la hoja se cierra sin esperar al servidor
+  const cambio = servicio.cambioPendiente && !(Number(servicio.cambioPendiente.enteradoMs) > 0) && servicio.cambioPendiente.id !== yaEnterado ? servicio.cambioPendiente : null;
+  const [confirmando, setConfirmando] = useState(false);
+  useEffect(() => { if(cambio?.id) try { navigator.vibrate?.([300, 120, 300, 120, 300]); } catch {} }, [cambio?.id]);
+  const enterado = async () => {
+    setConfirmando(true);
+    try { await llamar("choferEnterado", { servicioId: servicio.id, cambioId: cambio.id }); setYaEnterado(cambio.id); avisar("👍 Enterado. La oficina ya lo vio."); }
+    catch(e){ avisar(mensaje(e), true); }
+    setConfirmando(false);
+  };
   useEffect(() => { onPaso?.(servicio.id, { enRuta, total: paradas.length, hechas }); }, [enRuta, paradas.length, hechas]);   // eslint-disable-line react-hooks/exhaustive-deps
   const iniciar = async () => {
     setOcupado(true);
@@ -392,7 +404,25 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
         href={enlaceRutaCompleta(paradas.filter(p => !hecha(p)))}>🗺️ Ver toda la ruta en Google Maps</a>}
     </div>
 
-    {enRuta && siguiente && <div className="dm-card dm-sig" key={siguiente.id}>
+    {cambio && <><div className="dm-velo" style={{ zIndex: 80 }}/>
+      <div className="dm-hoja" role="alertdialog" aria-label="La oficina cambió tu ruta" style={{ zIndex: 81, borderTop: "6px solid " + ROJO }}>
+        <div style={{ fontSize: 40, textAlign: "center" }}>🔔</div>
+        <h2 className="dm-titulo" style={{ textAlign: "center", marginTop: 4 }}>La oficina cambió tu ruta</h2>
+        <div style={{ margin: "14px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+          {(cambio.lineas || []).map((l, i) => <div key={i} style={{ fontSize: 19, fontWeight: 900, lineHeight: 1.3, color: l.startsWith("⛔") ? ROJO : AZUL,
+            background: l.startsWith("⛔") ? "#fef2f2" : "#eff6ff", borderRadius: 14, padding: "12px 14px" }}>{l}</div>)}
+        </div>
+        <p className="dm-sub" style={{ textAlign: "center" }}>Lo mandó {cambio.porNombre || "la oficina"}. Si tienes duda, llama antes de seguir.</p>
+        <button onClick={enterado} disabled={confirmando} className="dm-btn dm-verde" style={{ marginTop: 6, fontSize: 20 }}>{confirmando ? "Enviando…" : "👍 Enterado"}</button>
+      </div></>}
+
+    {enRuta && siguiente && detenida(siguiente) && <div className="dm-card" key={"det-" + siguiente.id} style={{ border: "3px solid " + ROJO, background: "#fef2f2" }}>
+      <span className="dm-kicker" style={{ background: ROJO }}>⛔ NO ENTREGAR</span>
+      <h2 className="dm-titulo" style={{ marginTop: 10, fontSize: 24 }}>{siguiente.nombre}</h2>
+      <p style={{ fontSize: 18, fontWeight: 900, color: ROJO, margin: "6px 0" }}>{siguiente.detenida.motivo || "La oficina detuvo esta entrega"}</p>
+      <p className="dm-sub">No descargues aquí. Si ya estás en el lugar, espera y llama a la oficina.</p>
+    </div>}
+    {enRuta && siguiente && !detenida(siguiente) && <div className="dm-card dm-sig" key={siguiente.id}>
       <span className="dm-kicker">Siguiente · {siguiente.tipo === "carga" ? "Recoger" : "Entregar"}</span>
       <h2 className="dm-titulo" style={{ marginTop: 10, fontSize: 24 }}>{siguiente.nombre}</h2>
       <p className="dm-sub" style={{ fontSize: 16 }}>{siguiente.direccion}</p>
@@ -413,6 +443,7 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
               <div className="dm-tl-dot">{p.estado === "Incidencia" ? "!" : lista ? "✓" : p.orden}</div>
               <div style={{ fontWeight: 900, fontSize: 16 }}>{p.tipo === "carga" ? "Recoger · " : "Entregar · "}{p.nombre}</div>
               <div style={{ color: GRIS, fontSize: 14 }}>{p.direccion}</div>
+              {detenida(p) && !lista && <div style={{ color: ROJO, fontWeight: 900, fontSize: 14, marginTop: 2 }}>⛔ NO ENTREGAR · {p.detenida.motivo || "detenida por la oficina"}</div>}
               {p.estado === "Incidencia" && <div style={{ color: "#c2410c", fontWeight: 800, fontSize: 13, marginTop: 2 }}>⚠️ {p.incidencia || "Con problema"}</div>}
               {guardada(p) && !["Entregada", "Incidencia"].includes(p.estado) && <div style={{ color: "#b45309", fontWeight: 800, fontSize: 13, marginTop: 2 }}>📶 Guardada sin señal · se manda sola</div>}
               {!lista && !esSig && <a href={enlaceNavegar({ lat: p.lat, lng: p.lng })} target="_blank" rel="noreferrer" style={{ color: AZUL, fontWeight: 800, fontSize: 14, textDecoration: "none" }}>🧭 Cómo llegar</a>}

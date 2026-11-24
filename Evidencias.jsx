@@ -24,7 +24,7 @@ export default function Evidencias({ paradas = [] }){
           <div key={p.id} style={{ border: "1px solid " + BORDER, borderRadius: 14, padding: 12 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <b style={{ color: TEXT }}>{p.orden}. {p.tipo === "carga" ? "Recoger" : "Entregar"} · {p.nombre}</b>
-              <span style={{ marginLeft: "auto" }}><Chip color={p.estado === "Entregada" ? GREEN : p.estado === "Incidencia" ? AMBER : MUTED}>{p.estado === "Incidencia" ? "⚠️ " + (p.incidencia || "Con problema") : p.estado === "Quitada" ? "Quitada por la oficina" : p.estado}</Chip></span>
+              <span style={{ marginLeft: "auto" }}><Chip color={p.estado === "Entregada" ? GREEN : p.estado === "Incidencia" ? AMBER : MUTED}>{p.estado === "Incidencia" ? "⚠️ " + (p.incidencia || "Con problema") : p.estado === "Quitada" ? "Quitada por la oficina" : p.detenida?.activa ? "⛔ Detenida: " + (p.detenida.motivo || "") : p.estado}</Chip></span>
             </div>
             {cerrada && <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>
               {[ev.receptor && "Recibió: " + ev.receptor, p.cerradaEn && fechaHora(p.cerradaEn), p.distanciaAlCerrarM != null && `a ${p.distanciaAlCerrarM} m del punto`, p.cerradaPorExcepcion && "cierre autorizado por oficina", p.cerradaDiferida && "cerrada sin señal (se envió después)"].filter(Boolean).join(" · ")}

@@ -7,7 +7,8 @@ import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { getStorage } from "firebase-admin/storage";
 import { validarLote, coordenadaValida, distanciaM, RADIO_GEOCERCA_DEFAULT_M } from "./lib/geo.js";
-import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA } from "./lib/paradas.js";
+import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA, resumenCambio, estaDetenida } from "./lib/paradas.js";
+import { randomUUID } from "node:crypto";
 import { ordenarParadas, clasificarRuta, fechaMasDias } from "./lib/rutas.js";
 import { fusionarClaims } from "./permisos.js";
 import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER } from "./lib/vigilancia.js";
@@ -54,6 +55,17 @@ async function alertaUnica(a){
     choferId: a.choferId || "", choferNombre: a.choferNombre || "", servicioId: a.servicioId || "", ref: a.ref || null,
     ...(Number.isFinite(a.lat) && Number.isFinite(a.lng) ? { lat: a.lat, lng: a.lng } : {}),
     origen: "vigilante", atendida: false, read: false, ts: ahora(), createdAt: ahora() }).catch(() => {});
+}
+
+/* Cambio de ruta que el chofer debe confirmar con "Enterado". Se guarda en el servicio (su app lo ve al instante)
+   y queda en la bitácora. Si no lo confirma en 5 min, el vigilante avisa al celular de la oficina. */
+function marcarCambio(lote, refS, of, partes){
+  const lineas = resumenCambio(partes);
+  if(!lineas.length) return null;
+  const id = randomUUID().slice(0, 12), enMs = Date.now();
+  lote.update(refS, { cambioPendiente: { id, lineas, porNombre: of.nombre, porUid: of.uid, enMs, enteradoMs: null }, actualizadoEn: ahora() });
+  lote.set(refS.collection("eventos").doc(), { tipo: "cambio_notificado", cambioId: id, lineas, ...actorOficina(of), ts: ahora() });
+  return { id, lineas };
 }
 
 /* Fotos de check-in/out: el SERVIDOR revisa que existan, que sean imágenes y que se hayan subido hace
@@ -226,7 +238,7 @@ export const choferSubirPosiciones = onCall(OPC, async req => {
   if(ultima && servicio?.seguimientoToken && servicio.estado === "En ruta"){
     try {
       const ps = (await db().collection(`servicios/${servicio.id}/paradas`).orderBy("orden").get()).docs;
-      const sig = ps.find(d => d.data().tipo !== "carga" && !["Entregada", "Incidencia", "Quitada"].includes(d.data().estado));
+      const sig = ps.find(d => d.data().tipo !== "carga" && !["Entregada", "Incidencia", "Quitada"].includes(d.data().estado) && !estaDetenida(d.data()));   // a una detenida no se le avisa "por llegar"
       if(sig && !sig.data().avisoCercaEn && coordenadaValida({ lat: sig.data().lat, lng: sig.data().lng }) && distanciaM(ultima, { lat: sig.data().lat, lng: sig.data().lng }) < 1000){
         await db().runTransaction(async tx => {
           const p = await tx.get(sig.ref);
@@ -483,9 +495,47 @@ export const oficinaEditarRuta = onCall(OPC, async req => {
   for(const n of nuevas) lote.set(refS.collection("paradas").doc("p" + String(n.orden).padStart(2, "0")), { ...n, agregadaDespues: true, creadaEn: ahora() });
   lote.update(refS, { actualizadoEn: ahora() });
   lote.set(refS.collection("eventos").doc(), { tipo: "ruta_editada", agregadas: nuevas.map(n => n.nombre), quitadas: quitar.map(id => porId.get(id).data().nombre || id), ...actorOficina(of), ts: ahora() });
+  marcarCambio(lote, refS, of, { agregadas: nuevas.map(n => n.nombre), quitadas: quitar.map(id => porId.get(id).data().nombre || id) });
   await lote.commit();
   if(s.data().estado === "En ruta") await trazarRuta(servicioId, null).catch(e => console.warn("trazo", e?.message));   // el camino nuevo para saber si se sale
   return { ok: true, agregadas: nuevas.length, quitadas: quitar.length };
+});
+
+/** ⛔ Detener / reanudar una entrega. Mientras esté detenida el chofer no puede cerrarla (lo valida el servidor)
+ *  y ve "NO ENTREGAR" en grande. Siempre con motivo, siempre en bitácora, y el chofer debe confirmar con "Enterado". */
+export const oficinaDetenerParada = onCall(OPC, async req => {
+  const of = await oficinaDe(req);
+  const servicioId = txt(req.data?.servicioId, 80), paradaId = txt(req.data?.paradaId, 80), detener = req.data?.detener !== false, motivo = txt(req.data?.motivo, 300);
+  if(!/^[A-Za-z0-9_-]{1,80}$/.test(servicioId) || !/^[A-Za-z0-9_-]{1,80}$/.test(paradaId)) throw falla("invalid-argument", "Parada no válida");
+  if(detener && motivo.length < 5) throw falla("invalid-argument", "Escribe el motivo (por ejemplo: no entregar hoy, se reprograma)");
+  const refS = db().doc("servicios/" + servicioId), s = await refS.get();
+  if(!s.exists) throw falla("not-found", "Servicio no encontrado");
+  if(!["Asignada", "En ruta"].includes(s.data().estado)) throw falla("failed-precondition", `El servicio está en "${s.data().estado}"`);
+  const refP = refS.collection("paradas").doc(paradaId), p = await refP.get();
+  if(!p.exists) throw falla("not-found", "Parada no encontrada");
+  if(p.data().estado !== "Pendiente") throw falla("failed-precondition", `"${p.data().nombre}" ya está ${String(p.data().estado).toLowerCase()}`);
+  if(detener === estaDetenida(p.data())) return { ok: true, sinCambio: true };
+  const lote = db().batch(), nombre = p.data().nombre || paradaId;
+  lote.update(refP, { detenida: detener ? { activa: true, motivo, porNombre: of.nombre, porUid: of.uid, enMs: Date.now() }
+    : { ...(p.data().detenida || {}), activa: false, reanudadaPor: of.nombre, reanudadaMs: Date.now() } });
+  lote.set(refS.collection("eventos").doc(), { tipo: detener ? "parada_detenida" : "parada_reanudada", paradaId, paradaNombre: nombre, motivo, ...actorOficina(of), ts: ahora() });
+  const c = marcarCambio(lote, refS, of, detener ? { detenidas: [{ nombre, motivo }] } : { reanudadas: [nombre] });
+  await lote.commit();
+  return { ok: true, cambioId: c?.id || null };
+});
+
+/** El chofer confirma que vio el cambio de su ruta ("Enterado"). Queda con la hora del servidor. */
+export const choferEnterado = onCall(OPC, async req => {
+  const { chofer } = await choferDe(req);
+  const { ref, servicio } = await servicioDelChofer(req.data?.servicioId, chofer);
+  const cambioId = txt(req.data?.cambioId, 40), c = servicio.cambioPendiente;
+  if(!c || c.id !== cambioId) return { ok: true, yaNoAplica: true };
+  if(Number(c.enteradoMs) > 0) return { ok: true, yaEstaba: true };
+  const lote = db().batch(), ms = Date.now();
+  lote.update(ref, { "cambioPendiente.enteradoMs": ms, "cambioPendiente.enteradoPor": chofer.nombre || chofer.id });
+  lote.set(ref.collection("eventos").doc(), { tipo: "chofer_enterado", cambioId, minutos: Math.round((ms - Number(c.enMs)) / 60000), ...actorChofer(chofer), ts: ahora() });
+  await lote.commit();
+  return { ok: true };
 });
 
 /** Autoriza cerrar una parada fuera de geocerca. Solo oficina, siempre con motivo, siempre auditado. */

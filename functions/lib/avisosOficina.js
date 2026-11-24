@@ -3,7 +3,7 @@ export const ALERTAS_AL_CELULAR = {
   sos: "🚨 SOS del chofer", detenido: "⏸️ Chofer detenido", fuera_de_ruta: "🧭 Fuera de ruta", sin_ubicacion: "📵 Sin ubicación",
   sin_checkin: "⏰ Falta check-in", sin_checkout: "🌙 Jornada sin cerrar", checkin_dudoso: "⚠️ Check-in con dudas",
   ubicacion_simulada: "🛑 Ubicación falsa", velocidad_imposible: "🛑 Salto imposible de ubicación", reloj_adelantado: "🛑 Reloj manipulado",
-  dispositivo_no_autorizado: "🔒 Celular no autorizado", incidencia: "⚠️ Incidencia en entrega", cierre_fuera_de_punto: "📍 Cierre fuera del punto", ruta_excedida: "🛣️ Ruta foránea pasada de días",
+  dispositivo_no_autorizado: "🔒 Celular no autorizado", incidencia: "⚠️ Incidencia en entrega", cierre_fuera_de_punto: "📍 Cierre fuera del punto", ruta_excedida: "🛣️ Ruta foránea pasada de días", cambio_sin_enterado: "🔔 Chofer sin confirmar cambio de ruta",
 };
 export function avisoDeAlerta(a){
   const titulo = ALERTAS_AL_CELULAR[a?.type];

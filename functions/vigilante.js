@@ -42,7 +42,7 @@ export const vigilante = onSchedule({ schedule: "every 5 minutes", timeZone: "Am
   const enRuta = await Promise.all(enRutaQ.docs.map(async d => {
     const x = d.data(), ps = (await d.ref.collection("paradas").get()).docs.map(p => p.data()).filter(p => p.estado === "Pendiente");
     return { id: d.id, folio: x.folio || "", choferId: x.choferId || "", choferNombre: x.choferNombre || "", enRutaMs: ms(x.estadoTs?.["En ruta"]), paradas: ps,
-      foraneo: x.foraneo === true, regresoEstimado: x.regresoEstimado || "" };
+      foraneo: x.foraneo === true, regresoEstimado: x.regresoEstimado || "", cambioPendiente: x.cambioPendiente || null };
   }));
   const ubicaciones = Object.fromEntries(ubiQ.docs.map(d => [d.id, d.data()]));
   const jornadas = [...new Map([...jorAbQ.docs, ...jorHoyQ.docs].map(d => [d.id, { id: d.id, ...d.data(), checkInMs: ms(d.data().checkInEn) }])).values()];
