@@ -8,7 +8,7 @@ import { getAuth } from "firebase-admin/auth";
 import { getStorage } from "firebase-admin/storage";
 import { validarLote, coordenadaValida, distanciaM, RADIO_GEOCERCA_DEFAULT_M } from "./lib/geo.js";
 import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA, resumenCambio, estaDetenida } from "./lib/paradas.js";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { ordenarParadas, clasificarRuta, fechaMasDias } from "./lib/rutas.js";
 import { fusionarClaims } from "./permisos.js";
 import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER } from "./lib/vigilancia.js";
@@ -381,14 +381,43 @@ export const oficinaVincularChofer = onCall(OPC, async req => {
   await lote.commit();
   /* El permiso de subir sus fotos va dentro de su cuenta (no depende de que Storage lea Firestore). */
   await fusionarClaims(usuario.uid, { choferId });
-  /* Al poner su contraseña, el botón "Continuar" lo lleva a la app del chofer; la página sale en español. */
-  let enlace;
-  const origen = String(req.rawRequest?.headers?.origin || "");
-  const base = /^https:\/\/(salesflow-crm-13c4a\.(web\.app|firebaseapp\.com)|dmov2-ixgf\.vercel\.app)$/.test(origen) ? origen : "https://salesflow-crm-13c4a.web.app";
-  try { enlace = await getAuth().generatePasswordResetLink(correo, { url: base + "/chofer" }); }
-  catch { enlace = await getAuth().generatePasswordResetLink(correo); }
-  enlace = /[?&]lang=/.test(enlace) ? enlace.replace(/([?&])lang=[^&]*/, "$1lang=es") : enlace + (enlace.includes("?") ? "&" : "?") + "lang=es";
-  return { ok: true, enlace };
+  /* Enlace propio (no el de Firebase, que vence en 1 hora): dura 7 días, abre la app y ahí crea su contraseña. */
+  const token = await crearActivacion({ choferId, uid: usuario.uid, correo, porUid: of.uid });
+  return { ok: true, enlace: "https://salesflow-crm-13c4a.web.app/chofer?activar=" + token, venceDias: DIAS_ACTIVACION };
+});
+
+/* ── Activación de la cuenta del chofer ────────────────────────────────────
+   El enlace lleva un código al azar; en la base solo se guarda su huella (sha256),
+   así que ni leyendo la base se puede armar un enlace. Sirve 7 días y una sola vez. */
+export const DIAS_ACTIVACION = 7;
+const huella = t => createHash("sha256").update(String(t)).digest("hex");
+export async function crearActivacion({ choferId, uid, correo, porUid }){
+  const token = randomBytes(24).toString("base64url");
+  await db().doc("activaciones/" + huella(token)).set({ choferId, uid, correo, creadoPor: porUid || "", creadoEn: ahora(),
+    venceMs: Date.now() + DIAS_ACTIVACION * 86400000, usadoMs: null });
+  return token;
+}
+
+/** Sin sesión: con solo el código dice en qué estado está; con código + contraseña la crea. */
+export const choferActivar = onCall(OPC, async req => {
+  const token = String(req.data?.token || "");
+  if(!/^[A-Za-z0-9_-]{20,64}$/.test(token)) return { estado: "invalida" };
+  const ref = db().doc("activaciones/" + huella(token)), snap = await ref.get();
+  if(!snap.exists) return { estado: "invalida" };
+  const a = snap.data(), c = (await db().doc("choferes/" + a.choferId).get()).data() || {};
+  const pila = String(c.nombre || "").trim().replace(/^jos[eé]\s+/i, "").split(/\s+/)[0] || "";
+  const info = { nombre: pila ? pila[0].toUpperCase() + pila.slice(1).toLowerCase() : "", tel: String(c.tel || "").replace(/\D/g, "").slice(-10) };
+  if(c.baja || c.activo === false || c.authUid !== a.uid) return { estado: "invalida" };
+  if(a.usadoMs) return { estado: "usada", ...info };
+  if(Date.now() > Number(a.venceMs)) return { estado: "vencida", ...info };
+  if(req.data?.clave === undefined) return { estado: "lista", ...info };
+  const clave = String(req.data.clave);
+  if(clave.length < 6) throw falla("invalid-argument", "La contraseña debe tener al menos 6 letras o números.");
+  if(clave.length > 64) throw falla("invalid-argument", "La contraseña es demasiado larga.");
+  await getAuth().updateUser(a.uid, { password: clave, disabled: false });
+  await ref.update({ usadoMs: Date.now(), usadoEn: ahora() });
+  await db().doc("choferes/" + a.choferId).update({ contrasenaCreadaEn: ahora() });
+  return { estado: "creada", correo: a.correo, ...info };
 });
 
 /** Libera el equipo de un chofer (cambio o reposición de celular). Queda en la bitácora de alertas. */
