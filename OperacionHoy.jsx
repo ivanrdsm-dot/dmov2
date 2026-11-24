@@ -1,13 +1,41 @@
-/* CENTRO DE OPERACIÓN · la plataforma de Ilse y el "ojo de águila" del director.
+/* OPERACIÓN · UNA sola sección para todo lo de choferes y rutas (la plataforma de Ilse y el
+   "ojo de águila" del director): Ahora · Asignar ruta · Rutas y paradas · Mapa en vivo · Asistencia ·
+   Alertas · Choferes · Gastos · Historial. Los módulos que viven en App.jsx llegan por `vistas`.
    Ilse (operaciones) VE todo: choferes, asistencia con fotos y ubicación, rutas y paradas, alertas y gastos.
    No puede cambiar ni borrar esos registros (lo impiden las reglas del servidor): solo el director (admin)
    da por atendida una alerta. Link directo: /operacion */
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, where, orderBy, limit, getDocs, doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, caja, boton, Chip, dinero } from "./uiBasico.jsx";
 import Evidencias, { Miniatura } from "./Evidencias.jsx";
 import { resumenOperacion } from "./operacion.ts";
+import { correoDeChofer, telefono10 } from "./lugares.ts";
+
+const AsignarRuta = lazy(() => import("./AsignarRuta.jsx"));
+const HistorialRutas = lazy(() => import("./HistorialRutas.jsx"));
+const PESTANAS = ["ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial"];
+const Cargando = () => <div style={{ padding: 40, color: MUTED }}>Cargando…</div>;
+
+/* 📲 Acceso del chofer a su app (solo director): crea/renueva su cuenta y abre WhatsApp con su enlace. */
+function BotonAcceso({ chofer, app }){
+  const [estado, setEstado] = useState("");
+  const tel = telefono10(chofer.tel || chofer.telefono || "");
+  if(tel.length !== 10) return <span style={{ fontSize: 12, color: AMBER }}>Falta celular</span>;
+  const mandar = async () => {
+    setEstado("…");
+    try {
+      const { data } = await httpsCallable(getFunctions(app, "us-central1"), "oficinaVincularChofer")({ choferId: chofer.id, correo: correoDeChofer(tel) });
+      const pila = String(chofer.nombre || "").replace(/^jose\s+/i, "").split(/\s+/)[0] || "";
+      const texto = `Hola ${pila}, soy de D Movimiento. Ya tienes tu cuenta en la app de choferes.\n\n1) Abre este enlace y crea tu contraseña:\n${data.enlace}\n\n2) Después entra aquí con tu celular ${tel} y tu contraseña:\n${window.location.origin}/chofer`;
+      window.open(`https://wa.me/52${tel}?text=${encodeURIComponent(texto)}`, "_blank", "noopener");
+      setEstado("✓ Abrí WhatsApp");
+    } catch(e){ setEstado("No se pudo: " + String(e?.message || "").replace(/^.*?:\s*/, "")); }
+  };
+  return <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+    <button onClick={mandar} style={{ ...boton(GREEN, false), padding: "4px 10px", minHeight: 30, fontSize: 12 }}>📲 {chofer.authUid ? "Reenviar acceso" : "Mandar acceso"}</button>
+    {estado && <span style={{ fontSize: 11, color: estado.startsWith("No") ? ROSE : MUTED }}>{estado}</span>}</span>;
+}
 
 const hoyCDMX = () => new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
 const ms = v => v?.toMillis ? v.toMillis() : typeof v === "number" ? v : 0;
@@ -39,9 +67,15 @@ function AvisosCelular({ app }){
     {estado && estado !== "listo?" && <span style={{ fontSize: 12, color: estado.startsWith("✓") ? GREEN : MUTED }}>{estado}</span>}</span>;
 }
 
-export default function OperacionHoy({ db, app, usuario }){
+export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {}, inicial = "", onVer }){
   const esAdmin = usuario?.rol === "admin";
-  const [pestana, setPestana] = useState("ahora"), [dia, setDia] = useState(hoyCDMX());
+  const [pestana, setPestanaEstado] = useState(() => {
+    let t = inicial; try { t = t || new URLSearchParams(window.location.search).get("t") || ""; } catch {}
+    return PESTANAS.includes(t) ? t : "ahora";
+  });
+  const setPestana = t => { setPestanaEstado(t); try { const u = new URL(window.location.href); u.searchParams.set("v", "operacion"); u.searchParams.set("t", t); window.history.replaceState(null, "", u); } catch {} };
+  const [verFichas, setVerFichas] = useState("");   // director: editar fichas de choferes o camionetas
+  const [dia, setDia] = useState(hoyCDMX());
   const [choferes, setChoferes] = useState([]), [jornadas, setJornadas] = useState([]), [ubic, setUbic] = useState({});
   const [delDia, setDelDia] = useState([]), [enCurso, setEnCurso] = useState([]);
   const servicios = useMemo(() => [...new Map([...delDia, ...enCurso].map(x => [x.id, x])).values()], [delDia, enCurso]);
@@ -83,19 +117,37 @@ export default function OperacionHoy({ db, app, usuario }){
   const r = resumenOperacion({ choferes: activos, jornadas, servicios, ubicaciones: ubic, alertas, dia, ahoraMs: Date.now() });
   const gastosSemana = gastos.filter(g => Date.now() - ms(g.fechaTs || g.createdAt) < 7 * 86400000);
 
-  const P = [["ahora", "👀 Ahora"], ["asistencia", "🕘 Asistencia"], ["rutas", "🗺️ Rutas y paradas"], ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["gastos", "💵 Gastos"]];
+  const P = [["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
+    ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["choferes", "👤 Choferes"], ["gastos", "💵 Gastos"], ["historial", "📚 Historial"]];
+  /* Al ir de una pestaña a otra desde dentro de un módulo (p. ej. Asignar ruta → "En vivo"). */
+  const irA = v => ({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v] ? setPestana({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v]) : onVer?.(v));
+  const embebida = pestana === "asignar" ? <Suspense fallback={<Cargando/>}><AsignarRuta db={db} app={app} usuario={usuario} mapboxToken={mapboxToken} onVer={irA}/></Suspense>
+    : pestana === "historial" ? <Suspense fallback={<Cargando/>}><HistorialRutas db={db}/></Suspense>
+    : pestana === "mapa" ? (vistas.mapa || <Cargando/>)
+    : pestana === "choferes" && esAdmin && verFichas === "choferes" ? (vistas.choferes || null)
+    : pestana === "choferes" && esAdmin && verFichas === "unidades" ? (vistas.unidades || null)
+    : null;
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "22px 18px", background: "#f1f4fb" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0, background: "#f1f4fb" }}>
+      <div style={{ padding: "14px 18px 0", background: "#fff", borderBottom: "1px solid " + BORDER }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 24, color: TEXT, margin: 0 }}>Operación</h1>
+            <span style={{ fontSize: 13, color: MUTED }}>{esAdmin ? "Todo lo de choferes y rutas en un solo lugar." : "Asigna rutas y revisa todo; los cambios a registros los hace el director."}</span>
+            <span style={{ marginLeft: "auto" }}><AvisosCelular app={app}/></span>
+          </div>
+          <div style={{ display: "flex", gap: 4, overflowX: "auto", marginTop: 10, scrollbarWidth: "none" }}>
+            {P.map(([k, l]) => <button key={k} onClick={() => { setPestana(k); setVerFichas(""); }} style={{ background: "none", border: "none", borderBottom: "3px solid " + (pestana === k ? A : "transparent"),
+              color: k === "alertas" && alertas.length ? ROSE : pestana === k ? TEXT : MUTED, fontWeight: pestana === k ? 800 : 600, fontSize: 14, padding: "8px 10px 10px", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }}>{l}</button>)}
+          </div>
+        </div>
+      </div>
+      {embebida ? <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {pestana === "choferes" && <div style={{ padding: "8px 18px", background: "#fff", borderBottom: "1px solid " + BORDER }}><button onClick={() => setVerFichas("")} style={{ ...boton(BLUE, false), padding: "4px 10px", minHeight: 30, fontSize: 12 }}>← Volver a la lista</button></div>}
+        <div style={{ flex: 1, minHeight: 0, display: "flex", overflow: "hidden" }}>{embebida}</div></div>
+      : <div style={{ flex: 1, overflowY: "auto", padding: "16px 18px 24px" }}>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 28, color: TEXT, margin: 0 }}>Centro de operación</h1>
-          <span style={{ marginLeft: "auto" }}><AvisosCelular app={app}/></span>
-        </div>
-        <p style={{ color: MUTED, fontSize: 14, margin: "4px 0 12px" }}>Todo lo que pasa con los choferes, en vivo. {esAdmin ? "Tú puedes dar por atendidas las alertas." : "Aquí todo es para ver; los cambios los hace el director."}</p>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
-          {P.map(([k, l]) => <button key={k} onClick={() => setPestana(k)} style={{ ...boton(k === "alertas" && alertas.length ? ROSE : BLUE, pestana === k), padding: "8px 14px", minHeight: 38 }}>{l}</button>)}
-          {["asistencia", "rutas"].includes(pestana) && <input type="date" value={dia} onChange={e => setDia(e.target.value)} style={{ ...caja, width: "auto", marginLeft: "auto" }}/>}
-        </div>
+        {["asistencia", "rutas"].includes(pestana) && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}><input type="date" value={dia} onChange={e => setDia(e.target.value)} style={{ ...caja, width: "auto" }}/></div>}
 
         {pestana === "ahora" && <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
@@ -166,6 +218,24 @@ export default function OperacionHoy({ db, app, usuario }){
           </div>)}
         </div>}
 
+        {pestana === "choferes" && <div>
+          {esAdmin && <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <button onClick={() => setVerFichas("choferes")} style={boton(BLUE, false)}>✏️ Editar fichas de choferes</button>
+            <button onClick={() => setVerFichas("unidades")} style={boton(BLUE, false)}>🚚 Camionetas</button></div>}
+          <div style={{ ...tarjeta, padding: 0, overflow: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}><thead><tr style={{ background: "#f8fafc", fontSize: 11, color: MUTED, textAlign: "left" }}>
+              {["Chofer", "Celular", "App", "Hoy", ""].map(h => <th key={h} style={{ padding: "8px 10px" }}>{h}</th>)}</tr></thead>
+              <tbody>{activos.slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre))).map(c => { const f = r.filas.find(x => x.id === c.id);
+                return <tr key={c.id} style={{ borderTop: "1px solid " + BORDER, fontSize: 14 }}>
+                  <td style={{ padding: "8px 10px", fontWeight: 700 }}>{c.nombre}{c.porConfirmar && <span style={{ fontSize: 11, color: AMBER }}> · por confirmar</span>}</td>
+                  <td style={{ padding: "8px 10px", fontFamily: MONO, fontSize: 12 }}>{c.tel || c.telefono || "—"}</td>
+                  <td style={{ padding: "8px 10px" }}>{c.authUid ? <Chip color={GREEN}>✓ Tiene la app</Chip> : <Chip color={AMBER}>Sin app</Chip>}</td>
+                  <td style={{ padding: "8px 10px" }}>{f && <Chip color={COLOR_ASIS[f.asistencia] || MUTED}>{f.asistencia}</Chip>}</td>
+                  <td style={{ padding: "8px 10px" }}>{esAdmin && <BotonAcceso chofer={c} app={app}/>}</td></tr>; })}</tbody></table>
+          </div>
+          <p style={{ fontSize: 12, color: MUTED }}>{esAdmin ? "📲 Mandar acceso: crea su cuenta con su celular y abre WhatsApp con su enlace para poner contraseña. El chofer entra en /chofer con su celular." : "Dar de alta o cambiar datos de un chofer lo hace el director."}</p>
+        </div>}
+
         {pestana === "gastos" && <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10, marginBottom: 12 }}>
             <div style={tarjeta}><div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Últimos 7 días</div><div style={{ fontFamily: DISP, fontSize: 26, fontWeight: 800 }}>{dinero(gastosSemana.reduce((t, g) => t + (Number(g.monto) || 0), 0))}</div></div>
@@ -183,6 +253,7 @@ export default function OperacionHoy({ db, app, usuario }){
           <p style={{ fontSize: 12, color: MUTED }}>Aprobar o rechazar un gasto lo hace el director.</p>
         </div>}
       </div>
+    </div>}
     </div>);
 }
 
