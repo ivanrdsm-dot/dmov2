@@ -146,7 +146,7 @@ export const choferCheckIn = onCall(OPC, async req => {
   });
   if(creada){
     await db().doc("ubicaciones/" + chofer.id).set({ choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: "", servicioFolio: "", lat: pos.lat, lng: pos.lng,
-      tMs: Date.now(), precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, confiable: d.simulada !== true, origen: "check-in", actualizadoEn: ahora() });
+      tMs: Number.isFinite(posTMs) && posTMs <= Date.now() + 60000 ? posTMs : Date.now(), precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, confiable: d.simulada !== true, origen: "check-in", actualizadoEn: ahora() });
     if(dudas.length) await alerta({ type: d.simulada === true ? "ubicacion_simulada" : "checkin_dudoso", choferId: chofer.id, choferNombre: chofer.nombre || "",
       msg: `Check-in de ${chofer.nombre || "chofer"} con dudas: ${dudas.join(", ")}`, lat: pos.lat, lng: pos.lng });
   }

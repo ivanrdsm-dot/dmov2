@@ -130,3 +130,4 @@ export { permisosOficina, permisosChofer } from "./permisos.js";
 /* Avisos al celular del cliente (Web Push) */
 export { avisarClientePush } from "./avisosPush.js";
 export { oficinaAvisos, avisarOficinaPush } from "./avisosOficina.js";
+export { oficinaBuscarLugar, oficinaDetalleLugar, oficinaResolverEnlace } from "./lugares.js";

@@ -135,7 +135,7 @@ test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () =
   const datos = { dispositivoId: "equipo-prueba-0001", selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: "ABC1234", odometroKm: 85000, combustiblePct: 75, simulada: false };
   await assert.rejects(chofer.llamar("choferCheckIn", datos), /ubicación/);                                       // sin GPS no hay check-in
   await assert.rejects(chofer.llamar("choferCheckIn", { ...datos, lat: BODEGA.lat, lng: BODEGA.lng, selfieRuta: await subir("vacia.jpg", JPG) }), /vacía|pequeña/);   // foto falsa
-  await chofer.llamar("choferCheckIn", { ...datos, lat: BODEGA.lat, lng: BODEGA.lng, precisionM: 12, posTMs: Date.now() });
+  await chofer.llamar("choferCheckIn", { ...datos, lat: BODEGA.lat, lng: BODEGA.lng, precisionM: 12, posTMs: Date.now() - 12 * MIN });
   const j = await getDoc(doc(chofer.db, "jornadas", `ch1_${fechaCDMX()}`));
   assert.equal(j.data().estado, "Abierta");
   assert.ok(j.data().fotos.selfie.md5, "huella de la foto");

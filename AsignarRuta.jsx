@@ -198,8 +198,8 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
         </Paso>
 
         <Paso n={3} titulo="¿A dónde va?">
-          <BuscadorLugar token={mapboxToken} lugares={lugares} onElegir={agregar}/>
-          <PegarLista token={mapboxToken} lugares={lugares} onAgregar={agregar}/>
+          <BuscadorLugar token={mapboxToken} lugares={lugares} onElegir={agregar} llamar={llamar} cerca={paradas[paradas.length - 1]}/>
+          <PegarLista token={mapboxToken} lugares={lugares} onAgregar={agregar} llamar={llamar}/>
           <div style={{ fontSize: 12, color: MUTED, margin: "6px 0 10px" }}>Busca cada lugar y confirma en el mapa que la marca cae en la puerta correcta.</div>
           {paradas.map((p, i) => <TarjetaParada key={p.clave} p={p} i={i} token={mapboxToken} cambiar={cambiar} quitar={quitar}/>)}
           {paradas.length > 1 && <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12, fontSize: 14 }}>
