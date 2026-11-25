@@ -17,9 +17,10 @@ const AsignarRuta = lazy(() => import("./AsignarRuta.jsx"));
 const HistorialRutas = lazy(() => import("./HistorialRutas.jsx"));
 const Desempeno = lazy(() => import("./Desempeno.jsx"));
 const Auditoria = lazy(() => import("./Auditoria.jsx"));
+const TableroVivo = lazy(() => import("./TableroVivo.jsx"));
 /* Alertas que traen montos ($): solo las ve el director. */
 const ALERTAS_CON_MONTOS = ["gasto_dudoso", "cotizacion_por_aprobar", "resumen_diario"];
-const PESTANAS = ["ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno", "auditoria"];
+const PESTANAS = ["tablero", "ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno", "auditoria"];
 const Cargando = () => <div style={{ padding: 40, color: MUTED }}>Cargando…</div>;
 
 /* 📲 Acceso del chofer a su app (solo director): crea/renueva su cuenta y abre WhatsApp con su enlace. */
@@ -101,7 +102,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const [pestana, setPestanaEstado] = useState(() => {
     let t = inicial; try { t = t || new URLSearchParams(window.location.search).get("t") || ""; } catch {}
     /* Ilse (operaciones) entra directo a asignar: es lo que más hace, sobre todo desde el celular. */
-    return PESTANAS.includes(t) ? t : usuario?.rol === "operaciones" ? "asignar" : "ahora";
+    return PESTANAS.includes(t) ? t : usuario?.rol === "operaciones" ? "asignar" : "tablero";
   });
   const setPestana = t => { setPestanaEstado(t); try { const u = new URL(window.location.href); u.searchParams.set("v", "operacion"); u.searchParams.set("t", t); window.history.replaceState(null, "", u); } catch {} };
   const [verFichas, setVerFichas] = useState("");   // director: editar fichas de choferes o camionetas
@@ -164,7 +165,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const r = resumenOperacion({ choferes: activos, jornadas, servicios: servicios.filter(x => x.choferId), ubicaciones: ubic, alertas, dia, ahoraMs: Date.now() });
   const gastosSemana = gastos.filter(g => Date.now() - ms(g.fechaTs || g.createdAt) < 7 * 86400000);
 
-  const P = [["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
+  const P = [["tablero", "📺 Tablero"], ["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
     ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["choferes", "👤 Choferes"], ...(esAdmin ? [["gastos", "💵 Gastos"]] : []), ["historial", "📚 Historial"],
     ...(esAdmin ? [["desempeno", "🏆 Desempeño"], ["auditoria", "🔎 Auditoría"]] : [])];   // incentivos y auditoría: solo el director
   /* Al ir de una pestaña a otra desde dentro de un módulo (p. ej. Asignar ruta → "En vivo"). */
@@ -201,6 +202,8 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
         {["asistencia", "rutas"].includes(pestana) && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}><input type="date" value={dia} onChange={e => setDia(e.target.value)} style={{ ...caja, width: "auto" }}/></div>}
 
+        {pestana === "tablero" && <Suspense fallback={<Cargando/>}><TableroVivo db={db} dia={dia} setDia={setDia} hoy={hoyCDMX()} servicios={servicios} jornadas={jornadas} proximas={proximas}
+          alertasAbiertas={alertas.length} onVerAlertas={() => setPestana("alertas")} onVerRutas={() => setPestana("rutas")}/></Suspense>}
         {pestana === "ahora" && <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
             {[["Trabajando", r.trabajando, GREEN], ["En ruta", r.enRuta, BLUE], ["Faltan (con ruta)", r.faltan, r.faltan ? ROSE : TEXT], ["Sin señal", r.sinSenal, r.sinSenal ? AMBER : TEXT], ["Alertas abiertas", alertas.length, alertas.length ? ROSE : GREEN]].map(([t, v, c]) =>
