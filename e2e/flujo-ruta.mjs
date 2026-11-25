@@ -13,6 +13,7 @@ import { getFunctions, connectFunctionsEmulator, httpsCallable } from "firebase/
 import { getStorage, connectStorageEmulator, ref, uploadBytes } from "firebase/storage";
 import { guardarLugares, datosServicio, crearServicioRuta, terminarAsignacion } from "../asignarRutaFlujo.js";
 import { correoDeChofer } from "../lugares.ts";
+import { VERSION_AVISO } from "../functions/lib/avisoPrivacidad.js";
 
 const PROYECTO = "demo-dmov-e2e", BUCKET = PROYECTO + ".appspot.com";
 const require = createRequire(new URL("../functions/package.json", import.meta.url));
@@ -87,6 +88,14 @@ test("2 · el chofer entra con su celular y su equipo queda ligado; antes de su 
   await signInWithEmailAndPassword(chofer.auth, correoDeChofer(TEL), CLAVE_CHOFER);
   const r = await chofer.llamar("choferRegistrarDispositivo", { dispositivoId: "equipo-prueba-0001", modelo: "prueba" });
   assert.equal(r.choferId, "ch1");
+  // Sin autorizar el aviso de privacidad no se trabaja; al autorizar queda la hora del servidor y su historial.
+  await assert.rejects(chofer.llamar("choferIniciarRuta", { dispositivoId: "equipo-prueba-0001", servicioId: "x" }), /aviso de privacidad/);
+  await assert.rejects(chofer.llamar("aceptarAvisoPrivacidad", { version: "1999-01-01", acepto: true }), /cambió/);
+  await chofer.llamar("aceptarAvisoPrivacidad", { version: VERSION_AVISO, acepto: true });
+  const u1 = (await admin.auth().getUserByEmail(correoDeChofer(TEL))).uid;
+  assert.equal((await getDoc(doc(chofer.db, "consentimientos", `${u1}_${VERSION_AVISO}`))).data().acepto, true);   // el chofer consulta la suya
+  await assert.rejects(getDocs(collection(ilse.db, "consentimientos")));                                             // operaciones no ve las de otros
+  assert.equal((await admin.firestore().collection(`consentimientos/${u1}_${VERSION_AVISO}/historial`).get()).size, 1);
   const q = await getDocs(query(collection(chofer.db, "servicios"), where("choferId", "==", "ch1"), where("estado", "in", ["Asignada", "En ruta"])));
   assert.equal(q.size, 0);
   const j = await getDoc(doc(chofer.db, "jornadas", `ch1_${fechaCDMX()}`));     // antes se negaba y la app se atoraba
