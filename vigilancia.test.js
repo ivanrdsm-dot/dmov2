@@ -97,7 +97,7 @@ describe("fotos de check-in revisadas por el servidor", () => {
 import { avisoDeAlerta } from "./functions/lib/avisosOficina.js";
 describe("avisos al celular de la oficina", () => {
   it("solo las alertas de choferes, con quién y qué pasó", () => {
-    expect(avisoDeAlerta({ id: "a1", type: "detenido", choferNombre: "Israel", message: "Israel lleva 25 min detenido" })).toEqual({ title: "⏸️ Chofer detenido", body: "Israel lleva 25 min detenido", tag: "alerta-a1", url: "/?v=operacion" });
+    expect(avisoDeAlerta({ id: "a1", type: "detenido", choferNombre: "Israel", message: "Israel lleva 25 min detenido" })).toEqual({ title: "⏸️ Chofer detenido", body: "Israel lleva 25 min detenido", tag: "alerta-a1", url: "/?v=operacion", soloDirector: false });
     expect(avisoDeAlerta({ id: "a2", type: "sos", choferNombre: "Elías", msg: "SOS del chofer" }).title).toBe("🚨 SOS del chofer · Elías");
     expect(avisoDeAlerta({ id: "a3", type: "solicitud_sin_respuesta", message: "x" })).toBe(null);
     expect(avisoDeAlerta({ id: "a4", type: "sos", atendida: true })).toBe(null);
@@ -166,5 +166,14 @@ describe("detener entrega y Enterado del chofer", () => {
     const a = alertasChoferes({ enRuta: [s], ubicaciones: u }, T0 + 6 * MIN).find(x => x.type === "cambio_sin_enterado");
     expect(a).toMatchObject({ id: "chf-ent-s1-abc" }); expect(a.message).toMatch(/NO ENTREGAR en Soriana Miyana/);
     expect(alertasChoferes({ enRuta: [{ ...s, cambioPendiente: { ...s.cambioPendiente, enteradoMs: T0 + MIN } }], ubicaciones: u }, T0 + 6 * MIN).filter(x => x.type === "cambio_sin_enterado")).toHaveLength(0);
+  });
+});
+
+import { soloDirector } from "./functions/lib/avisosOficina.js";
+describe("quién recibe cada aviso", () => {
+  it("check-ins con dirección y posibles trampas: solo el director; lo operativo también a operaciones", () => {
+    expect(soloDirector({ type: "checkin_registrado", informativa: true })).toBe(true);
+    for(const t of ["gasto_dudoso", "km_no_coinciden", "unidad_no_coincide", "fuera_de_cdmx", "ubicacion_simulada", "dispositivo_no_autorizado", "resumen_diario"]) expect(soloDirector({ type: t })).toBe(true);
+    for(const t of ["sos", "detenido", "sin_checkin", "cambio_sin_enterado"]) expect(soloDirector({ type: t })).toBe(false);
   });
 });
