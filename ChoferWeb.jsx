@@ -479,7 +479,7 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
       {(siguiente.contacto || siguiente.telefono) && <p className="dm-sub" style={{ color: AZUL, fontWeight: 700 }}>👤 {siguiente.contacto} {siguiente.telefono && <a href={"tel:" + siguiente.telefono} style={{ color: AZUL }}>📞 {siguiente.telefono}</a>}</p>}
       <div className="dm-dos">
         <a className="dm-btn dm-linea" href={enlaceNavegar({ lat: siguiente.lat, lng: siguiente.lng })} target="_blank" rel="noreferrer">🧭 Cómo llegar</a>
-        <button className="dm-btn dm-verde" onClick={() => setAbierta(siguiente)}>📍 Llegué</button>
+        <button className="dm-btn dm-verde" onClick={() => { setAbierta(siguiente); llamar("choferLlegue", { servicioId: servicio.id, paradaId: siguiente.id }).catch(() => {}); }}>📍 Llegué</button>
       </div>
     </div>}
 

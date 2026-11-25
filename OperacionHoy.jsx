@@ -14,7 +14,8 @@ import { correoDeChofer, telefono10 } from "./lugares.ts";
 
 const AsignarRuta = lazy(() => import("./AsignarRuta.jsx"));
 const HistorialRutas = lazy(() => import("./HistorialRutas.jsx"));
-const PESTANAS = ["ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial"];
+const Desempeno = lazy(() => import("./Desempeno.jsx"));
+const PESTANAS = ["ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno"];
 const Cargando = () => <div style={{ padding: 40, color: MUTED }}>Cargando…</div>;
 
 /* 📲 Acceso del chofer a su app (solo director): crea/renueva su cuenta y abre WhatsApp con su enlace. */
@@ -130,11 +131,13 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const gastosSemana = gastos.filter(g => Date.now() - ms(g.fechaTs || g.createdAt) < 7 * 86400000);
 
   const P = [["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
-    ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["choferes", "👤 Choferes"], ["gastos", "💵 Gastos"], ["historial", "📚 Historial"]];
+    ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["choferes", "👤 Choferes"], ["gastos", "💵 Gastos"], ["historial", "📚 Historial"],
+    ...(esAdmin ? [["desempeno", "🏆 Desempeño"]] : [])];   // incentivos: solo el director
   /* Al ir de una pestaña a otra desde dentro de un módulo (p. ej. Asignar ruta → "En vivo"). */
   const irA = v => ({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v] ? setPestana({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v]) : onVer?.(v));
   const embebida = pestana === "asignar" ? <Suspense fallback={<Cargando/>}><AsignarRuta db={db} app={app} usuario={usuario} mapboxToken={mapboxToken} onVer={irA}/></Suspense>
     : pestana === "historial" ? <Suspense fallback={<Cargando/>}><HistorialRutas db={db}/></Suspense>
+    : pestana === "desempeno" && esAdmin ? <Suspense fallback={<Cargando/>}><Desempeno db={db}/></Suspense>
     : pestana === "mapa" ? (vistas.mapa || <Cargando/>)
     : pestana === "choferes" && esAdmin && verFichas === "choferes" ? (vistas.choferes || null)
     : pestana === "choferes" && esAdmin && verFichas === "unidades" ? (vistas.unidades || null)

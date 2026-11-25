@@ -219,8 +219,15 @@ test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con pro
     await uploadBytes(ref(chofer.st, foto), JPG, { contentType: "image/jpeg" });
     const problema = p.nombre === "Tienda B" ? "Cliente ausente" : "";
     const ev = { fotos: [foto], receptor: problema ? "" : "Ana", notas: "", incidencia: problema };
+    await c("choferLlegue", { dispositivoId: D, servicioId, paradaId: p.id });   // "Llegué": hora del servidor
     const r2 = await c("choferCerrarParada", { dispositivoId: D, servicioId, paradaId: p.id, evidencia: ev });
     assert.equal(r2.ok, true);
+  }
+  // Para medir desempeño: cada parada tiene hora de llegada (botón y GPS) y de cierre.
+  for(const d of (await admin.firestore().collection(`servicios/${servicioId}/paradas`).get()).docs.filter(d => d.data().estado !== "Quitada" && d.data().cerradaMs)){
+    assert.ok(Number.isFinite(d.data().llegadaMs), "hora de 'Llegué'");
+    assert.ok(d.data().cerradaMs >= d.data().llegadaMs);
+    assert.ok("llegadaGpsMs" in d.data());
   }
   const s = (await admin.firestore().doc("servicios/" + servicioId).get()).data();
   assert.equal(s.estado, "Entregada");
