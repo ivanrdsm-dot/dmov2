@@ -175,6 +175,10 @@ test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () =
   assert.ok(j.data().fotos.selfie.md5, "huella de la foto");
   assert.ok(j.data().fotos.selfie.subidaEnMs > Date.now() - 5 * MIN, "hora real de subida (la pone Google)");
   assert.deepEqual(j.data().dudas, []);
+  // Se registra si llegó tarde (contra las 7:00) y dónde estaba; al director le llega el aviso con la ubicación.
+  assert.equal(typeof j.data().llegoTarde, "boolean"); assert.equal(j.data().fueraDeCdmxEntrada, false); assert.equal(j.data().placaRuta, "ABC1234");
+  const avisoIn = (await admin.firestore().collection("alertas").where("choferId", "==", "ch1").get()).docs.map(d => d.data()).find(a => ["checkin_registrado", "checkin_tarde"].includes(a.type));
+  assert.ok(avisoIn && avisoIn.informativa === true && avisoIn.atendida === true && Number.isFinite(avisoIn.lat), "aviso de check-in con ubicación");
   // Con la jornada abierta (aún sin ruta) su ubicación también se registra.
   const r = await chofer.llamar("choferSubirPosiciones", { dispositivoId: "equipo-prueba-0001", servicioId: "", posiciones: [{ ...BODEGA, tMs: Date.now() - 2 * MIN + 1000, precisionM: 10 }] });   // antes de salir a ruta
   assert.equal(r.aceptadas, 1);
@@ -244,6 +248,10 @@ test("7 · la oficina lo ve en vivo y el chofer termina su día", async () => {
   await chofer.llamar("choferTerminarJornada", { dispositivoId: D, lat: TIENDA_B.lat, lng: TIENDA_B.lng, odometroKm: 85012, fotoOdometroRuta: salida });
   const jc = (await getDoc(doc(ilse.db, "jornadas", `ch1_${fechaCDMX()}`))).data();
   assert.equal(jc.kmRecorridos, 12); assert.ok(jc.fotosSalida.odometroSalida.md5);
+  assert.ok(Number.isFinite(jc.kmGps) || jc.kmGps === null); assert.equal(jc.fueraDeCdmxSalida, false);
+  const tiposCh1 = (await admin.firestore().collection("alertas").where("choferId", "==", "ch1").get()).docs.map(d => d.data().type);
+  assert.ok(tiposCh1.includes("checkout_registrado"), "aviso de check-out");
+  assert.ok(!tiposCh1.includes("fuera_de_cdmx") && !tiposCh1.includes("unidad_no_coincide"), "sin falsas alarmas dentro de CDMX y con su camioneta");
   assert.equal((await getDoc(doc(chofer.db, "jornadas", `ch1_${fechaCDMX()}`))).data().estado, "Cerrada");
   // Otro chofer (o alguien sin cuenta) no ve esta ruta.
   await assert.rejects(getDocs(query(collection(cliente("anonimo").db, "servicios"), where("choferId", "==", "ch1"))));

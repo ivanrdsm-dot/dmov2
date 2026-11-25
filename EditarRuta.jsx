@@ -21,9 +21,12 @@ export default function EditarRuta({ db, usuario, servicio, lugares, token, llam
   const alternar = id => setQuitar(q => q.includes(id) ? q.filter(x => x !== id) : [...q, id]);
   const cambios = quitar.length + nuevas.length;
   /* ⛔ Detener / reanudar una entrega: al chofer le sale "NO ENTREGAR" y el servidor no le deja cerrarla. */
+  /* El motivo se escribe ahí mismo (sin ventanas del navegador); hay motivos rápidos de un toque. */
+  const [motivoDe, setMotivoDe] = useState(""), [motivo, setMotivo] = useState("");
   const detener = async (p, detenerla) => {
-    const motivo = detenerla ? prompt(`Motivo para detener la entrega en "${p.nombre}" (lo ve el chofer):`, "No entregar hoy, se reprograma") : "";
-    if(detenerla && (motivo === null || !motivo.trim())) return;
+    if(detenerla && motivoDe !== p.id){ setMotivoDe(p.id); setMotivo(""); setError(""); return; }
+    if(detenerla && motivo.trim().length < 5){ setError("Escribe el motivo (lo ve el chofer)."); return; }
+    setMotivoDe("");
     setError(""); setOcupado(detenerla ? "Deteniendo…" : "Reanudando…");
     try { await llamar("oficinaDetenerParada", { servicioId: servicio.id, paradaId: p.id, detener: detenerla, motivo: (motivo || "").trim() });
       setHecho(detenerla ? `⛔ Entrega detenida en ${p.nombre}. El chofer tiene que confirmar con "Enterado".` : `✅ ${p.nombre} reanudada. El chofer tiene que confirmar con "Enterado".`); }
@@ -57,7 +60,7 @@ export default function EditarRuta({ db, usuario, servicio, lugares, token, llam
       <div style={{ fontSize: 13, color: MUTED, marginBottom: 8 }}>Toca <b>Quitar</b> en lo que ya no va, <b>⛔ Detener</b> si no se debe entregar, o agrega lugares abajo.</div>
       {actuales.map(p => {
         const marcada = quitar.includes(p.id), pendiente = p.estado === "Pendiente";
-        return <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px dashed " + BORDER, opacity: p.estado === "Quitada" ? .55 : 1 }}>
+        return <div key={p.id} style={{ borderBottom: "1px dashed " + BORDER }}><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 0", opacity: p.estado === "Quitada" ? .55 : 1 }}>
           <b style={{ fontFamily: MONO, minWidth: 22 }}>{p.orden}.</b>
           <span style={{ flex: 1, color: TEXT, textDecoration: marcada || p.estado === "Quitada" ? "line-through" : "none" }}>{p.tipo === "carga" ? "Recoger" : "Entregar"} · {p.nombre}</span>
           {pendiente && p.detenida?.activa && <Chip color={ROSE}>⛔ Detenida</Chip>}
@@ -65,7 +68,18 @@ export default function EditarRuta({ db, usuario, servicio, lugares, token, llam
           {pendiente
             ? <button onClick={() => alternar(p.id)} style={{ ...boton(marcada ? MUTED : ROSE, false), padding: "4px 10px", minHeight: 28, fontSize: 12 }}>{marcada ? "Dejarla" : "Quitar"}</button>
             : <Chip color={p.estado === "Entregada" ? GREEN : p.estado === "Incidencia" ? AMBER : MUTED}>{p.estado === "Quitada" ? "Quitada" : p.estado}</Chip>}
-        </div>;
+        </div>
+        {motivoDe === p.id && <div style={{ background: ROSE + "0d", border: "1.5px solid " + ROSE, borderRadius: 12, padding: 10, margin: "4px 0 8px" }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: ROSE, marginBottom: 6 }}>¿Por qué no se entrega en {p.nombre}? (lo ve el chofer)</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+            {["El cliente lo reprograma", "No hay quien reciba", "Falta mercancía", "Dirección por confirmar"].map(m =>
+              <button key={m} onClick={() => setMotivo(m)} style={{ ...boton(ROSE, motivo === m), padding: "4px 10px", minHeight: 30, fontSize: 12 }}>{m}</button>)}</div>
+          <input value={motivo} onChange={e => setMotivo(e.target.value)} onKeyDown={e => e.key === "Enter" && detener(p, true)} placeholder="O escribe el motivo"
+            style={{ width: "100%", boxSizing: "border-box", border: "1.5px solid " + BORDER, borderRadius: 10, padding: "9px 12px", fontSize: 15 }}/>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button disabled={!!ocupado} onClick={() => detener(p, true)} style={{ ...boton(ROSE), flex: 1 }}>⛔ Detener entrega</button>
+            <button onClick={() => setMotivoDe("")} style={{ ...boton(MUTED, false), flex: 1 }}>Cancelar</button></div>
+        </div>}</div>;
       })}
       <div style={{ marginTop: 12, fontWeight: 800, color: TEXT, fontSize: 14 }}>Agregar parada</div>
       <div style={{ marginTop: 6 }}><BuscadorLugar token={token} lugares={lugares} onElegir={agregar} llamar={llamar} cerca={nuevas[nuevas.length - 1] || actuales.filter(x => x.estado === "Pendiente").pop()}/></div>

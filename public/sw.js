@@ -1,6 +1,6 @@
 // Service Worker para DMvimiento — cache básico y offline fallback
 // v9: HTML network-first (los deploys se ven de inmediato); assets cache-first
-const CACHE_NAME = 'dmov-v10';
+const CACHE_NAME = 'dmov-v11';
 const CORE_ASSETS = ['/', '/index.html', '/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -71,6 +71,8 @@ self.addEventListener('push', (e) => {
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const url = new URL((e.notification.data && e.notification.data.url) || '/', self.location.origin).href;
+  /* Aviso de check-in/out: abre el mapa con el lugar exacto (fuera del sistema, sin mover la pantalla abierta). */
+  if (!url.startsWith(self.location.origin)) { e.waitUntil(self.clients.openWindow(url)); return; }
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(vs => {
     for (const v of vs) if (v.url.startsWith(self.location.origin) && 'focus' in v) { v.navigate && v.navigate(url); return v.focus(); }
     return self.clients.openWindow(url);

@@ -633,8 +633,10 @@ export default function ChoferWeb({ db, auth, app }){
     return () => { navigator.geolocation.clearWatch(w); clearInterval(t); document.removeEventListener("visibilitychange", alVolver); candado?.release?.().catch(() => {}); };
   }, [rastrear, idRastreo, enviar]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* SOS: se confirma en una hoja de la app (sin ventanas del navegador, que en el celular salen en blanco). */
+  const [pidiendoSos, setPidiendoSos] = useState(false);
   const sos = async () => {
-    if(!confirm("¿Mandar AVISO DE EMERGENCIA a la oficina?")) return;
+    setPidiendoSos(false);
     let pos = {};
     try { const p = await posicionAhora(8000); pos = { lat: p.coords.latitude, lng: p.coords.longitude }; } catch {}
     try { await llamar("choferSOS", { ...pos, servicioId: enRuta?.id || "" }); avisar("🚨 Aviso enviado. La oficina ya lo vio. Si es grave, llama al 911."); }
@@ -702,7 +704,7 @@ export default function ChoferWeb({ db, auth, app }){
     <div className="dm"><Estilos/>
       <div className="dm-hdr">
         <div className="dm-top"><span className="dm-marca">DMovimiento</span>
-          <button className="dm-sos" onClick={sos} aria-label="Emergencia">SOS</button>
+          <button className="dm-sos" onClick={() => setPidiendoSos(true)} aria-label="Emergencia">SOS</button>
           <button className="dm-salir" onClick={() => signOut(auth)}>Salir</button></div>
         <div className="dm-hola">Hola, {nombre.charAt(0) + nombre.slice(1).toLowerCase()} 👋</div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", position: "relative", zIndex: 1 }}>
@@ -713,7 +715,14 @@ export default function ChoferWeb({ db, auth, app }){
       <div className="dm-pasos">{pasos.map(([t, ok], i) => <div key={t} className={"dm-paso" + (ok ? " hecho" : i === actual ? " ahora" : "")}><b>{ok ? "✓" : i + 1}</b>{t}</div>)}</div>
       {terminando && <TerminarDia chofer={chofer} llamar={llamar} subir={subir} onCerrar={() => setTerminando(false)}
         onListo={() => { setTerminando(false); setVuelta(v => v + 1); avisar("🙌 ¡Gracias! Tu día quedó cerrado."); }}/>}
-      {aviso && <div className="dm-toast" style={{ background: aviso.error ? ROJO : VERDE }}>{aviso.texto}</div>}
+      {aviso && aviso.texto && <div className="dm-toast" style={{ background: aviso.error ? ROJO : VERDE }}>{aviso.texto}</div>}
+      {pidiendoSos && <div className="dm-velo" role="alertdialog" aria-modal="true" aria-labelledby="sos-t" style={{ position: "fixed", inset: 0, background: "rgba(4,37,82,.55)", zIndex: 90, display: "flex", alignItems: "flex-end" }}>
+        <div className="dm-card" style={{ width: "100%", borderRadius: "22px 22px 0 0", padding: "22px 18px calc(22px + env(safe-area-inset-bottom))", margin: 0 }}>
+          <h2 id="sos-t" className="dm-titulo" style={{ color: ROJO, marginTop: 0 }}>🚨 ¿Mandar aviso de emergencia?</h2>
+          <p className="dm-sub" style={{ fontSize: 16 }}>La oficina recibe tu ubicación al momento. Si es grave, llama también al 911.</p>
+          <button onClick={sos} className="dm-btn" style={{ background: ROJO, color: "#fff", marginTop: 12, fontSize: 19 }}>Sí, mandar SOS</button>
+          <button onClick={() => setPidiendoSos(false)} className="dm-btn dm-azul" style={{ marginTop: 10, background: "#fff", color: AZUL, border: "2px solid " + AZUL }}>No, cancelar</button>
+        </div></div>}
       <div className="dm-cuerpo">
         {enRuta && <div className="dm-vivo" style={{ background: errorGps ? "#fef2f2" : "#ecfdf5", color: errorGps ? ROJO : "#047857" }}>
           {errorGps ? "⚠️" : <span className="dm-pulso"/>}

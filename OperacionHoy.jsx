@@ -43,6 +43,14 @@ const hora = v => { const t = ms(v); return t ? new Date(t).toLocaleTimeString("
 const hace = min => min === null ? "sin datos" : min < 1 ? "ahora" : min < 60 ? `hace ${min} min` : `hace ${Math.floor(min / 60)} h ${min % 60} min`;
 const mapa = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
 const tarjeta = { background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, padding: "12px 14px" };
+/* Nunca se muestra un código interno ("checkin_dudoso") ni un título vacío. */
+const TITULOS_ALERTA = { sos: "SOS del chofer", checkin_dudoso: "Check-in con dudas", ubicacion_simulada: "Ubicación falsa (simulada)", velocidad_imposible: "Salto imposible de ubicación",
+  reloj_adelantado: "Reloj del celular manipulado", dispositivo_no_autorizado: "Celular no autorizado", incidencia: "Incidencia en una entrega", cierre_fuera_de_punto: "Entrega cerrada fuera del punto",
+  detenido: "Chofer detenido mucho tiempo", fuera_de_ruta: "Chofer fuera de ruta", sin_ubicacion: "La app del chofer no manda ubicación", sin_checkin: "Chofer con ruta y sin check-in",
+  sin_checkout: "Jornada sin check-out", ruta_excedida: "Ruta foránea pasada de días", cambio_sin_enterado: "El chofer no ha confirmado un cambio de ruta",
+  fuera_de_cdmx: "Chofer fuera de CDMX sin ruta", km_no_coinciden: "Kilómetros no coinciden con el GPS", unidad_no_coincide: "El chofer usa otra camioneta",
+  solicitud_sin_respuesta: "Solicitud sin responder", cotizacion_por_aprobar: "Cotización por aprobar" };
+const tituloAlerta = a => String(a?.titulo || "").trim() || TITULOS_ALERTA[a?.type] || "Alerta";
 const COLOR_ASIS = { "Trabajando": GREEN, "Terminó": BLUE, "Faltó": ROSE, "Sin ruta hoy": MUTED, "Por llegar": AMBER, "Descansando (foránea)": BLUE };
 
 /* 🔔 Avisos al celular: la persona activa en SU celular las alertas de choferes (llegan aunque el sistema esté cerrado). */
@@ -71,7 +79,8 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const esAdmin = usuario?.rol === "admin";
   const [pestana, setPestanaEstado] = useState(() => {
     let t = inicial; try { t = t || new URLSearchParams(window.location.search).get("t") || ""; } catch {}
-    return PESTANAS.includes(t) ? t : "ahora";
+    /* Ilse (operaciones) entra directo a asignar: es lo que más hace, sobre todo desde el celular. */
+    return PESTANAS.includes(t) ? t : usuario?.rol === "operaciones" ? "asignar" : "ahora";
   });
   const setPestana = t => { setPestanaEstado(t); try { const u = new URL(window.location.href); u.searchParams.set("v", "operacion"); u.searchParams.set("t", t); window.history.replaceState(null, "", u); } catch {} };
   const [verFichas, setVerFichas] = useState("");   // director: editar fichas de choferes o camionetas
@@ -106,11 +115,14 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
     if(!paradas[id]) { const s = await getDocs(query(collection(db, "servicios", id, "paradas"), orderBy("orden"))).catch(() => null);
       setParadas(p => ({ ...p, [id]: s ? s.docs.map(d => ({ id: d.id, ...d.data() })) : [] })); }
   };
+  /* Atender una alerta: la nota se escribe en la misma tarjeta (sin ventanas del navegador). */
+  const [atendiendo, setAtendiendo] = useState(""), [nota, setNota] = useState(""), [errAtender, setErrAtender] = useState("");
   const atender = async a => {
-    const nota = prompt("¿Qué se hizo? (queda en el registro)", "");
-    if(nota === null) return;
-    await updateDoc(doc(db, "alertas", a.id), { atendida: true, atendidaPor: usuario?.nombre || "", atendidaPorUid: usuario?.uid || "", atendidaEn: serverTimestamp(), notaAtencion: nota.trim() })
-      .catch(e => alert("No se pudo: " + e.message));
+    setErrAtender("");
+    try {
+      await updateDoc(doc(db, "alertas", a.id), { atendida: true, atendidaPor: usuario?.nombre || "", atendidaPorUid: usuario?.uid || "", atendidaEn: serverTimestamp(), notaAtencion: nota.trim() });
+      setAtendiendo(""); setNota("");
+    } catch(e){ setErrAtender("No se pudo guardar: " + String(e?.message || "").replace(/^.*?:\s*/, "")); }
   };
 
   const activos = useMemo(() => choferes.filter(c => c.status !== "Inactivo" && c.activo !== false && !c.baja), [choferes]);
@@ -155,13 +167,13 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
               <div key={t} style={tarjeta}><div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>{t}</div><div style={{ fontFamily: DISP, fontSize: 30, fontWeight: 800, color: c }}>{v}</div></div>)}
           </div>
           {alertas.slice(0, 3).map(a => <div key={a.id} onClick={() => setPestana("alertas")} style={{ ...tarjeta, borderColor: ROSE, background: ROSE + "08", marginBottom: 8, cursor: "pointer" }}>
-            <b style={{ color: ROSE }}>{a.titulo || a.type}</b> · <span style={{ fontSize: 14 }}>{a.message || a.msg}</span></div>)}
+            <b style={{ color: ROSE }}>{tituloAlerta(a)}</b> · <span style={{ fontSize: 14 }}>{a.message || a.msg || "Toca para ver"}</span></div>)}
           <div style={{ ...tarjeta, padding: 0, overflow: "auto", marginTop: 6 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}><thead><tr style={{ background: "#f8fafc", fontSize: 11, color: MUTED, textAlign: "left" }}>
               {["Chofer", "Hoy", "Ruta", "Última ubicación", ""].map(h => <th key={h} style={{ padding: "8px 10px" }}>{h}</th>)}</tr></thead>
               <tbody>{r.filas.map(f => <tr key={f.id} style={{ borderTop: "1px solid " + BORDER, fontSize: 14 }}>
                 <td style={{ padding: "8px 10px", fontWeight: 700 }}>{f.nombre}</td>
-                <td style={{ padding: "8px 10px" }}><Chip color={COLOR_ASIS[f.asistencia] || MUTED}>{f.asistencia}</Chip>{f.checkIn > 0 && <span style={{ fontSize: 12, color: MUTED }}> desde {hora(f.checkIn)}</span>}</td>
+                <td style={{ padding: "8px 10px" }}><Chip color={COLOR_ASIS[f.asistencia] || MUTED}>{f.asistencia}</Chip>{f.checkIn > 0 && <span style={{ fontSize: 12, color: f.jornada?.llegoTarde ? ROSE : MUTED }}> desde {hora(f.checkIn)}{f.jornada?.llegoTarde ? ` · ${f.jornada.tardeMin} min tarde` : ""}</span>}</td>
                 <td style={{ padding: "8px 10px", fontFamily: MONO, fontSize: 12 }}>{f.ruta ? `${f.ruta.folio} · ${f.ruta.estado}` : "—"}</td>
                 <td style={{ padding: "8px 10px", fontSize: 13, color: f.sinSenal ? AMBER : TEXT }}>{f.ubicacion ? <>{hace(f.minUbicacion)}{f.sinSenal && " ⚠️"}</> : <span style={{ color: MUTED }}>sin datos</span>}</td>
                 <td style={{ padding: "8px 10px" }}>{f.ubicacion && <a href={mapa(f.ubicacion.lat, f.ubicacion.lng)} target="_blank" rel="noreferrer" style={{ color: BLUE, fontWeight: 700, fontSize: 13 }}>Ver en mapa</a>}</td>
@@ -175,13 +187,15 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
             return <div key={f.id} style={tarjeta}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <b style={{ fontSize: 16 }}>{f.nombre}</b><Chip color={COLOR_ASIS[f.asistencia] || MUTED}>{f.asistencia}</Chip>
+                {j?.llegoTarde && <Chip color={ROSE}>⏰ Llegó {j.tardeMin} min tarde</Chip>}
+                {j?.fueraDeCdmxEntrada && <Chip color={ROSE}>🗺️ Entrada fuera de CDMX ({j.kmDesdeZocaloEntrada} km)</Chip>}
                 {(j?.dudas || []).length > 0 && <Chip color={AMBER}>⚠️ {j.dudas.join(", ")}</Chip>}
                 {(j?.dudasSalida || []).length > 0 && <Chip color={AMBER}>⚠️ salida: {j.dudasSalida.join(", ")}</Chip>}
               </div>
               {j ? <div style={{ fontSize: 13, color: MUTED, marginTop: 4, lineHeight: 1.6 }}>
-                Entrada: <b style={{ color: TEXT }}>{hora(j.checkInEn)}</b>{j.ubicacion && <> · <a href={mapa(j.ubicacion.lat, j.ubicacion.lng)} target="_blank" rel="noreferrer" style={{ color: BLUE }}>dónde</a>{j.precisionM ? ` (±${j.precisionM} m)` : ""}</>}
+                Entrada: <b style={{ color: TEXT }}>{hora(j.checkInEn)}</b>{j.horaEntradaEsperada ? ` (entrada ${j.horaEntradaEsperada})` : ""}{j.ubicacion && <> · <a href={mapa(j.ubicacion.lat, j.ubicacion.lng)} target="_blank" rel="noreferrer" style={{ color: BLUE }}>{j.lugarEntrada || "dónde"}</a>{j.precisionM ? ` (±${j.precisionM} m)` : ""}</>}
                 {" · "}Unidad {j.unidadPlaca || "—"} · {j.odometroKm ?? "—"} km · gasolina {j.combustiblePct ?? "—"}%
-                <br/>Salida: {j.checkOutEn ? <><b style={{ color: TEXT }}>{hora(j.checkOutEn)}</b>{j.ubicacionSalida && <> · <a href={mapa(j.ubicacionSalida.lat, j.ubicacionSalida.lng)} target="_blank" rel="noreferrer" style={{ color: BLUE }}>dónde</a></>}{j.kmRecorridos != null && ` · ${j.kmRecorridos} km recorridos`}</> : <span style={{ color: AMBER }}>todavía no cierra su día</span>}
+                <br/>Salida: {j.checkOutEn ? <><b style={{ color: TEXT }}>{hora(j.checkOutEn)}</b>{j.ubicacionSalida && <> · <a href={mapa(j.ubicacionSalida.lat, j.ubicacionSalida.lng)} target="_blank" rel="noreferrer" style={{ color: BLUE }}>{j.lugarSalida || "dónde"}</a></>}{j.kmRecorridos != null && ` · ${j.kmRecorridos} km en el tablero`}{j.kmGps ? ` · GPS ${j.kmGps} km` : ""}</> : <span style={{ color: AMBER }}>todavía no cierra su día</span>}
               </div> : <div style={{ fontSize: 13, color: f.asistencia === "Faltó" ? ROSE : MUTED, marginTop: 4 }}>{f.asistencia === "Faltó" ? "Tenía ruta y no hizo check-in." : "Sin check-in este día."}</div>}
               {(fotos.length > 0 || salida) && <div style={{ display: "flex", gap: 8, marginTop: 8, overflowX: "auto" }}>
                 {fotos.map((ru, i) => <Miniatura key={ru} ruta={ru} etiqueta={["Selfie", "Placas", "Tablero"][i] + " · " + f.nombre}/>)}
@@ -209,13 +223,18 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
           {alertas.length === 0 && <div style={{ ...tarjeta, color: GREEN, fontWeight: 700 }}>✓ Sin alertas abiertas.</div>}
           {alertas.map(a => <div key={a.id} style={{ ...tarjeta, borderLeft: "4px solid " + (["sos", "ubicacion_simulada", "velocidad_imposible", "fuera_de_ruta"].includes(a.type) ? ROSE : AMBER) }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <b>{a.titulo || a.type}</b><span style={{ fontSize: 12, color: MUTED }}>{hora(a.ts || a.createdAt)}</span>
+              <b>{tituloAlerta(a)}</b><span style={{ fontSize: 12, color: MUTED }}>{hora(a.ts || a.createdAt)}</span>
               <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center" }}>
                 {Number.isFinite(a.lat) && Number.isFinite(a.lng) && <a href={mapa(a.lat, a.lng)} target="_blank" rel="noreferrer" style={{ color: BLUE, fontSize: 13, fontWeight: 700 }}>Ver dónde</a>}
-                {esAdmin ? <button onClick={() => atender(a)} style={{ ...boton(GREEN, false), padding: "4px 10px", minHeight: 30, fontSize: 12 }}>✓ Atendida</button>
+                {esAdmin ? <button onClick={() => { setAtendiendo(atendiendo === a.id ? "" : a.id); setNota(""); setErrAtender(""); }} style={{ ...boton(GREEN, false), padding: "4px 10px", minHeight: 30, fontSize: 12 }}>✓ Atendida</button>
                   : <span style={{ fontSize: 11, color: MUTED }}>La cierra el director</span>}</span>
             </div>
-            <div style={{ fontSize: 14, color: TEXT, marginTop: 4 }}>{a.message || a.msg}</div>
+            <div style={{ fontSize: 14, color: TEXT, marginTop: 4 }}>{a.message || a.msg || "Sin detalle: revisa la ubicación del chofer."}</div>
+            {atendiendo === a.id && <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input autoFocus value={nota} onChange={e => setNota(e.target.value)} onKeyDown={e => e.key === "Enter" && atender(a)} placeholder="¿Qué se hizo? (queda en el registro)"
+                style={{ flex: "1 1 220px", minWidth: 0, border: "1.5px solid " + BORDER, borderRadius: 10, padding: "9px 12px", fontSize: 15 }}/>
+              <button onClick={() => atender(a)} style={{ ...boton(GREEN), padding: "8px 14px" }}>Guardar</button>
+              {errAtender && <div style={{ width: "100%", color: ROSE, fontSize: 13, fontWeight: 700 }}>{errAtender}</div>}</div>}
           </div>)}
         </div>}
 
