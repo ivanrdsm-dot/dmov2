@@ -59,9 +59,18 @@ async function comprimir(file, maximo = 1600, calidad = 0.8){
    de subida y la huella del archivo: la foto no se puede cambiar después. */
 const FOTO_VIGENTE_MIN = 20;
 const horaLocal = ms => new Date(ms).toLocaleString("es-MX", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+/* Carga la foto para dibujar el sello: primero createImageBitmap y, si el celular no lo soporta, con <img>. */
+async function cargarImagen(file){
+  try { return await createImageBitmap(file); } catch {}
+  const url = URL.createObjectURL(file);
+  try { return await new Promise((ok, mal) => { const i = new Image(); i.onload = () => ok(i); i.onerror = mal; i.src = url; }); }
+  finally { setTimeout(() => URL.revokeObjectURL(url), 30000); }
+}
+/* Imprime en la foto quién, cuándo y DÓNDE (dirección y coordenadas). La foto regresa marcada:
+   foto.selloImpreso = true/false (si falla, el servidor lo registra como duda). */
 async function conSello(file, lineas, maximo = 1600){
   try {
-    const img = await createImageBitmap(file);
+    const img = await cargarImagen(file);
     const k = Math.min(1, maximo / Math.max(img.width, img.height));
     const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
     const g = c.getContext("2d"); g.drawImage(img, 0, 0, c.width, c.height);
@@ -70,10 +79,20 @@ async function conSello(file, lineas, maximo = 1600){
     g.fillStyle = "#fff"; g.font = `700 ${t}px system-ui, sans-serif`; g.textBaseline = "top";
     lineas.forEach((l, i) => g.fillText(l, Math.round(t * 0.6), c.height - alto + Math.round(t * 0.4) + i * Math.round(t * 1.45), c.width - t));
     const b = await new Promise(r => c.toBlob(r, "image/jpeg", 0.82));
-    if(b) return b;
+    if(b){ b.selloImpreso = true; return b; }
   } catch {}
-  return comprimir(file);
+  const sin = await comprimir(file);
+  try { sin.selloImpreso = false; } catch {}
+  return sin;
 }
+/* Dirección donde está el chofer (Google, desde el servidor). Si tarda más de 4 s, sigue sin ella (las coordenadas siempre van). */
+async function lugarDe(llamar, p){
+  try { const r = await Promise.race([llamar("choferLugar", { lat: p.coords.latitude, lng: p.coords.longitude }), new Promise(ok => setTimeout(() => ok(null), 4000))]);
+    return String(r?.lugar || ""); } catch { return ""; }
+}
+const lineasSello = (titulo, tomadaMs, lugar, p) => [titulo, horaLocal(tomadaMs), ...(lugar ? ["📍 " + lugar] : []),
+  `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)} ±${Math.round(p.coords.accuracy || 0)} m`];
+const metaSello = (lineas, tomadaMs, foto) => ({ sello: lineas.join(" | "), tomadaMs: String(tomadaMs), selloImpreso: foto?.selloImpreso ? "si" : "no" });
 
 /* Borradores en el celular: si Android recarga la página al abrir la cámara, no se pierde lo capturado. */
 const BORR_DIA = "dm_borrador_dia", BORR_ENTREGA = "dm_borrador_entrega";
@@ -289,11 +308,11 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
     setError("");
     try {
       setPaso("Leyendo tu ubicación…"); const p = await posicionAhora();
+      const lugar = await lugarDe(llamar, p);
       setPaso("Subiendo fotos…");
       const f = fechaCDMX(), t = Date.now(), base = `jornadas/${chofer.id}/${f}_${t}_`;
-      const donde = `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)} ±${Math.round(p.coords.accuracy || 0)} m`;
-      const con = async (k, nombre, archivo) => { const tm = tomadas.current[k], lineas = [`D MOVIMIENTO · CHECK-IN · ${chofer.nombre || ""}`, horaLocal(tm), donde];
-        return subir(base + nombre, await conSello(archivo, lineas), { sello: lineas.join(" | "), tomadaMs: String(tm) }); };
+      const con = async (k, nombre, archivo) => { const tm = tomadas.current[k], lineas = lineasSello(`D MOVIMIENTO · CHECK-IN · ${chofer.nombre || ""}`, tm, lugar, p);
+        const foto = await conSello(archivo, lineas); return subir(base + nombre, foto, metaSello(lineas, tm, foto)); };
       const [s, pl, od] = await Promise.all([con("selfie", "selfie.jpg", selfie), con("placas", "placas.jpg", placas), con("tablero", "odometro.jpg", tablero)]);
       setPaso("Registrando…");
       await llamar("choferCheckIn", { selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: placa.trim().toUpperCase(),
@@ -528,9 +547,11 @@ function RegistrarGasto({ chofer, llamar, subir, onCerrar, onListo }){
     setError("");
     try {
       setPaso("Leyendo tu ubicación…"); const p = await posicionAhora();
+      const lugar = await lugarDe(llamar, p);
       setPaso("Subiendo el ticket…");
-      const lineas = [`D MOVIMIENTO · ${tipo.toUpperCase()} · ${chofer.nombre || ""}`, horaLocal(tomada.current), `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)}`];
-      const ruta = await subir(`jornadas/${chofer.id}/${fechaCDMX()}_${Date.now()}_ticket_${tipo}.jpg`, await conSello(ticket, lineas), { sello: lineas.join(" | "), tomadaMs: String(tomada.current) });
+      const lineas = lineasSello(`D MOVIMIENTO · ${tipo.toUpperCase()} · ${chofer.nombre || ""}`, tomada.current, lugar, p);
+      const foto = await conSello(ticket, lineas);
+      const ruta = await subir(`jornadas/${chofer.id}/${fechaCDMX()}_${Date.now()}_ticket_${tipo}.jpg`, foto, metaSello(lineas, tomada.current, foto));
       setPaso("Registrando…");
       const r = await llamar("choferRegistrarGasto", { tipo, monto: Number(monto), litros: gas ? Number(litros) : null, odometroKm: gas ? Number(km) : null, tanqueLleno: lleno,
         nota: nota.trim(), fotoTicketRuta: ruta, lat: p.coords.latitude, lng: p.coords.longitude });
@@ -581,9 +602,11 @@ function TerminarDia({ chofer, llamar, subir, onCerrar, onListo }){
     setError("");
     try {
       setPaso("Leyendo tu ubicación…"); const p = await posicionAhora();
+      const lugar = await lugarDe(llamar, p);
       setPaso("Subiendo la foto…");
-      const lineas = [`D MOVIMIENTO · CHECK-OUT · ${chofer.nombre || ""}`, horaLocal(tomada.current), `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)} ±${Math.round(p.coords.accuracy || 0)} m`];
-      const ruta = await subir(`jornadas/${chofer.id}/${fechaCDMX()}_${Date.now()}_odometro_salida.jpg`, await conSello(tablero, lineas), { sello: lineas.join(" | "), tomadaMs: String(tomada.current) });
+      const lineas = lineasSello(`D MOVIMIENTO · CHECK-OUT · ${chofer.nombre || ""}`, tomada.current, lugar, p);
+      const foto = await conSello(tablero, lineas);
+      const ruta = await subir(`jornadas/${chofer.id}/${fechaCDMX()}_${Date.now()}_odometro_salida.jpg`, foto, metaSello(lineas, tomada.current, foto));
       setPaso("Cerrando tu día…");
       await llamar("choferTerminarJornada", { lat: p.coords.latitude, lng: p.coords.longitude, precisionM: p.coords.accuracy, odometroKm: Number(km), fotoOdometroRuta: ruta });
       onListo();

@@ -74,6 +74,10 @@ describe("fotos de check-in revisadas por el servidor", () => {
   it("acepta una foto de este momento y guarda su huella", () => {
     expect(revisarFotoJornada(meta(), T0 + 2 * MIN)).toMatchObject({ ok: true, md5: "abc==", aviso: "" });
   });
+  it("si la foto no lleva impresos el lugar y la hora, queda como duda", () => {
+    expect(revisarFotoJornada(meta({ metadata: { sello: "DMOV", tomadaMs: String(T0), selloImpreso: "no" } }), T0 + MIN).aviso).toContain("lugar");
+    expect(revisarFotoJornada(meta({ metadata: { sello: "DMOV", tomadaMs: String(T0), selloImpreso: "si" } }), T0 + MIN).aviso).toBe("");
+  });
   it("rechaza fotos viejas, vacías o que no son imagen", () => {
     expect(revisarFotoJornada(meta(), T0 + 20 * MIN).ok).toBe(false);
     expect(revisarFotoJornada(meta({ size: 100 }), T0).ok).toBe(false);

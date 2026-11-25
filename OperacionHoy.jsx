@@ -41,6 +41,19 @@ function BotonAcceso({ chofer, app }){
     {estado && <span style={{ fontSize: 11, color: estado.startsWith("No") ? ROSE : MUTED }}>{estado}</span>}</span>;
 }
 
+/* Mapita con el punto exacto (Mapbox) y la dirección; al tocarlo abre Google Maps en ese lugar. */
+function MapaPunto({ token, punto, titulo, lugar, hora: h }){
+  const ok = Number.isFinite(Number(punto?.lat)) && Number.isFinite(Number(punto?.lng));
+  if(!ok) return null;
+  const { lat, lng } = punto;
+  const img = token ? `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-l+f27b13(${lng},${lat})/${lng},${lat},15/240x184@2x?access_token=${token}` : "";
+  return <a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noreferrer" title={`${titulo}: ${lugar || `${lat}, ${lng}`}`}
+    style={{ flex: "none", width: 160, textDecoration: "none", color: TEXT, border: "1px solid " + BORDER, borderRadius: 12, overflow: "hidden", background: "#fff" }}>
+    {img ? <img src={img} alt={`Mapa de ${titulo.toLowerCase()}`} style={{ width: 160, height: 92, objectFit: "cover", display: "block" }}/> : <div style={{ height: 92, display: "grid", placeItems: "center", background: "#f1f5f9" }}>📍</div>}
+    <div style={{ padding: "5px 7px", fontSize: 11, lineHeight: 1.3 }}><b>📍 {titulo}{h ? " · " + h : ""}</b><div style={{ color: MUTED }}>{lugar || `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`}</div></div>
+  </a>;
+}
+
 const hoyCDMX = () => new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
 const ms = v => v?.toMillis ? v.toMillis() : typeof v === "number" ? v : 0;
 const hora = v => { const t = ms(v); return t ? new Date(t).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : ""; };
@@ -205,8 +218,10 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
                 {" · "}Unidad {j.unidadPlaca || "—"} · {j.odometroKm ?? "—"} km · gasolina {j.combustiblePct ?? "—"}%
                 <br/>Salida: {j.checkOutEn ? <><b style={{ color: TEXT }}>{hora(j.checkOutEn)}</b>{j.ubicacionSalida && <> · <a href={mapa(j.ubicacionSalida.lat, j.ubicacionSalida.lng)} target="_blank" rel="noreferrer" style={{ color: BLUE }}>{j.lugarSalida || "dónde"}</a></>}{j.kmRecorridos != null && ` · ${j.kmRecorridos} km en el tablero`}{j.kmGps ? ` · GPS ${j.kmGps} km` : ""}</> : <span style={{ color: AMBER }}>todavía no cierra su día</span>}
               </div> : <div style={{ fontSize: 13, color: f.asistencia === "Faltó" ? ROSE : MUTED, marginTop: 4 }}>{f.asistencia === "Faltó" ? "Tenía ruta y no hizo check-in." : "Sin check-in este día."}</div>}
-              {(fotos.length > 0 || salida) && <div style={{ display: "flex", gap: 8, marginTop: 8, overflowX: "auto" }}>
+              {(fotos.length > 0 || salida || j?.ubicacion || j?.ubicacionSalida) && <div style={{ display: "flex", gap: 8, marginTop: 8, overflowX: "auto" }}>
+                {j?.ubicacion && <MapaPunto token={mapboxToken} punto={j.ubicacion} titulo="Entrada" lugar={j.lugarEntrada} hora={hora(j.checkInEn)}/>}
                 {fotos.map((ru, i) => <Miniatura key={ru} ruta={ru} etiqueta={["Selfie", "Placas", "Tablero"][i] + " · " + f.nombre}/>)}
+                {j?.ubicacionSalida && <MapaPunto token={mapboxToken} punto={j.ubicacionSalida} titulo="Salida" lugar={j.lugarSalida} hora={hora(j.checkOutEn)}/>}
                 {salida && <Miniatura ruta={salida} etiqueta={"Tablero al salir · " + f.nombre}/>}</div>}
             </div>; })}
           <p style={{ fontSize: 12, color: MUTED }}>Cada foto lleva impresos el nombre, la hora y la ubicación, y el servidor guarda la hora real en que se subió y su huella digital: no se puede cambiar después. Nadie (ni el director) puede editar un check-in.</p>
