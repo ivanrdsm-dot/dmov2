@@ -57,6 +57,9 @@ function MapaPunto({ token, punto, titulo, lugar, hora: h }){
 
 const hoyCDMX = () => new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
 const ms = v => v?.toMillis ? v.toMillis() : typeof v === "number" ? v : 0;
+/* "2026-11-27" → "jue 27 nov" (para que se lea de un vistazo). */
+const diaBonito = f => { const d = /^\d{4}-\d{2}-\d{2}$/.test(String(f || "")) ? new Date(f + "T12:00:00") : null;
+  return d ? d.toLocaleDateString("es-MX", { weekday: "short", day: "numeric", month: "short" }).replace(/\./g, "") : String(f || "sin fecha"); };
 const hora = v => { const t = ms(v); return t ? new Date(t).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : ""; };
 const hace = min => min === null ? "sin datos" : min < 1 ? "ahora" : min < 60 ? `hace ${min} min` : `hace ${Math.floor(min / 60)} h ${min % 60} min`;
 const mapa = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
@@ -104,7 +107,11 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const [verFichas, setVerFichas] = useState("");   // director: editar fichas de choferes o camionetas
   const [dia, setDia] = useState(hoyCDMX());
   const [choferes, setChoferes] = useState([]), [jornadas, setJornadas] = useState([]), [ubic, setUbic] = useState({});
-  const [delDia, setDelDia] = useState([]), [enCurso, setEnCurso] = useState([]);
+  const [delDia, setDelDia] = useState([]), [enCurso, setEnCurso] = useState([]), [proximas, setProximas] = useState([]);
+  /* Rutas de días que vienen (todas, de quien sea y con o sin chofer): que nada cargado quede fuera de la vista. */
+  useEffect(() => onSnapshot(query(collection(db, "servicios"), where("fechaServicio", ">", hoyCDMX()), limit(200)),
+    s => setProximas(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.estado !== "Cancelada" && !x.historico && String(x.fechaServicio) > hoyCDMX())
+      .sort((a, b) => String(a.fechaServicio).localeCompare(String(b.fechaServicio)) || String(a.folio).localeCompare(String(b.folio)))), () => setProximas([])), [db]);
   const servicios = useMemo(() => [...new Map([...delDia, ...enCurso].map(x => [x.id, x])).values()], [delDia, enCurso]);
   const [alertasBase, setAlertas] = useState([]), [alertasDir, setAlertasDir] = useState([]), [gastos, setGastos] = useState([]), [abierto, setAbierto] = useState(""), [paradas, setParadas] = useState({});
   const [, setReloj] = useState(0);
@@ -128,7 +135,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
       onSnapshot(query(collection(db, "jornadas"), where("fecha", "==", dia)), s => setJornadas(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setJornadas([])),
       /* Entrada y salida de la oficina (Ilse): solo el director las ve. */
       ...(esAdmin ? [onSnapshot(query(collection(db, "asistencia_oficina"), where("fecha", "==", dia)), s => setOficinaAsis(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setOficinaAsis([]))] : []),
-      onSnapshot(query(collection(db, "servicios"), where("fechaServicio", "==", dia), limit(300)), s => setDelDia(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId && !x.historico)), () => setDelDia([])),
+      onSnapshot(query(collection(db, "servicios"), where("fechaServicio", "==", dia), limit(300)), s => setDelDia(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => !x.historico)), () => setDelDia([])),
       /* Rutas foráneas de varios días: siguen "En ruta" aunque su fecha sea de antes. */
     ];
     if(dia === hoyCDMX()) us.push(onSnapshot(query(collection(db, "servicios"), where("estado", "==", "En ruta"), limit(200)), s => setEnCurso(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId)), () => setEnCurso([])));
@@ -154,7 +161,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   };
 
   const activos = useMemo(() => choferes.filter(c => c.status !== "Inactivo" && c.activo !== false && !c.baja), [choferes]);
-  const r = resumenOperacion({ choferes: activos, jornadas, servicios, ubicaciones: ubic, alertas, dia, ahoraMs: Date.now() });
+  const r = resumenOperacion({ choferes: activos, jornadas, servicios: servicios.filter(x => x.choferId), ubicaciones: ubic, alertas, dia, ahoraMs: Date.now() });
   const gastosSemana = gastos.filter(g => Date.now() - ms(g.fechaTs || g.createdAt) < 7 * 86400000);
 
   const P = [["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
@@ -199,6 +206,8 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
             {[["Trabajando", r.trabajando, GREEN], ["En ruta", r.enRuta, BLUE], ["Faltan (con ruta)", r.faltan, r.faltan ? ROSE : TEXT], ["Sin señal", r.sinSenal, r.sinSenal ? AMBER : TEXT], ["Alertas abiertas", alertas.length, alertas.length ? ROSE : GREEN]].map(([t, v, c]) =>
               <div key={t} style={tarjeta}><div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>{t}</div><div style={{ fontFamily: DISP, fontSize: 30, fontWeight: 800, color: c }}>{v}</div></div>)}
           </div>
+          {proximas.length > 0 && <div onClick={() => setPestana("rutas")} style={{ ...tarjeta, borderColor: BLUE, background: BLUE + "08", marginBottom: 8, cursor: "pointer" }}>
+            <b style={{ color: BLUE }}>📅 {proximas.length} {proximas.length === 1 ? "ruta próxima" : "rutas próximas"}</b> · <span style={{ fontSize: 14 }}>la siguiente: {diaBonito(proximas[0].fechaServicio)} · {proximas[0].folio} · {proximas[0].empresa}{proximas[0].choferNombre ? " · " + proximas[0].choferNombre : " · sin chofer"}. Toca para ver todas.</span></div>}
           {alertas.slice(0, 3).map(a => <div key={a.id} onClick={() => setPestana("alertas")} style={{ ...tarjeta, borderColor: ROSE, background: ROSE + "08", marginBottom: 8, cursor: "pointer" }}>
             <b style={{ color: ROSE }}>{tituloAlerta(a)}</b> · <span style={{ fontSize: 14 }}>{a.message || a.msg || "Toca para ver"}</span></div>)}
           <div style={{ ...tarjeta, padding: 0, overflow: "auto", marginTop: 6 }}>
@@ -265,10 +274,19 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
         </div>}
 
         {pestana === "rutas" && <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {servicios.length === 0 && <div style={{ ...tarjeta, color: MUTED }}>No hay rutas asignadas ese día.</div>}
+          {proximas.length > 0 && <div style={{ ...tarjeta, borderLeft: "4px solid " + BLUE }}>
+            <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 6 }}>📅 Próximas rutas ({proximas.length})</div>
+            {proximas.map(s => <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "7px 0", borderTop: "1px solid " + BORDER, fontSize: 14 }}>
+              <b style={{ minWidth: 92 }}>{diaBonito(s.fechaServicio)}</b><b style={{ fontFamily: MONO, fontSize: 13 }}>{s.folio}</b><span>{s.empresa}</span>
+              <span style={{ color: s.choferNombre ? MUTED : ROSE }}>· {s.choferNombre || "sin chofer"}{s.segundoChoferNombre ? " y " + s.segundoChoferNombre : ""}{s.unidadPlaca ? " · " + s.unidadPlaca : ""}</span>
+              {s.creadoPorNombre && <span style={{ fontSize: 12, color: MUTED }}>· registró {s.creadoPorNombre}</span>}
+              <button onClick={() => setDia(s.fechaServicio)} style={{ ...boton(BLUE, false), padding: "4px 10px", minHeight: 30, fontSize: 12, marginLeft: "auto" }}>Ver ese día</button>
+            </div>)}
+          </div>}
+          {servicios.length === 0 && <div style={{ ...tarjeta, color: MUTED }}>No hay rutas asignadas el {diaBonito(dia)}.</div>}
           {servicios.map(s => <div key={s.id} style={tarjeta}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
+              <b style={{ fontFamily: MONO }}>{s.folio}</b><span style={{ color: s.choferNombre ? TEXT : ROSE }}>{s.choferNombre || "sin chofer"}</span><span style={{ color: MUTED }}>· {[s.unidadPlaca, s.empresa, s.creadoPorNombre && "registró " + s.creadoPorNombre].filter(Boolean).join(" · ")}</span>
               {s.cambioPendiente && (s.cambioPendiente.enteradoMs ? <Chip color={GREEN}>✓ Chofer enterado del cambio</Chip> : <Chip color={ROSE}>⏳ Chofer sin confirmar cambio</Chip>)}
               {s.foraneo && <Chip color={A}>🛣️ Foránea · {s.diasFuera || 1} días{s.regresoEstimado ? ` · regresa ${s.regresoEstimado}` : ""}</Chip>}
               <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>

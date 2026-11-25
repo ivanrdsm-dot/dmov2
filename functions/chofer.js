@@ -759,6 +759,11 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
   lote.set(db().collection(`servicios/${servicioId}/eventos`).doc(), { tipo: "ruta_armada", paradas: paradas.length, choferId, segundoChoferId: segundo?.id || "", ordenadaPorCercania: ordenar,
     kmLineaRectaAntes: o.kmAntes, kmLineaRectaDespues: o.kmDespues, ...actorOficina(of), ts: ahora() });
   await lote.commit();
+  /* El director se entera de cada ruta que asigna otra persona (qué, para cuándo, con quién). */
+  if(of.rol !== "admin") try {
+    await alerta({ type: "ruta_asignada", informativa: true, atendida: true, servicioId, choferId, choferNombre: c.data().nombre || "",
+      msg: `${of.nombre} asignó ${servicio.folio || ""} · ${servicio.empresa || ""} · ${servicio.fechaServicio || "sin fecha"}${servicio.horaServicio ? " " + servicio.horaServicio : ""} · ${c.data().nombre || ""}${segundo ? " y " + segundo.nombre : ""}${servicio.unidadPlaca ? " · " + servicio.unidadPlaca : ""} · ${paradas.length} paradas` });
+  } catch(e){ console.warn("aviso ruta asignada", e?.message); }
   /* Local o foránea, y cuántos días fuera (estimado; la oficina lo puede corregir). */
   let clase = null;
   try {
