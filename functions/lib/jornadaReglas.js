@@ -55,3 +55,16 @@ export function kmDePuntos(puntos = []){
 export function horaCDMX(ms){
   return new Date(ms).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City", hour: "numeric", minute: "2-digit" });
 }
+
+/** Hora de llegada a una parada según el GPS: inicio de la ÚLTIMA estancia continua dentro del radio
+    antes de cerrar (si pasó antes por ahí y se fue, esa visita no cuenta). null si nunca entró. */
+export function llegadaPorGps(puntos = [], parada, { desdeMs = 0, hastaMs = Infinity, radioM = 150 } = {}){
+  if(!coordenadaValida(parada)) return null;
+  const ps = puntos.filter(p => coordenadaValida(p) && p.confiable !== false && !(Number(p.precisionM) > 200) && p.tMs >= desdeMs && p.tMs <= hastaMs).sort((a, b) => a.tMs - b.tMs);
+  const dentro = p => distanciaM(p, parada) <= radioM;
+  let i = ps.length - 1;
+  while(i >= 0 && !dentro(ps[i])) i--;
+  if(i < 0) return null;
+  while(i > 0 && dentro(ps[i - 1])) i--;
+  return ps[i].tMs;
+}

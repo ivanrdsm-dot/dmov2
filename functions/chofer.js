@@ -12,7 +12,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { ordenarParadas, clasificarRuta, fechaMasDias } from "./lib/rutas.js";
 import { fusionarClaims } from "./permisos.js";
 import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER, TITULO_ALERTA } from "./lib/vigilancia.js";
-import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCDMX, kmDesdeZocalo } from "./lib/jornadaReglas.js";
+import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCDMX, kmDesdeZocalo, llegadaPorGps } from "./lib/jornadaReglas.js";
 import { defineSecret } from "firebase-functions/params";
 import { revisarFotoJornada, lineaDeTexto, lineaATexto } from "./lib/evidencia.js";
 
@@ -341,6 +341,14 @@ export const choferCerrarParada = onCall(OPC, async req => {
     const u = await db().doc("ubicaciones/" + chofer.id).get();
     if(u.exists && u.data().confiableTMs) posicion = { lat: u.data().confiableLat, lng: u.data().confiableLng, tMs: u.data().confiableTMs, precisionM: u.data().precisionM, confiable: true };
   }
+  /* Hora de llegada según el GPS (no la puede alterar el chofer): sirve para medir manejo vs. tiempo en sitio. */
+  let llegadaGpsMs = null;
+  try {
+    const pd = (await refParada.get()).data() || {}, salidaMs = servicio.estadoTs?.["En ruta"]?.toMillis?.() || 0;
+    const r = Number(pd.radioM), radioM = r >= 30 && r <= 2000 ? r : RADIO_GEOCERCA_DEFAULT_M;
+    const lotes = await db().collection(`servicios/${servicio.id}/posiciones`).where("hastaMs", ">=", salidaMs).limit(400).get();
+    llegadaGpsMs = llegadaPorGps(lotes.docs.flatMap(d => d.data().puntos || []), { lat: Number(pd.lat), lng: Number(pd.lng) }, { desdeMs: salidaMs, hastaMs: momento, radioM });
+  } catch(e){ console.warn("llegada gps", e?.message); }
 
   const resultado = await db().runTransaction(async tx => {
     /* En una transacción todas las lecturas van antes que las escrituras */
@@ -354,7 +362,8 @@ export const choferCerrarParada = onCall(OPC, async req => {
       return { ...v, parada };
     }
     tx.update(refParada, { estado: incidencia ? "Incidencia" : "Entregada", incidencia, evidencia, cerradaEn: ahora(), cerradaPor: chofer.id,
-      distanciaAlCerrarM: v.distanciaM ?? null, cerradaPorExcepcion: v.porExcepcion === true, cerradaDiferida: diferida, cerradaEnEquipoMs: diferida ? cerradaMs : null });
+      distanciaAlCerrarM: v.distanciaM ?? null, cerradaPorExcepcion: v.porExcepcion === true, cerradaDiferida: diferida, cerradaEnEquipoMs: diferida ? cerradaMs : null,
+      llegadaGpsMs: llegadaGpsMs ?? null, cerradaMs: momento });
     eventoServicio(tx, servicio.id, { tipo: incidencia ? "parada_incidencia" : "parada_entregada", paradaId, paradaNombre: parada.nombre || "", receptor: evidencia.receptor,
       incidencia, distanciaM: v.distanciaM ?? null, porExcepcion: v.porExcepcion === true, diferida, ...actorChofer(chofer) });
     const pendientes = todas.docs.filter(d => d.id !== paradaId && !["Entregada", "Incidencia", "Quitada"].includes(d.data().estado)).length;
@@ -428,6 +437,19 @@ export const choferTerminarJornada = onCall(OPC_LUGAR, async req => {
     if(dudas.length) await alerta({ type: "checkin_dudoso", choferId: chofer.id, choferNombre: chofer.nombre || "", msg: `Check-out de ${chofer.nombre || "chofer"} con dudas: ${dudas.join(", ")}`, lat: pos.lat, lng: pos.lng });
   }
   return { ok: true, yaEstaba: r.yaEstaba };
+});
+
+/** "Llegué": guarda la hora (del servidor) en que el chofer dice que llegó. Respaldo de la llegada por GPS. */
+export const choferLlegue = onCall(OPC, async req => {
+  const { chofer } = await choferDe(req);
+  const { servicio } = await servicioDelChofer(req.data?.servicioId, chofer);
+  const ref = db().doc(`servicios/${servicio.id}/paradas/${txt(req.data?.paradaId, 80)}`);
+  await db().runTransaction(async tx => {
+    const p = await tx.get(ref);
+    if(!p.exists || p.data().estado !== "Pendiente" || p.data().llegadaEn) return;
+    tx.update(ref, { llegadaEn: ahora(), llegadaMs: Date.now() });
+  });
+  return { ok: true };
 });
 
 /** Botón de emergencia. No exige check-in ni servicio: siempre debe pasar. */

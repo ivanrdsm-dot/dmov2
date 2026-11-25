@@ -57,3 +57,14 @@ describe("avisos al celular", () => {
 describe("fechas hacia atrás", () => {
   it("resta días", () => { expect(fechaMasDias("2026-11-02", -3)).toBe("2026-10-30"); });
 });
+
+import { llegadaPorGps } from "./functions/lib/jornadaReglas.js";
+describe("llegada a la parada por GPS", () => {
+  const P = { lat: 19.40, lng: -99.15 }, t = Date.parse("2026-11-25T10:00:00-06:00"), M = 60000;
+  const lejos = (m) => ({ lat: 19.42, lng: -99.15, tMs: t + m * M }), cerca = (m) => ({ lat: 19.4003, lng: -99.15, tMs: t + m * M });
+  it("toma el inicio de la última estancia dentro del radio", () => {
+    expect(llegadaPorGps([lejos(0), cerca(5), lejos(10), lejos(20), cerca(30), cerca(35), cerca(40)], P)).toBe(t + 30 * M);
+  });
+  it("si nunca entró, no hay llegada", () => { expect(llegadaPorGps([lejos(0), lejos(5)], P)).toBe(null); });
+  it("ignora puntos después del cierre", () => { expect(llegadaPorGps([lejos(0), cerca(10), cerca(50)], P, { hastaMs: t + 20 * M })).toBe(t + 10 * M); });
+});
