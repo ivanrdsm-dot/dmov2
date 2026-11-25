@@ -54,7 +54,7 @@ service cloud.firestore {
     /* Regla del director: operaciones (Ilse) VE choferes, gastos, asistencia y alertas, pero no los cambia.
        Todo cambio a esos registros es de un administrador; los check-in/out solo los escribe el servidor. */
     match /choferes/{id}             { allow read: if esOficina(); allow create, update: if esAdmin(); allow delete: if esAdmin() && conCopia('choferes', id); }
-    match /gastosChofer/{id}         { allow read: if esOficina(); allow create, update: if esAdmin(); allow delete: if false; }
+    match /gastosChofer/{id}         { allow read: if esAdmin(); allow create, update: if esAdmin(); allow delete: if false; }
     /* El chofer lee SU jornada aunque todavía no exista (antes de su check-in): se revisa por el nombre del documento,
        {choferId}_{fecha}; si no, la app no se enteraba del check-in hasta recargar. */
     match /jornadas/{id}             { allow read: if esOficina() || (esChofer() && id.matches(miChoferId() + '_[0-9]{4}-[0-9]{2}-[0-9]{2}') && (resource == null || resource.data.choferId == miChoferId())); allow create, update, delete: if false; }
@@ -89,26 +89,26 @@ service cloud.firestore {
       allow delete: if esAdmin() && uid != request.auth.uid;
     }
 
-    /* ── Financieras: SOLO oficina; borrar SOLO admin ── */
+    /* ── Financieras: SOLO el director (admin). Operaciones (Ilse) no ve números ni finanzas. ── */
     match /facturas/{id} {
-      allow read, create: if esOficina();
-      allow update: if esOficina() && (
+      allow read, create: if esAdmin();
+      allow update: if esAdmin() && (
         !('cfdiArchiveLocked' in resource.data) || resource.data.cfdiArchiveLocked != true
         || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['notas','status','fechaPago','fechaVenc','emailCliente',
              'intranetFolio','intranetFecha','intranetEstatus','intranetDirector','seguimiento','seguimientoFecha','cotizacionFolio','cotizacionId']));
       allow delete: if esAdmin() && (!('cfdiArchiveLocked' in resource.data) || resource.data.cfdiArchiveLocked != true) && conCopia('facturas', id);
     }
-    match /pagos/{id}             { allow read, create, update: if esOficina(); allow delete: if false; }
-    match /pagosProveedores/{id}  { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('pagosProveedores', id); }
-    match /presupuestos/{id}      { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('presupuestos', id); }
-    match /cotizaciones/{id}      { allow read, create, update: if esOficina(); allow delete: if false; }
+    match /pagos/{id}             { allow read, create, update: if esAdmin(); allow delete: if false; }
+    match /pagosProveedores/{id}  { allow read, create, update: if esAdmin(); allow delete: if esAdmin() && conCopia('pagosProveedores', id); }
+    match /presupuestos/{id}      { allow read, create, update: if esAdmin(); allow delete: if esAdmin() && conCopia('presupuestos', id); }
+    match /cotizaciones/{id}      { allow read, create, update: if esAdmin(); allow delete: if false; }
     match /cuentas/{id}           { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('cuentas', id); }
     /* Catálogo de planes del grupo (número → empresa, RFC, director de intranet):
        lo lee toda la oficina (formulario de facturas); lo edita solo admin. */
-    match /planes/{id}            { allow read: if esOficina(); allow create, update: if esAdmin(); allow delete: if false; }
+    match /planes/{id}            { allow read: if esAdmin(); allow create, update: if esAdmin(); allow delete: if false; }
     /* Cierres contables cargados desde la balanza: lectura de oficina, escritura admin. */
-    match /cierresContables/{id}  { allow read: if esOficina(); allow create, update: if esAdmin(); allow delete: if false; }
-    match /viaticos/{id}          { allow read: if esOficina(); allow create, update: if esAdmin(); allow delete: if esAdmin() && conCopia('viaticos', id); }
+    match /cierresContables/{id}  { allow read: if esAdmin(); allow create, update: if esAdmin(); allow delete: if false; }
+    match /viaticos/{id}          { allow read: if esAdmin(); allow create, update: if esAdmin(); allow delete: if esAdmin() && conCopia('viaticos', id); }
     match /prospeccion/{id}       { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('prospeccion', id); }
     match /proyectos/{id}         { allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('proyectos', id); }
     match /plantillasCotizador/{id}{ allow read, create, update: if esOficina(); allow delete: if esAdmin() && conCopia('plantillasCotizador', id); }
@@ -169,8 +169,8 @@ service cloud.firestore {
         allow write: if false;
       }
       match /costos/{costoId} {
-        allow read: if esOficina();
-        allow create: if esOficina()
+        allow read: if esAdmin();
+        allow create: if esAdmin()
           && request.resource.data.keys().hasOnly(['concepto','monto','nota','actorUid','actorNombre','ts'])
           && request.resource.data.actorUid == request.auth.uid
           && request.resource.data.ts == request.time
@@ -179,7 +179,7 @@ service cloud.firestore {
           && request.resource.data.monto > 0 && request.resource.data.monto < 10000000
           && (request.resource.data.concepto != 'Otro' || (request.resource.data.nota is string && request.resource.data.nota.size() > 0))
           && exists(/databases/$(database)/documents/servicios/$(id));
-        allow update: if esOficina()
+        allow update: if esAdmin()
           && !('anulado' in resource.data)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['anulado','anuladoPor','anuladoNombre','anuladoEn','motivoAnulacion'])
           && request.resource.data.anulado == true
@@ -291,8 +291,8 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /cotizaciones_logistica/{id} {
-      allow read: if esOficina();
-      allow create: if esOficina()
+      allow read: if esAdmin();
+      allow create: if esAdmin()
         && request.resource.data.creadoPor == request.auth.uid
         && request.resource.data.creadoEn == request.time
         && request.resource.data.estado == 'Propuesta'
@@ -305,7 +305,7 @@ service cloud.firestore {
         && request.resource.data.folio is string
         && request.resource.data.folio.matches('COT-20[0-9]{2}-[0-9]{4,}')
         && folioRecienEmitido('cotizaciones_logistica', request.resource.data.folio);
-      allow update: if esOficina()
+      allow update: if esAdmin()
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(cotInmutables())
         && cotTransicion(resource.data.estado, request.resource.data.estado)
         // El precio aprobado solo se fija al aprobar, por un admin y con la hora del servidor.
@@ -322,8 +322,8 @@ service cloud.firestore {
             || (resource.data.estado == 'Aceptada' && !('servicioId' in resource.data)));
       allow delete: if false;
       match /eventos/{eventoId} {
-        allow read: if esOficina();
-        allow create: if esOficina()
+        allow read: if esAdmin();
+        allow create: if esAdmin()
           && request.resource.data.actorUid == request.auth.uid
           && request.resource.data.ts == request.time;
         allow update, delete: if false;
@@ -367,7 +367,7 @@ service cloud.firestore {
     /* ── Tarifario: lo consulta la oficina; los precios solo los cambia un admin.
        Nada se borra (se da de baja) y el historial de cambios solo se agrega. */
     match /tarifario/{id} {
-      allow read: if esOficina();
+      allow read: if esAdmin();
       allow create, update: if esAdmin();
       allow delete: if false;
       match /cambios/{c} {

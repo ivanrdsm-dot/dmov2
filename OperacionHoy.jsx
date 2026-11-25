@@ -1,7 +1,8 @@
 /* OPERACIÓN · UNA sola sección para todo lo de choferes y rutas (la plataforma de Ilse y el
    "ojo de águila" del director): Ahora · Asignar ruta · Rutas y paradas · Mapa en vivo · Asistencia ·
    Alertas · Choferes · Gastos · Historial. Los módulos que viven en App.jsx llegan por `vistas`.
-   Ilse (operaciones) VE todo: choferes, asistencia con fotos y ubicación, rutas y paradas, alertas y gastos.
+   Ilse (operaciones) VE lo operativo: choferes, asistencia con fotos y ubicación, rutas y paradas y alertas.
+   NO ve números ni finanzas: gastos, montos e incentivos son solo del director (también lo bloquea el servidor).
    No puede cambiar ni borrar esos registros (lo impiden las reglas del servidor): solo el director (admin)
    da por atendida una alerta. Link directo: /operacion */
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
@@ -15,6 +16,8 @@ import { correoDeChofer, telefono10 } from "./lugares.ts";
 const AsignarRuta = lazy(() => import("./AsignarRuta.jsx"));
 const HistorialRutas = lazy(() => import("./HistorialRutas.jsx"));
 const Desempeno = lazy(() => import("./Desempeno.jsx"));
+/* Alertas que traen montos ($): solo las ve el director. */
+const ALERTAS_CON_MONTOS = ["gasto_dudoso", "cotizacion_por_aprobar", "resumen_diario"];
 const PESTANAS = ["ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno"];
 const Cargando = () => <div style={{ padding: 40, color: MUTED }}>Cargando…</div>;
 
@@ -96,11 +99,13 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
     const us = [
       onSnapshot(collection(db, "choferes"), s => setChoferes(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => {}),
       onSnapshot(collection(db, "ubicaciones"), s => setUbic(Object.fromEntries(s.docs.map(d => [d.id, d.data()]))), () => {}),
-      onSnapshot(query(collection(db, "alertas"), where("atendida", "==", false), limit(300)), s => setAlertas(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => ms(b.ts || b.createdAt) - ms(a.ts || a.createdAt))), () => {}),
-      onSnapshot(query(collection(db, "gastosChofer"), orderBy("createdAt", "desc"), limit(300)), s => setGastos(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => {}),
+      onSnapshot(query(collection(db, "alertas"), where("atendida", "==", false), limit(300)), s => setAlertas(s.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(a => esAdmin || !ALERTAS_CON_MONTOS.includes(a.type))   // operaciones no ve montos
+        .sort((a, b) => ms(b.ts || b.createdAt) - ms(a.ts || a.createdAt))), () => {}),
+      ...(esAdmin ? [onSnapshot(query(collection(db, "gastosChofer"), orderBy("createdAt", "desc"), limit(300)), s => setGastos(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => {})] : []),
     ];
     return () => us.forEach(u => u());
-  }, [db]);
+  }, [db, esAdmin]);
   useEffect(() => {
     const us = [
       onSnapshot(query(collection(db, "jornadas"), where("fecha", "==", dia)), s => setJornadas(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setJornadas([])),
@@ -131,7 +136,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const gastosSemana = gastos.filter(g => Date.now() - ms(g.fechaTs || g.createdAt) < 7 * 86400000);
 
   const P = [["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
-    ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["choferes", "👤 Choferes"], ["gastos", "💵 Gastos"], ["historial", "📚 Historial"],
+    ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["choferes", "👤 Choferes"], ...(esAdmin ? [["gastos", "💵 Gastos"]] : []), ["historial", "📚 Historial"],
     ...(esAdmin ? [["desempeno", "🏆 Desempeño"]] : [])];   // incentivos: solo el director
   /* Al ir de una pestaña a otra desde dentro de un módulo (p. ej. Asignar ruta → "En vivo"). */
   const irA = v => ({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v] ? setPestana({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v]) : onVer?.(v));
@@ -259,7 +264,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
           <p style={{ fontSize: 12, color: MUTED }}>{esAdmin ? "📲 Mandar acceso: crea su cuenta con su celular y abre WhatsApp con su enlace para poner contraseña. El chofer entra en /chofer con su celular." : "Dar de alta o cambiar datos de un chofer lo hace el director."}</p>
         </div>}
 
-        {pestana === "gastos" && <div>
+        {pestana === "gastos" && esAdmin && <div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10, marginBottom: 12 }}>
             <div style={tarjeta}><div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Últimos 7 días</div><div style={{ fontFamily: DISP, fontSize: 26, fontWeight: 800 }}>{dinero(gastosSemana.reduce((t, g) => t + (Number(g.monto) || 0), 0))}</div></div>
             <div style={tarjeta}><div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Por aprobar</div><div style={{ fontFamily: DISP, fontSize: 26, fontWeight: 800, color: AMBER }}>{gastos.filter(g => !g.estado || g.estado === "pendiente").length}</div></div>

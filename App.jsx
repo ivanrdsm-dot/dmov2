@@ -3252,9 +3252,11 @@ const MENU=[
   ]},
 ];
 /** Menú visible para un rol: cada opción con sus pestañas permitidas; `id` = primera pestaña. */
+/* Operaciones (Ilse) NO ve números ni finanzas: solo Operación, Pedidos y Lugares. */
+const VISTAS_OPERACIONES = ["operacion", "solicitudes", "puntos"];
 function getNavSections(rol){
   const isAdmin = rol==="admin";
-  const ve = t => (isAdmin||!t.adminOnly)&&(FF_SERVICIOS||!t.ff);
+  const ve = t => (isAdmin||!t.adminOnly)&&(FF_SERVICIOS||!t.ff)&&(rol!=="operaciones"||VISTAS_OPERACIONES.includes(t.id));
   return MENU.map(s=>({section:s.section,items:s.items.filter(it=>isAdmin||!it.adminOnly)
     .map(it=>({...it,tabs:it.tabs.filter(ve)})).filter(it=>it.tabs.length>0).map(it=>({...it,id:it.tabs[0].id}))}))
     .filter(s=>s.items.length>0);
@@ -3333,7 +3335,7 @@ function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout,onBus
           </div>
         )}
         {showFull?<div style={{display:"flex",gap:4,justifyContent:"center",flexWrap:"wrap"}}>
-          {[["",GREEN,"En línea",stats.fb],[stats.cot+"","#fff","cots",null],[stats.fac+"","#fff","facts",null]].map(([ic,c,l,blink])=>(
+          {[["",GREEN,"En línea",stats.fb],...(stats.cot==null?[]:[[stats.cot+"","#fff","cots",null],[stats.fac+"","#fff","facts",null]])].map(([ic,c,l,blink])=>(
             <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
               {blink!==undefined&&<div className={blink?"pulse":""} style={{width:5,height:5,borderRadius:"50%",background:blink?GREEN:ROSE}}/>}
               <span style={{fontSize:9,color:"#ffffff50",fontFamily:MONO}}>{ic} {l}</span>
@@ -15062,22 +15064,26 @@ export default function App(){
   // 4. Firestore listeners — SOLO cuando hay usuario autenticado
   useEffect(()=>{
     if(!authUser||authUser.isAnonymous) return; // panel = solo sesión Google (RBAC)
+    if(!userProfile) return; // espera el rol: operaciones no carga finanzas
+    const soloAdmin = userProfile.rol==="admin";
+    const vacio = ()=>()=>{};
     const onErr=()=>{}; // silencia errores de permisos
     // limit(N) = válvula de seguridad: hoy ninguna colección se acerca al tope,
     // pero sin límite el costo de lectura y memoria crecen sin techo con la
     // historia del negocio (F0 quick win QW10). Subir N cuando haya paginación real.
     const CAP=1000;
-    const u1=onSnapshot(query(collection(db,"cotizaciones"),limit(CAP)),s=>{setCots(s.docs.map(d=>({id:d.id,...d.data()})));setFbOk(true);},onErr);
-    const u2=onSnapshot(query(collection(db,"facturas"),limit(2000)),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    if(!soloAdmin) setFbOk(true);
+    const u1=!soloAdmin?vacio():onSnapshot(query(collection(db,"cotizaciones"),limit(CAP)),s=>{setCots(s.docs.map(d=>({id:d.id,...d.data()})));setFbOk(true);},onErr);
+    const u2=!soloAdmin?vacio():onSnapshot(query(collection(db,"facturas"),limit(2000)),s=>setFacts(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     const u3=onSnapshot(query(collection(db,"rutas"),limit(CAP)),s=>setRutas(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     const u4=onSnapshot(query(collection(db,"entregas"),limit(CAP)),s=>setEntregas(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
-    const u5=onSnapshot(query(collection(db,"viaticos"),limit(2000)),s=>{
+    const u5=!soloAdmin?vacio():onSnapshot(query(collection(db,"viaticos"),limit(2000)),s=>{
       const list=s.docs.map(d=>({id:d.id,...d.data()}));
       setViat(list);
       try{window.__DMOV_VIATICOS__=list;}catch(e){}
     },onErr);
-    const u10=onSnapshot(query(collection(db,"pagosProveedores"),limit(2000)),s=>setPagosProv(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
-    const u9=onSnapshot(query(collection(db,"gastosChofer"),limit(CAP)),s=>{
+    const u10=!soloAdmin?vacio():onSnapshot(query(collection(db,"pagosProveedores"),limit(2000)),s=>setPagosProv(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
+    const u9=!soloAdmin?vacio():onSnapshot(query(collection(db,"gastosChofer"),limit(CAP)),s=>{
       const list=s.docs.map(d=>({id:d.id,...d.data()}));
       setGastosCh(list);
       try{window.__DMOV_GASTOS_CHOFER__=list;}catch(e){}
@@ -15086,7 +15092,7 @@ export default function App(){
     const u7=onSnapshot(query(collection(db,"prospeccion"),limit(CAP)),s=>setProspectos(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     const u8=onSnapshot(query(collection(db,"choferes"),limit(CAP)),s=>setChoferes(s.docs.map(d=>({id:d.id,...d.data()}))),onErr);
     return()=>{u1();u2();u3();u4();u5();u6();u7();u8();u9&&u9();u10&&u10();};
-  },[authUser?.uid]); // re-ejecutar solo cuando cambia el uid
+  },[authUser?.uid,userProfile?.rol]); // re-ejecutar cuando cambia el uid o el rol (operaciones no carga finanzas)
 
   // 5. Cmd+K shortcut
   useEffect(()=>{
@@ -15210,12 +15216,12 @@ export default function App(){
             /* Al elegir algo en el menú se suelta lo que venía de otra pantalla (una solicitud
                a cotizar o una cotización a convertir), para no ligarlo por error a otra cosa. */
             setSolicitudACotizar(null);setSolicitudAServicio(null);setCotizacionAServicio(null);
-            setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:cots.length,fac:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen} userProfile={userProfile} rol={rol} onLogout={async()=>{await fbSignOut(auth).catch(()=>{});setUserProfile(null);setPinPending(null);setPendingProfile(null);setView("dashboard");}}/>
+            setView(v);if(window.innerWidth<768)setSidebarOpen(false);}} stats={{cot:isOps?null:cots.length,fac:isOps?null:facts.length,rut:rutas.length,fb:fbOk}} open={sidebarOpen} setOpen={setSidebarOpen} userProfile={userProfile} rol={rol} onLogout={async()=>{await fbSignOut(auth).catch(()=>{});setUserProfile(null);setPinPending(null);setPendingProfile(null);setView("dashboard");}}/>
           <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:"100vh",overflow:"hidden"}}>
             <TopBar view={view} setView={setView} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} setSearchOpen={setSearchOpen}/>
             <main style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column"}}>
               <BarraPestanas view={view} setView={setView} rol={rol}/>
-              {VIEWS[view]||VIEWS.dashboard}
+              {isOps&&!VISTAS_OPERACIONES.includes(view)&&!grupoDeVista(view,rol)?VIEWS.dashboard:(VIEWS[view]||VIEWS.dashboard)}
             </main>
           </div>
         </div>
