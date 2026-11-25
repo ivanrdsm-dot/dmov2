@@ -207,6 +207,10 @@ export function TarjetaParada({ p, i, token, cambiar, quitar }){
               {p.confirmada && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
                 <input style={caja} value={p.contacto} onChange={e => cambiar(p.clave, { contacto: e.target.value })} placeholder="Quién recibe (opcional)"/>
                 <input style={caja} inputMode="tel" value={p.telefono} onChange={e => cambiar(p.clave, { telefono: e.target.value })} placeholder="Teléfono (opcional)"/>
+                <label style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, fontSize: 13, color: MUTED, fontWeight: 700 }}>
+                  ⏰ Hora pactada con el cliente
+                  <input type="time" style={{ ...caja, width: "auto", flex: "0 0 130px" }} value={p.horaPactada || ""} onChange={e => cambiar(p.clave, { horaPactada: e.target.value })}/>
+                  <span style={{ fontWeight: 400 }}>(opcional; con esto se mide si llegó a tiempo)</span></label>
               </div>}
             </div>
   );

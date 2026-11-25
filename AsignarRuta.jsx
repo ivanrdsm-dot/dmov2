@@ -123,7 +123,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
       .map(p => { const l = lugares.find(x => x.id === p.puntoId); return l ? { ...p, lat: Number(l.lat), lng: Number(l.lng) } : p; });
     setParadas(ps.map(p => { const l = lugares.find(x => x.id === p.puntoId);
       return { tipo: p.tipo === "carga" ? "carga" : "entrega", nombre: p.nombre || l?.nombre || "", direccion: p.direccion || l?.direccion || "", lat: Number(p.lat), lng: Number(p.lng),
-        puntoId: p.puntoId || "", confirmada: !!(l && l.pinConfirmado === true), contacto: p.contacto || "", telefono: p.telefono || "", clave: Date.now() + Math.random() }; }));
+        puntoId: p.puntoId || "", confirmada: !!(l && l.pinConfirmado === true), contacto: p.contacto || "", telefono: p.telefono || "", horaPactada: p.horaPactada || "", clave: Date.now() + Math.random() }; }));
     setCliente(s.empresa || ""); setTelCliente(s.solicitanteContacto || ""); setIndicaciones(s.indicaciones || "");
     if(activos.some(c => c.id === s.choferId)) setChoferId(s.choferId);
     if(s.unidadPlaca) setPlaca(String(s.unidadPlaca).toUpperCase());

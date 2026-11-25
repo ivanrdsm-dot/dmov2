@@ -10,10 +10,11 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export interface ParadaD { tipo?: string; estado?: string; llegadaMs?: number | null; cerradaMs?: number | null; incidencia?: string;
-  conFoto?: boolean; conFirmaOReceptor?: boolean; porExcepcion?: boolean; }
+  conFoto?: boolean; conFirmaOReceptor?: boolean; porExcepcion?: boolean; horaPactada?: string; }
 export interface RutaD { id: string; folio?: string; choferId: string; choferNombre?: string; fechaServicio?: string; estado?: string;
   salidaMs?: number | null; finMs?: number | null; estimadoManejoSeg?: number | null; km?: number | null; foraneo?: boolean; paradas: ParadaD[]; }
-export interface JornadaD { choferId: string; fecha?: string; llegoTarde?: boolean; tardeMin?: number; dudas?: string[]; }
+export interface JornadaD { choferId: string; fecha?: string; llegoTarde?: boolean; tardeMin?: number; dudas?: string[]; kmRecorridos?: number | null; kmGps?: number | null; unidadPlaca?: string; }
+export interface GastoD { choferId?: string; tipo?: string; monto?: number; litros?: number | null; unidadPlaca?: string; dudas?: string[]; estado?: string; }
 export interface AlertaD { choferId?: string; type?: string; }
 
 /* Propuesta de reglas para calificar a incentivo. Son SUPUESTOS para arrancar: el director las ajusta.
@@ -24,11 +25,13 @@ export const REGLAS_INCENTIVO = {
   evidenciaMin: 95,         // % de entregas con foto y firma (o nombre de quien recibió)
   eficienciaMin: 90,        // % manejo estimado / manejo real
   trampasMax: 0,            // alertas de posible engaño permitidas
+  aTiempoClienteMin: 90,    // % de llegadas antes de la hora pactada con el cliente (si hubo horas pactadas)
+  toleranciaClienteMin: 10, // minutos de gracia sobre la hora pactada
 };
 /* Alertas que indican posible engaño: con una sola, no califica (se revisa caso por caso). */
 export const ALERTAS_TRAMPA = ["ubicacion_simulada", "velocidad_imposible", "reloj_adelantado", "km_no_coinciden", "unidad_no_coincide", "dispositivo_no_autorizado"];
 /* Alertas de operación: no descalifican solas, pero se muestran. */
-export const ALERTAS_OPERACION = ["detenido", "fuera_de_ruta", "fuera_de_cdmx", "sin_ubicacion", "cierre_fuera_de_punto", "cambio_sin_enterado", "sin_checkout", "checkin_dudoso"];
+export const ALERTAS_OPERACION = ["gasto_dudoso", "detenido", "fuera_de_ruta", "fuera_de_cdmx", "sin_ubicacion", "cierre_fuera_de_punto", "cambio_sin_enterado", "sin_checkout", "checkin_dudoso"];
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : null);
@@ -48,7 +51,12 @@ export function medirRuta(r: RutaD){
   const estimadoMin = num(r.estimadoManejoSeg) !== null ? Math.round((r.estimadoManejoSeg as number) / 60) : null;
   const eficiencia = manejoMin && estimadoMin ? Math.round((estimadoMin / manejoMin) * 100) : null;
   const entregas = ps.filter(p => p.tipo !== "carga" && ["Entregada", "Incidencia"].includes(String(p.estado)));
+  /* Hora pactada con el cliente: llegada (GPS o "Llegué") contra lo pactado + tolerancia. En foráneas de varios días no se mide (la fecha es ambigua). */
+  const pactadas = r.foraneo || !/^\d{4}-\d{2}-\d{2}$/.test(String(r.fechaServicio)) ? [] : cerradas.filter(p => /^\d{2}:\d{2}$/.test(String(p.horaPactada || "")) && num(p.llegadaMs) !== null)
+    .map(p => { const lim = Date.parse(`${r.fechaServicio}T${p.horaPactada}:00-06:00`) + REGLAS_INCENTIVO.toleranciaClienteMin * 60000;
+      return { aTiempo: (p.llegadaMs as number) <= lim, minTarde: Math.max(0, min((p.llegadaMs as number) - lim)) }; });
   return {
+    conPactada: pactadas.length, aTiempoCliente: pactadas.filter(x => x.aTiempo).length, minTardeCliente: pactadas.reduce((s, x) => s + x.minTarde, 0),
     id: r.id, folio: r.folio || "", fecha: r.fechaServicio || "", terminada: ["Entregada", "Completada", "Cerrada", "Facturada", "Cobrada"].includes(String(r.estado)),
     paradas: cerradas.length, entregas: entregas.length, totalMin, enSitioMin, manejoMin, estimadoMin, eficiencia,
     minPorParada: totalMin !== null && cerradas.length ? Math.round(totalMin / cerradas.length) : null,
@@ -82,6 +90,9 @@ export function tarjetasOperadores(rutas: RutaD[], jornadas: JornadaD[] = [], al
       puntualidad: pct(js.filter(j => !j.llegoTarde).length, js.length),
       evidencia: pct(medidas.reduce((s, m) => s + m.conEvidencia, 0), entregas),
       incidencias: medidas.reduce((s, m) => s + m.incidencias, 0),
+      conPactada: medidas.reduce((s, m) => s + m.conPactada, 0),
+      aTiempoCliente: pct(medidas.reduce((s, m) => s + m.aTiempoCliente, 0), medidas.reduce((s, m) => s + m.conPactada, 0)),
+      minTardeCliente: medidas.reduce((s, m) => s + m.minTardeCliente, 0),
       trampas: al.filter(a => ALERTAS_TRAMPA.includes(String(a.type))).length,
       alertasOperacion: al.filter(a => ALERTAS_OPERACION.includes(String(a.type))).length,
       medidas,
@@ -91,12 +102,15 @@ export function tarjetasOperadores(rutas: RutaD[], jornadas: JornadaD[] = [], al
 }
 
 /** ¿Califica a incentivo? Dice qué cumple y qué no (con números), sin montos. */
-export function calificar(t: { rutas: number; puntualidad: number | null; evidencia: number | null; eficiencia: number | null; trampas: number }, R = REGLAS_INCENTIVO){
+export function calificar(t: { rutas: number; puntualidad: number | null; evidencia: number | null; eficiencia: number | null; trampas: number; aTiempoCliente?: number | null }, R = REGLAS_INCENTIVO){
   const reglas = [
     { regla: `Al menos ${R.minRutas} rutas terminadas`, ok: t.rutas >= R.minRutas, valor: `${t.rutas}` },
     { regla: `Puntualidad ${R.puntualidadMin} % o más`, ok: t.puntualidad !== null && t.puntualidad >= R.puntualidadMin, valor: t.puntualidad === null ? "sin dato" : `${t.puntualidad} %` },
     { regla: `Evidencia completa ${R.evidenciaMin} % o más`, ok: t.evidencia !== null && t.evidencia >= R.evidenciaMin, valor: t.evidencia === null ? "sin dato" : `${t.evidencia} %` },
     { regla: `Eficiencia de manejo ${R.eficienciaMin} % o más`, ok: t.eficiencia !== null && t.eficiencia >= R.eficienciaMin, valor: t.eficiencia === null ? "sin dato" : `${t.eficiencia} %` },
+    /* Si la oficina no pactó horas, no se le cobra al chofer: "no aplica". */
+    { regla: `Llega a tiempo con el cliente ${R.aTiempoClienteMin} % o más`, ok: t.aTiempoCliente == null || t.aTiempoCliente >= R.aTiempoClienteMin,
+      valor: t.aTiempoCliente == null ? "no aplica (sin horas pactadas)" : `${t.aTiempoCliente} %` },
     { regla: "Sin alertas de posible engaño", ok: t.trampas <= R.trampasMax, valor: `${t.trampas}` },
   ];
   const cumple = reglas.filter(r => r.ok).length;
@@ -116,4 +130,31 @@ export function volumenHistorico(viajes: { fechaServicio?: string; choferIds?: s
     }
   }
   return Object.values(out).sort((a, b) => b.viajes - a.viajes);
+}
+
+/* ── Kilómetros, gasolina y costo (cálculo automático con lo que registró el sistema) ── */
+const suma = (xs: unknown[]) => xs.reduce((s: number, v) => s + (Number(v) || 0), 0);
+const r1 = (n: number) => Math.round(n * 10) / 10, r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Por chofer: km (tablero y GPS), gasolina ($ y litros), otros gastos y costo de gasolina por km. Los rechazados no cuentan. */
+export function costosOperador(choferId: string, jornadas: JornadaD[] = [], gastos: GastoD[] = []){
+  const js = jornadas.filter(j => j.choferId === choferId), gs = gastos.filter(g => g.choferId === choferId && g.estado !== "rechazado");
+  const gas = gs.filter(g => g.tipo === "gasolina");
+  const km = suma(js.map(j => j.kmRecorridos)), kmGps = suma(js.map(j => j.kmGps));
+  const gasolina = suma(gas.map(g => g.monto)), litros = suma(gas.map(g => g.litros)), otros = suma(gs.filter(g => g.tipo !== "gasolina").map(g => g.monto));
+  return { km: r1(km), kmGps: r1(kmGps), gasolina: r2(gasolina), litros: r1(litros), otros: r2(otros), total: r2(gasolina + otros),
+    costoGasKm: km > 0 && gasolina > 0 ? r2(gasolina / km) : null, gastosDudosos: gs.filter(g => (g.dudas || []).length > 0).length };
+}
+
+/** Por camioneta: km del mes, cargas, litros, gasto, rendimiento (km/L) y costo por km. */
+export function resumenCamionetas(jornadas: JornadaD[] = [], gastos: GastoD[] = []){
+  const placas = [...new Set([...jornadas.map(j => j.unidadPlaca), ...gastos.map(g => g.unidadPlaca)].map(p => String(p || "").toUpperCase()).filter(Boolean))];
+  return placas.map(placa => {
+    const js = jornadas.filter(j => String(j.unidadPlaca || "").toUpperCase() === placa);
+    const gas = gastos.filter(g => String(g.unidadPlaca || "").toUpperCase() === placa && g.tipo === "gasolina" && g.estado !== "rechazado");
+    const km = suma(js.map(j => j.kmRecorridos)), litros = suma(gas.map(g => g.litros)), gasto = suma(gas.map(g => g.monto));
+    return { placa, dias: js.length, km: r1(km), cargas: gas.length, litros: r1(litros), gasto: r2(gasto),
+      rendimiento: km > 0 && litros > 0 ? r1(km / litros) : null, costoKm: km > 0 && gasto > 0 ? r2(gasto / km) : null,
+      precioLitro: litros > 0 && gasto > 0 ? r2(gasto / litros) : null, dudas: gas.filter(g => (g.dudas || []).length > 0).length };
+  }).sort((a, b) => b.km - a.km);
 }

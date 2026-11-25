@@ -32,7 +32,7 @@ export async function guardarLugares(db, usuario, paradas, lugares = []){
 }
 
 export function datosServicio({ usuario, cliente, fecha, hora = "", paradas, placa, chofer, indicaciones = "", contactoCliente = "", ahora = new Date() }){
-  const punto = p => ({ nombre: String(p.nombre).trim(), direccion: p.direccion || `${p.lat}, ${p.lng}`, puntoId: p.puntoId, contacto: p.contacto || "", telefono: p.telefono || "" });
+  const punto = p => ({ nombre: String(p.nombre).trim(), direccion: p.direccion || `${p.lat}, ${p.lng}`, puntoId: p.puntoId, contacto: p.contacto || "", telefono: p.telefono || "", horaPactada: p.horaPactada || "" });
   return { canal: "Asignación directa", recibidaEn: ahoraLocal(ahora), empresa: String(cliente).trim(), solicitante: usuario.nombre || usuario.email || "",
     fechaServicio: fecha, horaServicio: hora, origenes: paradas.filter(p => p.tipo === "carga").map(punto), destinos: paradas.filter(p => p.tipo === "entrega").map(punto),
     asignacionTipo: "Flota propia", unidadPlaca: placa, choferNombre: chofer.nombre || "", indicaciones: String(indicaciones).trim(), notas: String(indicaciones).trim(),

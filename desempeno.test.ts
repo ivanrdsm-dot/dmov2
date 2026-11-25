@@ -61,3 +61,37 @@ describe("bitácora histórica", () => {
     expect(v[0]).toMatchObject({ choferId: "a", nombre: "Israel", viajes: 2, porMes: { "2026-05": 1, "2026-06": 1 } });
   });
 });
+
+describe("hora pactada con el cliente", () => {
+  it("mide si llegó antes de lo pactado (+10 min de gracia)", () => {
+    const r: any = ruta({ fechaServicio: "2026-11-25" });
+    r.paradas[1].horaPactada = "10:05";   // llegó 10:00 → a tiempo
+    r.paradas[2].horaPactada = "10:20";   // llegó 10:45 → 15 min tarde (sobre 10:30)
+    const m = medirRuta(r);
+    expect(m.conPactada).toBe(2); expect(m.aTiempoCliente).toBe(1); expect(m.minTardeCliente).toBe(15);
+    const [t] = tarjetasOperadores([r]);
+    expect(t.aTiempoCliente).toBe(50);
+    expect(t.incentivo.reglas.find(x => /cliente/.test(x.regla))?.ok).toBe(false);
+  });
+  it("sin horas pactadas no aplica (no castiga al chofer)", () => {
+    const c = calificar({ rutas: 5, puntualidad: 100, evidencia: 100, eficiencia: 100, trampas: 0, aTiempoCliente: null });
+    expect(c.estado).toBe("Califica");
+  });
+});
+
+import { costosOperador, resumenCamionetas } from "./desempeno.ts";
+describe("km, gasolina y costo", () => {
+  const js = [{ choferId: "c1", kmRecorridos: 120, kmGps: 115, unidadPlaca: "NXE007C" }, { choferId: "c1", kmRecorridos: 80, kmGps: 82, unidadPlaca: "NXE007C" }];
+  const gs = [{ choferId: "c1", tipo: "gasolina", monto: 1200, litros: 50, unidadPlaca: "NXE007C" }, { choferId: "c1", tipo: "caseta", monto: 150 },
+    { choferId: "c1", tipo: "comida", monto: 999, estado: "rechazado" }, { choferId: "c1", tipo: "gasolina", monto: 600, litros: 25, unidadPlaca: "NXE007C", dudas: ["precio raro"] }];
+  it("por chofer: km, gasolina, otros y costo por km (sin rechazados)", () => {
+    expect(costosOperador("c1", js as any, gs as any)).toMatchObject({ km: 200, kmGps: 197, gasolina: 1800, litros: 75, otros: 150, total: 1950, costoGasKm: 9, gastosDudosos: 1 });
+  });
+  it("por camioneta: rendimiento y costo por km", () => {
+    const [c] = resumenCamionetas(js as any, gs as any);
+    expect(c).toMatchObject({ placa: "NXE007C", dias: 2, km: 200, cargas: 2, litros: 75, gasto: 1800, rendimiento: 2.7, costoKm: 9, precioLitro: 24, dudas: 1 });
+  });
+  it("sin cargas no inventa rendimiento", () => {
+    expect(resumenCamionetas([{ choferId: "c2", kmRecorridos: 50, unidadPlaca: "AAA" }] as any, [])[0].rendimiento).toBe(null);
+  });
+});

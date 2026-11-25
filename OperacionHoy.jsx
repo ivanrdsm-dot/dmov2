@@ -49,7 +49,7 @@ const TITULOS_ALERTA = { sos: "SOS del chofer", checkin_dudoso: "Check-in con du
   reloj_adelantado: "Reloj del celular manipulado", dispositivo_no_autorizado: "Celular no autorizado", incidencia: "Incidencia en una entrega", cierre_fuera_de_punto: "Entrega cerrada fuera del punto",
   detenido: "Chofer detenido mucho tiempo", fuera_de_ruta: "Chofer fuera de ruta", sin_ubicacion: "La app del chofer no manda ubicación", sin_checkin: "Chofer con ruta y sin check-in",
   sin_checkout: "Jornada sin check-out", ruta_excedida: "Ruta foránea pasada de días", cambio_sin_enterado: "El chofer no ha confirmado un cambio de ruta",
-  fuera_de_cdmx: "Chofer fuera de CDMX sin ruta", km_no_coinciden: "Kilómetros no coinciden con el GPS", unidad_no_coincide: "El chofer usa otra camioneta",
+  fuera_de_cdmx: "Chofer fuera de CDMX sin ruta", km_no_coinciden: "Kilómetros no coinciden con el GPS", unidad_no_coincide: "El chofer usa otra camioneta", gasto_dudoso: "Gasto o gasolina que no cuadra",
   solicitud_sin_respuesta: "Solicitud sin responder", cotizacion_por_aprobar: "Cotización por aprobar" };
 const tituloAlerta = a => String(a?.titulo || "").trim() || TITULOS_ALERTA[a?.type] || "Alerta";
 const COLOR_ASIS = { "Trabajando": GREEN, "Terminó": BLUE, "Faltó": ROSE, "Sin ruta hoy": MUTED, "Por llegar": AMBER, "Descansando (foránea)": BLUE };
@@ -266,11 +266,14 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
           </div>
           <div style={{ ...tarjeta, padding: 0, overflow: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}><thead><tr style={{ background: "#f8fafc", fontSize: 11, color: MUTED, textAlign: "left" }}>
-              {["Fecha", "Chofer", "Tipo", "Monto", "Nota", "Estado"].map(h => <th key={h} style={{ padding: "8px 10px" }}>{h}</th>)}</tr></thead>
+              {["Fecha", "Chofer", "Tipo", "Monto", "Detalle", "Ticket", "Estado"].map(h => <th key={h} style={{ padding: "8px 10px" }}>{h}</th>)}</tr></thead>
               <tbody>{gastos.slice(0, 150).map(g => <tr key={g.id} style={{ borderTop: "1px solid " + BORDER, fontSize: 13 }}>
                 <td style={{ padding: "7px 10px", whiteSpace: "nowrap" }}>{ms(g.fechaTs || g.createdAt) ? new Date(ms(g.fechaTs || g.createdAt)).toLocaleDateString("es-MX", { day: "2-digit", month: "short" }) : "—"}</td>
                 <td style={{ padding: "7px 10px" }}>{g.choferNombre}</td><td style={{ padding: "7px 10px" }}>{g.tipo}</td>
-                <td style={{ padding: "7px 10px", fontFamily: MONO }}>{dinero(g.monto)}</td><td style={{ padding: "7px 10px", color: MUTED }}>{g.nota}</td>
+                <td style={{ padding: "7px 10px", fontFamily: MONO }}>{dinero(g.monto)}</td>
+                <td style={{ padding: "7px 10px", color: MUTED, minWidth: 180 }}>{[g.litros && `${g.litros} L`, g.precioLitro && `${dinero(g.precioLitro)}/L`, g.rendimientoKmL && `${g.rendimientoKmL} km/L`, g.unidadPlaca, g.lugar, g.nota].filter(Boolean).join(" · ") || "—"}
+                  {(g.dudas || []).length > 0 && <div style={{ color: ROSE, fontWeight: 700 }}>⚠️ {g.dudas.join("; ")}</div>}</td>
+                <td style={{ padding: "7px 10px" }}>{g.ticketRuta ? <Miniatura ruta={g.ticketRuta} etiqueta={"Ticket · " + (g.choferNombre || "")}/> : g.ticketURL ? <a href={g.ticketURL} target="_blank" rel="noreferrer" style={{ color: BLUE }}>ver</a> : "—"}</td>
                 <td style={{ padding: "7px 10px" }}><Chip color={g.estado === "aprobado" ? GREEN : g.estado === "rechazado" ? ROSE : AMBER}>{g.estado || "pendiente"}</Chip></td></tr>)}</tbody></table>
           </div>
           <p style={{ fontSize: 12, color: MUTED }}>Aprobar o rechazar un gasto lo hace el director.</p>

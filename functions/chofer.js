@@ -14,6 +14,7 @@ import { fusionarClaims } from "./permisos.js";
 import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER, TITULO_ALERTA } from "./lib/vigilancia.js";
 import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCDMX, kmDesdeZocalo, llegadaPorGps } from "./lib/jornadaReglas.js";
 import { defineSecret } from "firebase-functions/params";
+import { TIPOS_GASTO, revisarCarga, rendimientoHistorico } from "./lib/gasolina.js";
 import { revisarFotoJornada, lineaDeTexto, lineaATexto } from "./lib/evidencia.js";
 
 const OPC = { region: "us-central1", maxInstances: 5, memory: "256MiB", timeoutSeconds: 30 };
@@ -63,6 +64,16 @@ async function dondeEsta(pos){
     const p = (await r.json())?.places?.[0];
     return txt(p?.shortFormattedAddress || p?.formattedAddress || "", 160);
   } catch { return ""; }
+}
+/** ¿Hay una gasolinera a menos de 300 m? true / false; null si Google no respondió (no se acusa sin dato). */
+async function hayGasolinera(pos){
+  try {
+    const r = await fetch("https://places.googleapis.com/v1/places:searchNearby", { method: "POST", signal: AbortSignal.timeout(4000),
+      headers: { "Content-Type": "application/json", "X-Goog-Api-Key": GOOGLE.value(), "X-Goog-FieldMask": "places.id" },
+      body: JSON.stringify({ includedTypes: ["gas_station"], maxResultCount: 1, locationRestriction: { circle: { center: { latitude: pos.lat, longitude: pos.lng }, radius: 300 } } }) });
+    if(!r.ok) return null;
+    return ((await r.json())?.places || []).length > 0;
+  } catch { return null; }
 }
 const textoLugar = (lugar, pos) => lugar || `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
 /** Paradas de sus rutas activas y de los últimos 4 días: lo que "explica" que esté lejos. */
@@ -439,6 +450,46 @@ export const choferTerminarJornada = onCall(OPC_LUGAR, async req => {
   return { ok: true, yaEstaba: r.yaEstaba };
 });
 
+/** Gasto del chofer (gasolina, caseta, comida…): foto del ticket obligatoria, ubicación y, en gasolina, litros y km del tablero.
+    El servidor calcula precio por litro y rendimiento de la camioneta, y avisa si algo no cuadra. Lo aprueba el director. */
+export const choferRegistrarGasto = onCall(OPC_LUGAR, async req => {
+  const { chofer } = await choferDe(req);
+  const d = req.data || {};
+  const tipo = TIPOS_GASTO.includes(d.tipo) ? d.tipo : null;
+  if(!tipo) throw falla("invalid-argument", "Elige el tipo de gasto");
+  const monto = Number(d.monto);
+  if(!(monto > 0 && monto <= 100000)) throw falla("invalid-argument", "Escribe cuánto pagaste");
+  const pos = { lat: Number(d.lat), lng: Number(d.lng) };
+  if(!coordenadaValida(pos)) throw falla("failed-precondition", "No llegó tu ubicación. Prende el GPS y vuelve a intentar.");
+  const ab = await db().collection("jornadas").where("choferId", "==", chofer.id).where("estado", "==", "Abierta").limit(5).get();
+  if(ab.empty) throw falla("failed-precondition", "Primero haz tu check-in (Empieza tu día)");
+  const jornada = ab.docs.sort((a, b) => b.id.localeCompare(a.id))[0];
+  const placa = String(jornada.data().unidadPlaca || "").toUpperCase();
+  if(!txt(d.fotoTicketRuta, 400)) throw falla("invalid-argument", "Toma la foto del ticket");
+  const { fotos, problemas } = await sellarFotos({ ticket: d.fotoTicketRuta }, `jornadas/${chofer.id}/`);
+  const dudas = [...problemas];
+  let calc = {};
+  if(tipo === "gasolina"){
+    const litros = Number(d.litros), km = Number(d.odometroKm);
+    if(!(litros > 0 && litros <= 400)) throw falla("invalid-argument", "Escribe cuántos litros cargaste");
+    if(!(km > 0 && km < 2000000)) throw falla("invalid-argument", "Escribe los km que marca el tablero");
+    const previas = (await db().collection("gastosChofer").where("unidadPlaca", "==", placa).where("tipo", "==", "gasolina").limit(200).get()).docs
+      .map(x => x.data()).filter(x => Number(x.odometroKm) > 0 && Number(x.litros) > 0);
+    const anterior = previas.filter(x => x.odometroKm <= km).sort((a, b) => b.odometroKm - a.odometroKm)[0] || null;
+    const r = revisarCarga({ monto, litros, odometroKm: km, kmInicioJornada: jornada.data().odometroKm, cargaAnterior: anterior,
+      rendimientoPromedio: rendimientoHistorico(previas), hayGasolinera: await hayGasolinera(pos) });
+    dudas.push(...r.dudas);
+    calc = { litros, odometroKm: km, tanqueLleno: d.tanqueLleno !== false, precioLitro: r.precioLitro, kmDesdeCargaAnterior: r.kmDesdeAnterior, rendimientoKmL: r.rendimiento };
+  }
+  const lugar = await dondeEsta(pos);
+  const ref = await db().collection("gastosChofer").add({ choferId: chofer.id, choferNombre: chofer.nombre || "", choferTel: chofer.tel || "", tipo, monto,
+    nota: txt(d.nota, 300), estado: "pendiente", fechaTs: ahora(), createdAt: ahora(), origen: "app chofer", jornadaId: jornada.id, unidadPlaca: placa,
+    ticketRuta: fotos.ticket?.ruta || txt(d.fotoTicketRuta, 400), fotoTicket: fotos.ticket || null, lat: pos.lat, lng: pos.lng, lugar, dudas, ...calc });
+  if(dudas.length) await alerta({ type: "gasto_dudoso", choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng, gastoId: ref.id,
+    msg: `${chofer.nombre || "Chofer"} · ${tipo} $${monto}${placa ? " · " + placa : ""}: ${dudas.join("; ")}` });
+  return { ok: true, id: ref.id, precioLitro: calc.precioLitro ?? null, rendimientoKmL: calc.rendimientoKmL ?? null, dudas: dudas.length };
+});
+
 /** "Llegué": guarda la hora (del servidor) en que el chofer dice que llegó. Respaldo de la llegada por GPS. */
 export const choferLlegue = onCall(OPC, async req => {
   const { chofer } = await choferDe(req);
@@ -538,6 +589,7 @@ async function paradaDeCatalogo(p, orden){
   const r = Number(d.radioM);
   return { orden, tipo: p.tipo === "carga" ? "carga" : "entrega", puntoId: txt(p.puntoId, 80), nombre: txt(p.nombre || d.nombre, 200),
     direccion: txt(p.direccion, 400) || txt(d.direccion, 400) || `${coord.lat}, ${coord.lng}`, contacto: txt(p.contacto, 120), telefono: txt(p.telefono, 30),
+    horaPactada: /^([01]\d|2[0-3]):[0-5]\d$/.test(txt(p.horaPactada, 5)) ? txt(p.horaPactada, 5) : "",   // lo que se pactó con el cliente (HH:MM)
     lat: coord.lat, lng: coord.lng, radioM: r >= 30 && r <= 2000 ? r : RADIO_GEOCERCA_DEFAULT_M, estado: "Pendiente" };
 }
 
