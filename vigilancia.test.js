@@ -177,3 +177,11 @@ describe("quién recibe cada aviso", () => {
     for(const t of ["sos", "detenido", "sin_checkin", "cambio_sin_enterado"]) expect(soloDirector({ type: t })).toBe(false);
   });
 });
+
+import { coleccionDeAlerta } from "./functions/lib/avisosOficina.js";
+describe("dónde se guarda cada alerta", () => {
+  it("auditoría en alertas_director (solo el director); lo operativo en alertas", () => {
+    for(const t of ["checkin_registrado", "movimiento_sin_ruta", "km_sin_explicar", "gasto_dudoso", "ubicacion_simulada", "fuera_de_cdmx"]) expect(coleccionDeAlerta(t)).toBe("alertas_director");
+    for(const t of ["sos", "detenido", "incidencia", "sin_checkin"]) expect(coleccionDeAlerta(t)).toBe("alertas");
+  });
+});

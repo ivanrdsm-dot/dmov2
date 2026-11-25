@@ -36,7 +36,7 @@ export const oficinaAvisos = onCall(OPC, async req => {
   return { ok: true };
 });
 
-export const avisarOficinaPush = onDocumentCreated({ document: "alertas/{aid}", region: "us-central1", memory: "256MiB", retry: false, secrets: [VAPID_PRIVADA] }, async ev => {
+async function mandarAviso(ev){
   const n = avisoDeAlerta({ id: ev.params.aid, ...(ev.data?.data() || {}) });
   if(!n) return;
   const publica = String(process.env.VAPID_PUBLIC_KEY || ""), privada = String(VAPID_PRIVADA.value() || "");
@@ -55,4 +55,7 @@ export const avisarOficinaPush = onDocumentCreated({ document: "alertas/{aid}", 
     }
   }));
   logger.info("avisos oficina", { alerta: ev.params.aid, tipo: n.tag, enviados });
-});
+}
+export const avisarOficinaPush = onDocumentCreated({ document: "alertas/{aid}", region: "us-central1", memory: "256MiB", retry: false, secrets: [VAPID_PRIVADA] }, ev => mandarAviso(ev));
+/* Alertas de auditoría: solo el director (la suscripción de operaciones nunca las recibe). */
+export const avisarDirectorPush = onDocumentCreated({ document: "alertas_director/{aid}", region: "us-central1", memory: "256MiB", retry: false, secrets: [VAPID_PRIVADA] }, ev => mandarAviso(ev));

@@ -16,9 +16,10 @@ import { correoDeChofer, telefono10 } from "./lugares.ts";
 const AsignarRuta = lazy(() => import("./AsignarRuta.jsx"));
 const HistorialRutas = lazy(() => import("./HistorialRutas.jsx"));
 const Desempeno = lazy(() => import("./Desempeno.jsx"));
+const Auditoria = lazy(() => import("./Auditoria.jsx"));
 /* Alertas que traen montos ($): solo las ve el director. */
 const ALERTAS_CON_MONTOS = ["gasto_dudoso", "cotizacion_por_aprobar", "resumen_diario"];
-const PESTANAS = ["ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno"];
+const PESTANAS = ["ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno", "auditoria"];
 const Cargando = () => <div style={{ padding: 40, color: MUTED }}>Cargando…</div>;
 
 /* 📲 Acceso del chofer a su app (solo director): crea/renueva su cuenta y abre WhatsApp con su enlace. */
@@ -105,7 +106,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const [choferes, setChoferes] = useState([]), [jornadas, setJornadas] = useState([]), [ubic, setUbic] = useState({});
   const [delDia, setDelDia] = useState([]), [enCurso, setEnCurso] = useState([]);
   const servicios = useMemo(() => [...new Map([...delDia, ...enCurso].map(x => [x.id, x])).values()], [delDia, enCurso]);
-  const [alertas, setAlertas] = useState([]), [gastos, setGastos] = useState([]), [abierto, setAbierto] = useState(""), [paradas, setParadas] = useState({});
+  const [alertasBase, setAlertas] = useState([]), [alertasDir, setAlertasDir] = useState([]), [gastos, setGastos] = useState([]), [abierto, setAbierto] = useState(""), [paradas, setParadas] = useState({});
   const [, setReloj] = useState(0);
   useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 30000); return () => clearInterval(t); }, []);
   useEffect(() => {
@@ -115,7 +116,9 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
       onSnapshot(query(collection(db, "alertas"), where("atendida", "==", false), limit(300)), s => setAlertas(s.docs.map(d => ({ id: d.id, ...d.data() }))
         .filter(a => esAdmin || !ALERTAS_CON_MONTOS.includes(a.type))   // operaciones no ve montos
         .sort((a, b) => ms(b.ts || b.createdAt) - ms(a.ts || a.createdAt))), () => {}),
-      ...(esAdmin ? [onSnapshot(query(collection(db, "gastosChofer"), orderBy("createdAt", "desc"), limit(300)), s => setGastos(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => {})] : []),
+      ...(esAdmin ? [onSnapshot(query(collection(db, "gastosChofer"), orderBy("createdAt", "desc"), limit(300)), s => setGastos(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => {}),
+        /* Alertas de auditoría (posibles engaños, check-ins con dirección): solo el director las puede leer. */
+        onSnapshot(query(collection(db, "alertas_director"), where("atendida", "==", false), limit(300)), s => setAlertasDir(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => {})] : []),
     ];
     return () => us.forEach(u => u());
   }, [db, esAdmin]);
@@ -134,12 +137,15 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
     if(!paradas[id]) { const s = await getDocs(query(collection(db, "servicios", id, "paradas"), orderBy("orden"))).catch(() => null);
       setParadas(p => ({ ...p, [id]: s ? s.docs.map(d => ({ id: d.id, ...d.data() })) : [] })); }
   };
+  /* Una sola lista: alertas de la operación + (solo director) las de auditoría. Cada una recuerda su colección. */
+  const alertas = useMemo(() => [...alertasBase.map(a => ({ ...a, _col: "alertas" })), ...alertasDir.map(a => ({ ...a, _col: "alertas_director" }))]
+    .sort((a, b) => ms(b.ts || b.createdAt) - ms(a.ts || a.createdAt)), [alertasBase, alertasDir]);
   /* Atender una alerta: la nota se escribe en la misma tarjeta (sin ventanas del navegador). */
   const [atendiendo, setAtendiendo] = useState(""), [nota, setNota] = useState(""), [errAtender, setErrAtender] = useState("");
   const atender = async a => {
     setErrAtender("");
     try {
-      await updateDoc(doc(db, "alertas", a.id), { atendida: true, atendidaPor: usuario?.nombre || "", atendidaPorUid: usuario?.uid || "", atendidaEn: serverTimestamp(), notaAtencion: nota.trim() });
+      await updateDoc(doc(db, a._col || "alertas", a.id), { atendida: true, atendidaPor: usuario?.nombre || "", atendidaPorUid: usuario?.uid || "", atendidaEn: serverTimestamp(), notaAtencion: nota.trim() });
       setAtendiendo(""); setNota("");
     } catch(e){ setErrAtender("No se pudo guardar: " + String(e?.message || "").replace(/^.*?:\s*/, "")); }
   };
@@ -150,12 +156,13 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
 
   const P = [["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
     ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["choferes", "👤 Choferes"], ...(esAdmin ? [["gastos", "💵 Gastos"]] : []), ["historial", "📚 Historial"],
-    ...(esAdmin ? [["desempeno", "🏆 Desempeño"]] : [])];   // incentivos: solo el director
+    ...(esAdmin ? [["desempeno", "🏆 Desempeño"], ["auditoria", "🔎 Auditoría"]] : [])];   // incentivos y auditoría: solo el director
   /* Al ir de una pestaña a otra desde dentro de un módulo (p. ej. Asignar ruta → "En vivo"). */
   const irA = v => ({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v] ? setPestana({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v]) : onVer?.(v));
   const embebida = pestana === "asignar" ? <Suspense fallback={<Cargando/>}><AsignarRuta db={db} app={app} usuario={usuario} mapboxToken={mapboxToken} onVer={irA}/></Suspense>
     : pestana === "historial" ? <Suspense fallback={<Cargando/>}><HistorialRutas db={db}/></Suspense>
     : pestana === "desempeno" && esAdmin ? <Suspense fallback={<Cargando/>}><Desempeno db={db} app={app}/></Suspense>
+    : pestana === "auditoria" && esAdmin ? <Suspense fallback={<Cargando/>}><Auditoria db={db}/></Suspense>
     : pestana === "mapa" ? (vistas.mapa || <Cargando/>)
     : pestana === "choferes" && esAdmin && verFichas === "choferes" ? (vistas.choferes || null)
     : pestana === "choferes" && esAdmin && verFichas === "unidades" ? (vistas.unidades || null)
@@ -220,7 +227,15 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
               </div> : <div style={{ fontSize: 13, color: f.asistencia === "Faltó" ? ROSE : MUTED, marginTop: 4 }}>{f.asistencia === "Faltó" ? "Tenía ruta y no hizo check-in." : "Sin check-in este día."}</div>}
               {(fotos.length > 0 || salida || j?.ubicacion || j?.ubicacionSalida) && <div style={{ display: "flex", gap: 8, marginTop: 8, overflowX: "auto" }}>
                 {j?.ubicacion && <MapaPunto token={mapboxToken} punto={j.ubicacion} titulo="Entrada" lugar={j.lugarEntrada} hora={hora(j.checkInEn)}/>}
-                {fotos.map((ru, i) => <Miniatura key={ru} ruta={ru} etiqueta={["Selfie", "Placas", "Tablero"][i] + " · " + f.nombre}/>)}
+                {esAdmin && fotos[0] && (() => { const c = choferes.find(x => x.id === f.id) || {};
+                  return c.fotoReferenciaRuta && c.fotoReferenciaRuta !== fotos[0]
+                    ? <div style={{ flex: "none", textAlign: "center" }}><Miniatura ruta={c.fotoReferenciaRuta} etiqueta={"Referencia · " + f.nombre}/><div style={{ fontSize: 10, color: MUTED }}>Referencia</div></div>
+                    : null; })()}
+                {fotos.map((ru, i) => <div key={ru} style={{ flex: "none", textAlign: "center" }}><Miniatura ruta={ru} etiqueta={["Selfie", "Placas", "Tablero"][i] + " · " + f.nombre}/>
+                  {i === 0 && esAdmin && (choferes.find(x => x.id === f.id) || {}).fotoReferenciaRuta !== ru &&
+                    <button onClick={() => updateDoc(doc(db, "choferes", f.id), { fotoReferenciaRuta: ru, fotoReferenciaEn: serverTimestamp(), fotoReferenciaPor: usuario?.nombre || "" }).catch(() => {})}
+                      style={{ display: "block", margin: "4px auto 0", background: "none", border: "none", color: BLUE, fontSize: 10, fontWeight: 800, cursor: "pointer" }}>Usar como referencia</button>}
+                  {i === 0 && <div style={{ fontSize: 10, color: MUTED }}>Hoy</div>}</div>)}
                 {j?.ubicacionSalida && <MapaPunto token={mapboxToken} punto={j.ubicacionSalida} titulo="Salida" lugar={j.lugarSalida} hora={hora(j.checkOutEn)}/>}
                 {salida && <Miniatura ruta={salida} etiqueta={"Tablero al salir · " + f.nombre}/>}</div>}
             </div>; })}

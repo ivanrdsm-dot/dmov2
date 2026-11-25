@@ -68,7 +68,7 @@ export const leerTicketGasto = onDocumentCreated({ ...BASE, document: "gastosCho
     const leido = r.parsed_output;
     const dudasIA = compararTicket({ monto: g.monto, litros: g.litros }, leido, fechaCDMX(g.fechaTs?.toMillis?.() || Date.now()));
     await ref.update({ lecturaIA: { ok: true, ...leido, modelo: r.model, leidoEn: FieldValue.serverTimestamp() }, dudasIA });
-    if(dudasIA.length) await db().collection("alertas").add({ type: "gasto_dudoso", titulo: "Gasto o gasolina que no cuadra", atendida: false, ts: FieldValue.serverTimestamp(),
+    if(dudasIA.length) await db().collection("alertas_director").add({ type: "gasto_dudoso", titulo: "Gasto o gasolina que no cuadra", atendida: false, ts: FieldValue.serverTimestamp(),
       choferId: g.choferId || "", choferNombre: g.choferNombre || "", gastoId: ev.params.id, ...(Number.isFinite(g.lat) ? { lat: g.lat, lng: g.lng } : {}),
       msg: `${g.choferNombre || "Chofer"} · ${g.tipo} $${g.monto}: según la foto, ${dudasIA.join("; ")}` });
   } catch(e){
@@ -84,11 +84,12 @@ const hora = v => ms(v) ? new Date(ms(v)).toLocaleTimeString("es-MX", { timeZone
 /** Junta los números del día (calculados aquí, no por la IA). */
 export async function datosDelDia(fecha){
   const ini = Date.parse(fecha + "T00:00:00-06:00"), fin = ini + 86400000;
-  const [jor, srv, gas, ale] = await Promise.all([
+  const [jor, srv, gas, ale1, ale2] = await Promise.all([
     db().collection("jornadas").where("fecha", "==", fecha).get(),
     db().collection("servicios").where("fechaServicio", "==", fecha).limit(200).get(),
     db().collection("gastosChofer").where("fechaTs", ">=", Timestamp.fromMillis(ini)).where("fechaTs", "<", Timestamp.fromMillis(fin)).limit(500).get(),
-    db().collection("alertas").where("ts", ">=", Timestamp.fromMillis(ini)).where("ts", "<", Timestamp.fromMillis(fin)).limit(500).get()]);
+    db().collection("alertas").where("ts", ">=", Timestamp.fromMillis(ini)).where("ts", "<", Timestamp.fromMillis(fin)).limit(500).get(),
+    db().collection("alertas_director").where("ts", ">=", Timestamp.fromMillis(ini)).where("ts", "<", Timestamp.fromMillis(fin)).limit(500).get()]);
   const choferes = jor.docs.map(d => { const j = d.data(); return { chofer: j.choferNombre, entrada: hora(j.checkInEn), llegoTarde: j.llegoTarde === true, minutosTarde: j.tardeMin || 0,
     lugarEntrada: j.lugarEntrada || "", salida: hora(j.checkOutEn) || "no ha cerrado", kmTablero: j.kmRecorridos ?? null, kmGps: j.kmGps ?? null, camioneta: j.unidadPlaca || "",
     dudasCheckIn: j.dudas || [], fueraDeCdmx: j.fueraDeCdmxEntrada === true }; });
@@ -98,7 +99,7 @@ export async function datosDelDia(fecha){
   const gastos = gas.docs.map(d => d.data()).map(g => ({ chofer: g.choferNombre, tipo: g.tipo, monto: g.monto, litros: g.litros ?? null, precioLitro: g.precioLitro ?? null,
     rendimientoKmL: g.rendimientoKmL ?? null, dudas: [...(g.dudas || []), ...(g.dudasIA || [])] }));
   /* Las que se cerraron solas (la situación ya no aplica) no se reportan como problema. */
-  const alertas = ale.docs.map(d => d.data()).filter(a => !a.informativa && a.resueltaSola !== true).map(a => ({ tipo: a.titulo || a.type, chofer: a.choferNombre || "", detalle: String(a.message || a.msg || "").slice(0, 200), atendida: a.atendida === true }));
+  const alertas = [...ale1.docs, ...ale2.docs].map(d => d.data()).filter(a => !a.informativa && a.resueltaSola !== true).map(a => ({ tipo: a.titulo || a.type, chofer: a.choferNombre || "", detalle: String(a.message || a.msg || "").slice(0, 200), atendida: a.atendida === true }));
   return { fecha, choferes, rutas, gastos, alertas,
     totales: { choferesTrabajaron: choferes.length, retardos: choferes.filter(c => c.llegoTarde).length, rutas: rutas.length,
       gastoTotal: Math.round(gastos.reduce((s, g) => s + (Number(g.monto) || 0), 0) * 100) / 100, gastosQueNoCuadran: gastos.filter(g => g.dudas.length).length, alertasAbiertas: alertas.filter(a => !a.atendida).length } };
@@ -133,7 +134,7 @@ export const resumenDiarioIA = onSchedule({ ...BASE, schedule: "0 21 * * *", tim
   if(!llave()) return;
   const r = await generarResumen(fechaCDMX());
   if(r.vacio || !r.texto) return;
-  await db().collection("alertas").add({ type: "resumen_diario", titulo: "Resumen del día", informativa: true, atendida: true, ts: FieldValue.serverTimestamp(),
+  await db().collection("alertas_director").add({ type: "resumen_diario", titulo: "Resumen del día", informativa: true, atendida: true, ts: FieldValue.serverTimestamp(),
     msg: r.texto.replace(/\s+/g, " ").slice(0, 220) });
 });
 

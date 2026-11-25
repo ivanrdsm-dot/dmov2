@@ -51,10 +51,11 @@ export default function Desempeno({ db, app }){
     let vivo = true; setDatos(null); setError("");
     (async () => {
       const ini = mes + "-01", fin = mes + "-31", iniMs = Date.parse(ini + "T00:00:00-06:00"), finMs = Date.parse(mesSiguiente(mes) + "-01T00:00:00-06:00");
-      const [srv, jor, ale, cho, his, gas] = await Promise.all([
+      const [srv, jor, ale, aleDir, cho, his, gas] = await Promise.all([
         getDocs(query(collection(db, "servicios"), where("fechaServicio", ">=", ini), where("fechaServicio", "<=", fin), limit(600))),
         getDocs(query(collection(db, "jornadas"), where("fecha", ">=", ini), where("fecha", "<=", fin), limit(1000))),
         getDocs(query(collection(db, "alertas"), where("ts", ">=", Timestamp.fromMillis(iniMs)), where("ts", "<", Timestamp.fromMillis(finMs)), limit(2000))),
+        getDocs(query(collection(db, "alertas_director"), where("ts", ">=", Timestamp.fromMillis(iniMs)), where("ts", "<", Timestamp.fromMillis(finMs)), limit(2000))),
         getDocs(collection(db, "choferes")),
         getDocs(query(collection(db, "servicios"), where("historico", "==", true), limit(1000))),
         getDocs(query(collection(db, "gastosChofer"), where("fechaTs", ">=", Timestamp.fromMillis(iniMs)), where("fechaTs", "<", Timestamp.fromMillis(finMs)), limit(2000)))]);
@@ -70,7 +71,7 @@ export default function Desempeno({ db, app }){
               incidencia: p.incidencia, conFoto: (e.fotos || []).length > 0, conFirmaOReceptor: !!(e.firmaRuta || e.receptor), porExcepcion: p.cerradaPorExcepcion === true, horaPactada: p.horaPactada || "" }; }) };
       }));
       const jornadas = jor.docs.map(d => d.data()).filter(j => j.choferId && !prueba.has(j.choferId));
-      const alertas = ale.docs.map(d => d.data());
+      const alertas = [...ale.docs, ...aleDir.docs].map(d => d.data());
       const historico = volumenHistorico(his.docs.map(d => d.data()), nombres);
       const gastos = gas.docs.map(d => d.data());
       const tarjetas = tarjetasOperadores(rutas, jornadas, alertas, nombres).filter(t => !prueba.has(t.choferId)).map(t => ({ ...t, costos: costosOperador(t.choferId, jornadas, gastos) }));
