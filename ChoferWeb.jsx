@@ -36,7 +36,7 @@ function dispositivoId(){
     return d;
   } catch { return "web-" + navigator.userAgent.length + "-" + screen.width + "x" + screen.height; }
 }
-const posicionAhora = (timeout = 15000) => new Promise((ok, mal) => {
+export const posicionAhora = (timeout = 15000) => new Promise((ok, mal) => {
   if(!navigator.geolocation) return mal(new Error("Este celular no da ubicación"));
   navigator.geolocation.getCurrentPosition(p => ok(p), e => mal(new Error(e.code === 1 ? "Permite la ubicación para esta página (candado junto a la dirección)." : "No se pudo leer tu ubicación. Sal a cielo abierto.")),
     { enableHighAccuracy: true, timeout, maximumAge: 0 });
@@ -44,7 +44,7 @@ const posicionAhora = (timeout = 15000) => new Promise((ok, mal) => {
 const aPunto = (p, bateria) => ({ lat: p.coords.latitude, lng: p.coords.longitude, tMs: Math.round(p.timestamp || Date.now()), precisionM: p.coords.accuracy,
   velocidadMs: p.coords.speed ?? null, bateria, simulada: false });
 /* Foto más ligera: máximo 1600 px, JPEG. Así sube rápido con poca señal y queda bajo el límite de 5 MB. */
-async function comprimir(file, maximo = 1600, calidad = 0.8){
+export async function comprimir(file, maximo = 1600, calidad = 0.8){
   try {
     const img = await createImageBitmap(file);
     const k = Math.min(1, maximo / Math.max(img.width, img.height));
@@ -70,7 +70,7 @@ async function cargarImagen(file){
 }
 /* Imprime en la foto quién, cuándo y DÓNDE (dirección y coordenadas). La foto regresa marcada:
    foto.selloImpreso = true/false (si falla, el servidor lo registra como duda). */
-async function conSello(file, lineas, maximo = 1600){
+export async function conSello(file, lineas, maximo = 1600){
   try {
     const img = await cargarImagen(file);
     const k = Math.min(1, maximo / Math.max(img.width, img.height));
@@ -88,13 +88,13 @@ async function conSello(file, lineas, maximo = 1600){
   return sin;
 }
 /* Dirección donde está el chofer (Google, desde el servidor). Si tarda más de 4 s, sigue sin ella (las coordenadas siempre van). */
-async function lugarDe(llamar, p){
+export async function lugarDe(llamar, p){
   try { const r = await Promise.race([llamar("choferLugar", { lat: p.coords.latitude, lng: p.coords.longitude }), new Promise(ok => setTimeout(() => ok(null), 4000))]);
     return String(r?.lugar || ""); } catch { return ""; }
 }
-const lineasSello = (titulo, tomadaMs, lugar, p) => [titulo, horaLocal(tomadaMs), ...(lugar ? ["📍 " + lugar] : []),
+export const lineasSello = (titulo, tomadaMs, lugar, p) => [titulo, horaLocal(tomadaMs), ...(lugar ? ["📍 " + lugar] : []),
   `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)} ±${Math.round(p.coords.accuracy || 0)} m`];
-const metaSello = (lineas, tomadaMs, foto) => ({ sello: lineas.join(" | "), tomadaMs: String(tomadaMs), selloImpreso: foto?.selloImpreso ? "si" : "no", enVivo: foto?.enVivo ? "si" : "no" });
+export const metaSello = (lineas, tomadaMs, foto) => ({ sello: lineas.join(" | "), tomadaMs: String(tomadaMs), selloImpreso: foto?.selloImpreso ? "si" : "no", enVivo: foto?.enVivo ? "si" : "no" });
 
 /* Borradores en el celular: si Android recarga la página al abrir la cámara, no se pierde lo capturado. */
 const BORR_DIA = "dm_borrador_dia", BORR_ENTREGA = "dm_borrador_entrega";
@@ -189,7 +189,7 @@ const hoyTexto = () => new Date().toLocaleDateString("es-MX", { weekday: "long",
    Todas las fotos del chofer (check-in, check-out, tickets y entregas) se toman aquí, del video de la
    cámara en este momento. No existe forma de elegir una foto de la galería. La foto sale marcada
    (foto.enVivo = true) y el servidor revisa esa marca. */
-function CamaraEnVivo({ frente = false, titulo, onFoto, onCerrar }){
+export function CamaraEnVivo({ frente = false, titulo, onFoto, onCerrar }){
   const video = useRef(null), flujo = useRef(null);
   const [usarFrente, setUsarFrente] = useState(frente), [error, setError] = useState(""), [lista, setLista] = useState(false);
   useEffect(() => {

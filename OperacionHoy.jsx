@@ -93,7 +93,7 @@ function AvisosCelular({ app }){
     {estado && estado !== "listo?" && <span style={{ fontSize: 12, color: estado.startsWith("✓") ? GREEN : MUTED }}>{estado}</span>}</span>;
 }
 
-export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {}, inicial = "", onVer }){
+export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {}, inicial = "", onVer, onTerminarDia = null }){
   const esAdmin = usuario?.rol === "admin";
   const [pestana, setPestanaEstado] = useState(() => {
     let t = inicial; try { t = t || new URLSearchParams(window.location.search).get("t") || ""; } catch {}
@@ -108,6 +108,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const servicios = useMemo(() => [...new Map([...delDia, ...enCurso].map(x => [x.id, x])).values()], [delDia, enCurso]);
   const [alertasBase, setAlertas] = useState([]), [alertasDir, setAlertasDir] = useState([]), [gastos, setGastos] = useState([]), [abierto, setAbierto] = useState(""), [paradas, setParadas] = useState({});
   const [, setReloj] = useState(0);
+  const [oficinaAsis, setOficinaAsis] = useState([]);
   useEffect(() => { const t = setInterval(() => setReloj(x => x + 1), 30000); return () => clearInterval(t); }, []);
   useEffect(() => {
     const us = [
@@ -125,13 +126,15 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   useEffect(() => {
     const us = [
       onSnapshot(query(collection(db, "jornadas"), where("fecha", "==", dia)), s => setJornadas(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setJornadas([])),
+      /* Entrada y salida de la oficina (Ilse): solo el director las ve. */
+      ...(esAdmin ? [onSnapshot(query(collection(db, "asistencia_oficina"), where("fecha", "==", dia)), s => setOficinaAsis(s.docs.map(d => ({ id: d.id, ...d.data() }))), () => setOficinaAsis([]))] : []),
       onSnapshot(query(collection(db, "servicios"), where("fechaServicio", "==", dia), limit(300)), s => setDelDia(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId && !x.historico)), () => setDelDia([])),
       /* Rutas foráneas de varios días: siguen "En ruta" aunque su fecha sea de antes. */
     ];
     if(dia === hoyCDMX()) us.push(onSnapshot(query(collection(db, "servicios"), where("estado", "==", "En ruta"), limit(200)), s => setEnCurso(s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.choferId)), () => setEnCurso([])));
     else setEnCurso([]);
     return () => us.forEach(u => u());
-  }, [db, dia]);
+  }, [db, dia, esAdmin]);
   const verParadas = async id => {
     setAbierto(abierto === id ? "" : id);
     if(!paradas[id]) { const s = await getDocs(query(collection(db, "servicios", id, "paradas"), orderBy("orden"))).catch(() => null);
@@ -174,7 +177,9 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <h1 style={{ fontFamily: DISP, fontWeight: 800, fontSize: 24, color: TEXT, margin: 0 }}>Operación</h1>
             <span style={{ fontSize: 13, color: MUTED }}>{esAdmin ? "Todo lo de choferes y rutas en un solo lugar." : "Asigna rutas y revisa todo; los cambios a registros los hace el director."}</span>
-            <span style={{ marginLeft: "auto" }}><AvisosCelular app={app}/></span>
+            <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {onTerminarDia && <button onClick={onTerminarDia} style={boton(TEXT, false)}>🏁 Terminar mi día</button>}
+              <AvisosCelular app={app}/></span>
           </div>
           <div style={{ display: "flex", gap: 4, overflowX: "auto", marginTop: 10, scrollbarWidth: "none" }}>
             {P.map(([k, l]) => <button key={k} onClick={() => { setPestana(k); setVerFichas(""); }} style={{ background: "none", border: "none", borderBottom: "3px solid " + (pestana === k ? A : "transparent"),
@@ -210,6 +215,23 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
         </>}
 
         {pestana === "asistencia" && <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {esAdmin && oficinaAsis.map(o => <div key={o.id} style={{ ...tarjeta, borderLeft: "4px solid " + BLUE }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <b style={{ fontSize: 16 }}>🏢 {o.nombre}</b><Chip color={BLUE}>Oficina</Chip>
+              {o.llegoTarde && <Chip color={ROSE}>⏰ Llegó {o.tardeMin} min tarde</Chip>}
+              {(o.dudas || []).length > 0 && <Chip color={AMBER}>⚠️ {o.dudas.join(", ")}</Chip>}
+            </div>
+            <div style={{ fontSize: 13, color: MUTED, marginTop: 4, lineHeight: 1.6 }}>
+              Entrada: <b style={{ color: TEXT }}>{hora(o.checkInEn)}</b>{o.horaEntradaEsperada ? ` (entrada ${o.horaEntradaEsperada})` : ""} · {o.lugarEntrada || "—"}
+              <br/>Salida: {o.checkOutEn ? <><b style={{ color: TEXT }}>{hora(o.checkOutEn)}</b> · {o.lugarSalida || "—"}{o.horasTrabajadas != null ? ` · ${o.horasTrabajadas} h` : ""}</> : <span style={{ color: AMBER }}>todavía no registra su salida</span>}
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8, overflowX: "auto" }}>
+              {o.ubicacion && <MapaPunto token={mapboxToken} punto={o.ubicacion} titulo="Entrada" lugar={o.lugarEntrada} hora={hora(o.checkInEn)}/>}
+              {o.fotos?.selfie?.ruta && <Miniatura ruta={o.fotos.selfie.ruta} etiqueta={"Entrada · " + o.nombre}/>}
+              {o.ubicacionSalida && <MapaPunto token={mapboxToken} punto={o.ubicacionSalida} titulo="Salida" lugar={o.lugarSalida} hora={hora(o.checkOutEn)}/>}
+              {o.fotosSalida?.selfieSalida?.ruta && <Miniatura ruta={o.fotosSalida.selfieSalida.ruta} etiqueta={"Salida · " + o.nombre}/>}
+            </div>
+          </div>)}
           {r.filas.map(f => { const j = f.jornada, fotos = j ? [j.fotos?.selfie?.ruta || j.selfieRuta, j.fotos?.placas?.ruta || j.fotoPlacasRuta, j.fotos?.odometro?.ruta || j.fotoOdometroRuta].filter(Boolean) : [];
             const salida = j?.fotosSalida?.odometroSalida?.ruta;
             return <div key={f.id} style={tarjeta}>

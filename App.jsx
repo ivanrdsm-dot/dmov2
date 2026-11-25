@@ -26,6 +26,9 @@ import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, g
 import CfdiArchive from "./CfdiArchive.jsx";
 import { crearServiciosStore } from "./serviciosStore.js";
 import AvisoPrivacidad, { useAvisoAutorizado } from "./AvisoPrivacidad.jsx";
+import { useAsistenciaOficina } from "./asistenciaOficina.js";
+const CheckOficinaVista = lazy(() => import("./CheckOficina.jsx"));
+const DiaCerradoVista = lazy(() => import("./CheckOficina.jsx").then(m => ({ default: m.DiaCerrado })));
 import { faltantesCapacidad } from "./dimensionamiento.ts";
 import { crearSolicitudesStore } from "./solicitudesStore.js";
 const SolicitudesVista = lazy(()=>import("./Solicitudes.jsx"));
@@ -15108,6 +15111,11 @@ export default function App(){
     h();window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);
   },[]);
 
+  /* Asistencia de la oficina (quien no es director): entrada obligatoria con selfie en vivo y ubicación. */
+  const debeAsistencia=!!userProfile&&userProfile.rol!=="admin"&&avisoOk===true;
+  const asistenciaHoy=useAsistenciaOficina(db,authUser?.uid,debeAsistencia);
+  const [saliendoDia,setSaliendoDia]=useState(false);
+
   /* ── Auth checks DESPUÉS de todos los hooks ── */
   // Loading inicial (esperando Firebase anónimo)
   if(authUser===undefined||profileLoading) return(
@@ -15149,6 +15157,11 @@ export default function App(){
   /* Aviso de privacidad: sin autorizarlo no se entra al sistema (oficina). */
   if(avisoOk===undefined) return <><style>{CSS}</style><VerificandoPerfil/></>;
   if(!avisoOk) return <AvisoPrivacidad app={fbApp} tipo="oficina" nombre={userProfile?.nombre||""} onAutorizado={()=>setAvisoOk(true)} onSalir={async()=>{await fbSignOut(auth).catch(()=>{});window.location.reload();}}/>;
+  /* Oficina: sin entrada del día no se entra; con el día cerrado, tampoco. */
+  const salirDelSistema=async()=>{await fbSignOut(auth).catch(()=>{});window.location.reload();};
+  if(debeAsistencia&&asistenciaHoy===undefined) return <><style>{CSS}</style><VerificandoPerfil/></>;
+  if(debeAsistencia&&asistenciaHoy===null) return <Suspense fallback={<VerificandoPerfil/>}><CheckOficinaVista app={fbApp} usuario={{uid:authUser.uid,nombre:userProfile.nombre||""}} modo="entrada" onSalir={salirDelSistema}/></Suspense>;
+  if(debeAsistencia&&asistenciaHoy?.estado==="Cerrada") return <Suspense fallback={<VerificandoPerfil/>}><DiaCerradoVista asistencia={asistenciaHoy} onSalir={salirDelSistema}/></Suspense>;
 
   const rol=userProfile?.rol||"admin";
   const isAdmin=rol==="admin";
@@ -15160,6 +15173,7 @@ export default function App(){
 
   /* ── Operación: una sola sección con pestañas (la usan varias entradas viejas) ── */
   const operacionEn=inicial=><Suspense key={"op-"+inicial} fallback={<div style={{padding:40,color:MUTED}}>Cargando…</div>}><OperacionVista db={db} app={fbApp} usuario={usuarioDe(authUser,userProfile)}
+    onTerminarDia={debeAsistencia&&asistenciaHoy?.estado==="Abierta"?()=>setSaliendoDia(true):null}
     mapboxToken={MAPBOX_TOKEN} inicial={inicial} onVer={setView}
     vistas={{mapa:<DespachoModulo authUser={authUser} userProfile={userProfile}/>,choferes:<Choferes/>,unidades:<Unidades/>}}/></Suspense>;
 
@@ -15215,6 +15229,7 @@ export default function App(){
     <><style>{CSS}</style>
       <ErrorBoundary>
         <SOSGlobalBanner onGo={()=>setView("alertas")}/>
+        {saliendoDia&&<Suspense fallback={null}><CheckOficinaVista app={fbApp} usuario={{uid:authUser.uid,nombre:userProfile.nombre||""}} modo="salida" onCerrar={()=>setSaliendoDia(false)} onListo={()=>setSaliendoDia(false)}/></Suspense>}
         <div style={{display:"flex",minHeight:"100vh",background:"#f1f4fb",color:TEXT,fontFamily:SANS}}>
           {sidebarOpen&&<div className="mobile-backdrop" onClick={()=>setSidebarOpen(false)}/>}
           <Sidebar onBuscar={()=>setSearchOpen(true)} view={view} setView={v=>{

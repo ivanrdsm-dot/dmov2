@@ -42,7 +42,7 @@ export const TITULO_ALERTA = {
   sos: "SOS del chofer", checkin_dudoso: "Check-in con dudas", ubicacion_simulada: "Ubicación falsa (simulada)",
   velocidad_imposible: "Salto imposible de ubicación", reloj_adelantado: "Reloj del celular manipulado",
   dispositivo_no_autorizado: "Celular no autorizado", incidencia: "Incidencia en una entrega", cierre_fuera_de_punto: "Entrega cerrada fuera del punto",
-  checkin_registrado: "Check-in", checkin_tarde: "Check-in tarde", checkout_registrado: "Check-out", gasto_dudoso: "Gasto o gasolina que no cuadra",
+  checkin_registrado: "Check-in", checkin_tarde: "Check-in tarde", checkout_registrado: "Check-out", checkin_oficina: "Entrada de oficina", checkin_oficina_tarde: "Entrada de oficina tarde", checkout_oficina: "Salida de oficina", gasto_dudoso: "Gasto o gasolina que no cuadra",
 };
 const dur = min => min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? " " + (min % 60) + " min" : ""}`;
 

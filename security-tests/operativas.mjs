@@ -145,3 +145,23 @@ test('recuperar devuelve el registro con su id; volver a borrarlo pide copia nue
   if(!(await getDoc(doc(dbA, 'papelera', 'viaticos__v1__2'))).exists()) throw new Error('falta la segunda copia');
 });
 const assert_rechaza = async p => { let ok = false; try { await p; } catch { ok = true; } if(!ok) throw new Error('debía rechazarse'); };
+
+test('asistencia de la oficina: cada quien lee la suya, el director todas; nadie la escribe directo', async () => {
+  await env.withSecurityRulesDisabled(async c => {
+    const db = c.firestore();
+    await setDoc(doc(db, 'asistencia_oficina', 'ops_2026-11-25'), { uid: 'ops', fecha: '2026-11-25', estado: 'Abierta' });
+    await setDoc(doc(db, 'asistencia_oficina', 'admin_2026-11-25'), { uid: 'admin', fecha: '2026-11-25', estado: 'Abierta' });
+  });
+  const dbO = ctx('ops').firestore(), dbA = ctx('admin').firestore();
+  await assertSucceeds(getDoc(doc(dbO, 'asistencia_oficina', 'ops_2026-11-25')));
+  await assertSucceeds(getDoc(doc(dbO, 'asistencia_oficina', 'ops_2099-01-01')));          // la suya de un día sin entrada todavía
+  await assertFails(getDoc(doc(dbO, 'asistencia_oficina', 'admin_2026-11-25')));
+  await assertFails(getDocs(collection(dbO, 'asistencia_oficina')));
+  await assertFails(setDoc(doc(dbO, 'asistencia_oficina', 'ops_2026-11-26'), { uid: 'ops', estado: 'Abierta' }));
+  await assertFails(updateDoc(doc(dbO, 'asistencia_oficina', 'ops_2026-11-25'), { estado: 'Cerrada' }));
+  await assertSucceeds(getDocs(query(collection(dbA, 'asistencia_oficina'), where('fecha', '==', '2026-11-25'))));
+  await assertFails(updateDoc(doc(dbA, 'asistencia_oficina', 'ops_2026-11-25'), { estado: 'Cerrada' }));
+  await assertFails(deleteDoc(doc(dbA, 'asistencia_oficina', 'ops_2026-11-25')));
+  for(const c of [env.unauthenticatedContext(), ctx('inactive'), ctx('stranger')])
+    await assertFails(getDoc(doc(c.firestore(), 'asistencia_oficina', 'ops_2026-11-25')));
+});
