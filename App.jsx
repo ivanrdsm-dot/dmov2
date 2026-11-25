@@ -4,7 +4,7 @@ import { getStorage } from "firebase/storage";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc, runTransaction,
   doc, onSnapshot, serverTimestamp, query, where, orderBy, getDocs, setDoc, getDoc,
-  limit, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  limit, initializeFirestore, persistentLocalCache, persistentSingleTabManager, memoryLocalCache,
 } from "firebase/firestore";
 import {
   getAuth, signInWithPopup, GoogleAuthProvider, signOut as fbSignOut,
@@ -108,12 +108,34 @@ const firebaseConfig = {
   appId:             import.meta.env.VITE_FIREBASE_APP_ID             || "1:525995422237:web:e69d7e7dd76ac9640c8cf4",
 };
 const fbApp = initializeApp(firebaseConfig);
-// Firestore con offline persistence (IndexedDB) — el chofer puede seguir
-// registrando entregas sin señal; al volver conexión se sincroniza solo.
+/* Firestore y su copia local en el navegador (IndexedDB).
+   - Oficina: SIN copia local (memoria). Siempre está en línea, y la copia local se corrompía al cambiar de
+     cuenta con varias pestañas abiertas (la página se quedaba en "Verificando tu perfil…").
+   - App del chofer (/chofer): copia local de UNA pestaña, para ver sus rutas sin señal (las entregas sin
+     señal ya se guardan aparte en su cola).
+   - Si aun así la copia local se daña, se borra sola y la página se recarga una vez (repararCacheFirestore). */
+const ES_APP_CHOFER = typeof window !== "undefined" && window.location.pathname.startsWith("/chofer");
+async function borrarCacheFirestore(){
+  try {
+    const dbs = (await indexedDB.databases?.()) || [];
+    await Promise.all(dbs.filter(d => /^firestore\//.test(d.name || "")).map(d => new Promise(ok => {
+      const q = indexedDB.deleteDatabase(d.name); q.onsuccess = q.onerror = q.onblocked = () => ok(); })));
+  } catch {}
+}
+async function repararCacheFirestore(){
+  try { const ult = Number(sessionStorage.getItem("dmov-cache-reparada") || 0); if(Date.now() - ult < 5 * 60000) return; sessionStorage.setItem("dmov-cache-reparada", String(Date.now())); } catch {}
+  await borrarCacheFirestore();
+  window.location.reload();
+}
+if(typeof window !== "undefined"){
+  const esFalloDeCache = e => /INTERNAL ASSERTION FAILED|Error using user provided cache|IndexedDB/i.test(String(e?.message || e?.reason?.message || e?.reason || e || ""));
+  window.addEventListener("error", ev => { if(esFalloDeCache(ev.error || ev.message)) repararCacheFirestore(); });
+  window.addEventListener("unhandledrejection", ev => { if(esFalloDeCache(ev.reason)) repararCacheFirestore(); });
+}
 let db;
 try{
   db = initializeFirestore(fbApp,{
-    localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()}),
+    localCache: ES_APP_CHOFER ? persistentLocalCache({tabManager: persistentSingleTabManager()}) : memoryLocalCache(),
   });
 }catch(e){
   // Fallback si el navegador no soporta persistencia (modo incógnito estricto)
@@ -14907,6 +14929,25 @@ function Usuarios(){
   );
 }
 
+function VerificandoPerfil(){
+  const [lento, setLento] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setLento(true), 12000); return () => clearTimeout(t); }, []);
+  return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#0f2040)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{textAlign:"center",maxWidth:360}}>
+      <div style={{width:60,height:60,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Truck size={28} color="#fff"/></div>
+      <div style={{fontFamily:DISP,fontWeight:900,fontSize:20,color:"#fff"}}>DMvimiento</div>
+      <div style={{fontSize:12,color:"#ffffff80",marginTop:6}}>Verificando tu perfil…</div>
+      {lento && <div style={{marginTop:18}}>
+        <div style={{fontSize:13,color:"#ffffffb0",marginBottom:10}}>Está tardando más de lo normal.</div>
+        <button onClick={async()=>{ try{ sessionStorage.removeItem("dmov-cache-reparada"); }catch{} await borrarCacheFirestore(); window.location.reload(); }}
+          style={{background:"#F27B13",color:"#fff",border:"none",borderRadius:12,padding:"12px 20px",fontWeight:800,fontSize:15,cursor:"pointer"}}>Reparar y volver a cargar</button>
+        <div style={{marginTop:10}}><button onClick={async()=>{ await fbSignOut(auth).catch(()=>{}); window.location.reload(); }}
+          style={{background:"none",color:"#ffffffb0",border:"none",textDecoration:"underline",fontSize:13,cursor:"pointer"}}>Entrar con otra cuenta</button></div>
+      </div>}
+    </div>
+  </div>;
+}
+
 export default function App(){
   const path = typeof window!=="undefined"?window.location.pathname:"";
   // Rutas públicas sin auth — deben estar antes de cualquier hook
@@ -15095,14 +15136,7 @@ export default function App(){
   }
   // Resolviendo perfil
   if(!userProfile){
-    return <><style>{CSS}</style>
-      <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#0f2040)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-        <div style={{textAlign:"center"}}>
-          <div style={{width:60,height:60,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Truck size={28} color="#fff"/></div>
-          <div style={{fontFamily:DISP,fontWeight:900,fontSize:20,color:"#fff"}}>DMvimiento</div>
-          <div style={{fontSize:12,color:"#ffffff50",marginTop:6}}>Verificando tu perfil…</div>
-        </div>
-      </div></>;
+    return <><style>{CSS}</style><VerificandoPerfil/></>;
   }
 
   const rol=userProfile?.rol||"admin";
