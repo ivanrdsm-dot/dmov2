@@ -14,6 +14,12 @@ describe("solicitudes", () => {
     expect(a).toMatchObject({ id: "vig-sol-s1", type: "solicitud_sin_respuesta", folio: "SOL-2026-0001", ref: { coleccion: "solicitudes", id: "s1" } });
     expect(a.message).toContain("30 min hábiles");
   });
+  it("no alerta por correos viejos que entraron tarde al sistema (al prender el filtro)", () => {
+    const viejo = s({ recibidaEn: ms("2026-11-06T10:00:00-06:00"), registradaEn: ms("2026-11-10T10:40:00-06:00") });
+    expect(alertasEsperadas({ solicitudes: [viejo] }, MARTES_11)).toHaveLength(0);
+    const alDia = s({ registradaEn: ms("2026-11-10T10:31:00-06:00") });
+    expect(alertasEsperadas({ solicitudes: [alDia] }, MARTES_11)).toHaveLength(1);
+  });
   it("lo que llega en la noche no cuenta hasta que abre la oficina", () => {
     const noche = s({ recibidaEn: ms("2026-11-10T19:00:00-06:00") });
     expect(alertasEsperadas({ solicitudes: [noche] }, ms("2026-11-11T09:10:00-06:00"))).toHaveLength(0);

@@ -34,6 +34,10 @@ import { guardarLugares, datosServicio, crearServicioRuta, terminarAsignacion, s
 /* La dirección del sistema es la misma desde la que se abre (Firebase o Vercel). */
 const URL_CHOFER = (typeof window !== "undefined" ? window.location.origin : "https://salesflow-crm-13c4a.web.app") + "/chofer";
 const hoyCDMX = () => new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
+const fechaMas = (f, n) => { const d = new Date(f + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+/* "JOSE ELIAS MUÑOZ DIAZ" → "Elías Muñoz": nombre y primer apellido, sin el "José" de cajón. */
+const nombreCorto = n => { const ps = String(n || "").trim().replace(/^jos[eé]\s+/i, "").split(/\s+/).slice(0, 2);
+  return ps.map(w => w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w).join(" ") || "Chofer"; };
 const mensajeError = e => String(e?.message || "No se pudo").replace(/^(functions\/[a-z-]+:?\s*)/i, "");
 const Paso = ({ n, titulo, children }) => (
   <div style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 16, padding: "16px 18px", marginBottom: 14 }}>
@@ -133,6 +137,16 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   const chofer = activos.find(c => c.id === choferId);
   const ocupadoHoy = id => delDia.find(s => s.choferId === id && ["Asignada", "En ruta"].includes(s.estado));
 
+  /* Al elegir chofer, se pone sola la camioneta que usó en su ruta más reciente (se puede cambiar). */
+  const elegirChofer = async id => {
+    setChoferId(id);
+    try {
+      const s = await getDocs(query(collection(db, "servicios"), where("choferId", "==", id), limit(30)));
+      const ult = s.docs.map(d => d.data()).filter(x => x.unidadPlaca).sort((a, b) => String(b.fechaServicio || "").localeCompare(String(a.fechaServicio || "")))[0];
+      const pl = ult ? String(ult.unidadPlaca).toUpperCase() : "";
+      if(pl && camionetas.includes(pl)) setPlaca(pl);
+    } catch {}
+  };
   const agregar = p => setParadas(ps => [...ps, { tipo: "entrega", contacto: "", telefono: "", ...p, clave: Date.now() + Math.random() }]);
   const cambiar = (clave, cambio) => setParadas(ps => ps.map(p => p.clave === clave ? { ...p, ...cambio } : p));
   const quitar = clave => setParadas(ps => ps.filter(p => p.clave !== clave));
@@ -186,22 +200,32 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
 
         <Paso n={1} titulo="¿Quién maneja y en qué camioneta?">
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
-            <label><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Chofer</span>
-              <select style={caja} value={choferId} onChange={e => setChoferId(e.target.value)}>
-                <option value="">— Elige al chofer —</option>
-                {activos.map(c => <option key={c.id} value={c.id}>{c.nombre}{!c.authUid ? " (sin app)" : ""}{ocupadoHoy(c.id) ? " · ya tiene ruta ese día" : ""}</option>)}
-              </select></label>
+            <div style={{ gridColumn: "1 / -1" }}><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Chofer</span>
+              {/* Botones grandes: en el celular se elige de un toque (sin abrir listas). */}
+              <div role="radiogroup" aria-label="Chofer" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                {activos.map(c => { const sel = c.id === choferId, ocup = ocupadoHoy(c.id);
+                  return <button key={c.id} type="button" role="radio" aria-checked={sel} onClick={() => elegirChofer(c.id)}
+                    style={{ ...boton(A, sel), padding: "10px 14px", minHeight: 44, fontSize: 15, textAlign: "left", lineHeight: 1.2 }}>
+                    {nombreCorto(c.nombre)}{!c.authUid && <small style={{ display: "block", fontSize: 11, opacity: .8 }}>sin app</small>}
+                    {ocup && <small style={{ display: "block", fontSize: 11, opacity: .8 }}>ya tiene ruta</small>}</button>; })}
+              </div></div>
             <label><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Camioneta (placas)</span>
               <select style={caja} value={placa} onChange={e => setPlaca(e.target.value)}>
                 <option value="">— Elige la camioneta —</option>
                 {camionetas.map(p => <option key={p} value={p}>{p}</option>)}
               </select></label>
-            <label><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Día</span><input type="date" style={caja} value={fecha} onChange={e => setFecha(e.target.value)}/></label>
+            <label><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Día</span>
+              <span style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                {[["Hoy", hoyCDMX()], ["Mañana", fechaMas(hoyCDMX(), 1)]].map(([t, f]) => <button key={t} type="button" onClick={() => setFecha(f)}
+                  style={{ ...boton(BLUE, fecha === f), padding: "6px 14px", minHeight: 36, fontSize: 14 }}>{t}</button>)}</span>
+              <input type="date" style={caja} value={fecha} onChange={e => setFecha(e.target.value)}/></label>
             <label><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Hora de salida (opcional)</span><input type="time" style={caja} value={hora} onChange={e => setHora(e.target.value)}/></label>
           </div>
           {chofer && (!chofer.authUid || enlaces[chofer.id]) && <AccesoChofer chofer={chofer} llamar={llamar} esAdmin={esAdmin}
             enlace={enlaces[chofer.id] || ""} setEnlace={e => setEnlaces(x => ({ ...x, [chofer.id]: e }))}/>}
-          <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>¿No está el chofer o la camioneta? Agrégalos en <button onClick={() => onVer?.("choferes")} style={{ background: "none", border: "none", color: BLUE, cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 700 }}>Choferes y unidades</button>.</div>
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 8 }}>{esAdmin
+            ? <>¿No está el chofer o la camioneta? Agrégalos en <button onClick={() => onVer?.("choferes")} style={{ background: "none", border: "none", color: BLUE, cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 700 }}>Choferes y unidades</button>.</>
+            : "¿No está el chofer o la camioneta? Pídele a Iván que lo dé de alta."}</div>
         </Paso>
 
         <Paso n={2} titulo="¿Para qué cliente?">
@@ -228,8 +252,10 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
         {pendiente && !ocupado && <div style={{ background: AMBER + "12", border: "1.5px solid " + AMBER, borderRadius: 12, padding: 12, marginBottom: 10, fontSize: 14 }}>
           El servicio <b style={{ fontFamily: MONO }}>{pendiente.folio}</b> ya se creó, pero no se pudo mandar al chofer.
           <button onClick={reintentar} style={{ ...boton(A), marginLeft: 10 }}>Reintentar (sin crear otro)</button></div>}
-        <button onClick={mandar} disabled={!!ocupado} style={{ ...boton(faltan.length ? MUTED : A), width: "100%", padding: "16px 0", fontSize: 18, opacity: ocupado ? .6 : 1 }}>
-          {ocupado || (faltan.length ? "Falta: " + faltan.join(", ") : "Mandar al chofer")}</button>
+        {/* Siempre a la vista (también en el celular): dice qué falta o manda la ruta. */}
+        <div style={{ position: "sticky", bottom: 0, zIndex: 5, background: "#f1f4fb", padding: "8px 0 calc(8px + env(safe-area-inset-bottom))" }}>
+          <button onClick={mandar} disabled={!!ocupado} style={{ ...boton(faltan.length ? MUTED : A), width: "100%", padding: "16px 0", fontSize: 18, opacity: ocupado ? .6 : 1 }}>
+            {ocupado || (faltan.length ? "Falta: " + faltan.join(", ") : "Mandar al chofer")}</button></div>
 
         <div style={{ marginTop: 24 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>

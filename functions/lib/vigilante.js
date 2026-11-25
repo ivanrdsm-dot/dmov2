@@ -9,6 +9,7 @@ import { minutosDeRespuesta, minutosHabiles, enHorarioLaboral, solicitudAbierta,
 
 export const UMBRALES = {
   primeraRespuestaMin: META_PRIMERA_RESPUESTA_MIN,   // del plan
+  registroAtrasadoMin: 60,                           // correo que entró al sistema más de 1 h después de llegar: no cuenta para la meta
   aprobarCotizacionMin: 60,                          // supuesto: minutos hábiles para que un admin apruebe
   enviarCotizacionMin: 60,                           // supuesto: minutos hábiles para enviarla ya aprobada
   conectorSinSenalMin: 10,                           // supuesto: el conector late cada minuto
@@ -31,6 +32,9 @@ export function alertasEsperadas({ solicitudes = [], cotizaciones = [], servicio
   const add = (id, type, folio, message, ref) => out.push({ id, type, folio: folio || "", message, ref });
   for(const s of solicitudes){
     if(!solicitudAbierta(s) || n(s.primeraRespuestaEn) > 0) continue;
+    /* Correo que entró al sistema horas después de llegar (p. ej. al prender el filtro se cargaron los de días
+       anteriores): esos ya se atendieron por fuera; no se alerta como si llevaran días sin respuesta. */
+    if(n(s.registradaEn) - n(s.recibidaEn) > U.registroAtrasadoMin * 60000) continue;
     const min = minutosDeRespuesta(s, ahoraMs);
     if(min !== null && min > U.primeraRespuestaMin)
       add(`vig-sol-${s.id}`, "solicitud_sin_respuesta", s.folio, `${s.folio || "Solicitud"} lleva ${dur(min)} hábiles sin primera respuesta (meta ${U.primeraRespuestaMin} min).${s.asunto ? " " + String(s.asunto).slice(0, 120) : ""}`, { coleccion: "solicitudes", id: s.id });

@@ -32,6 +32,17 @@ export const TIPOS_ALERTA_CHOFER = {
   sin_checkout: "Jornada sin check-out",
   ruta_excedida: "Ruta foránea pasada de días",
   cambio_sin_enterado: "El chofer no ha confirmado un cambio de ruta",
+  fuera_de_cdmx: "Chofer fuera de CDMX sin ruta que lo explique",
+  km_no_coinciden: "Los kilómetros del tablero no coinciden con el GPS",
+  unidad_no_coincide: "El chofer usa otra camioneta",
+};
+/* Título legible de CUALQUIER alerta (nunca se muestra el código interno ni sale en blanco). */
+export const TITULO_ALERTA = {
+  ...TIPOS_ALERTA_CHOFER,
+  sos: "SOS del chofer", checkin_dudoso: "Check-in con dudas", ubicacion_simulada: "Ubicación falsa (simulada)",
+  velocidad_imposible: "Salto imposible de ubicación", reloj_adelantado: "Reloj del celular manipulado",
+  dispositivo_no_autorizado: "Celular no autorizado", incidencia: "Incidencia en una entrega", cierre_fuera_de_punto: "Entrega cerrada fuera del punto",
+  checkin_registrado: "Check-in", checkin_tarde: "Check-in tarde", checkout_registrado: "Check-out",
 };
 const dur = min => min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? " " + (min % 60) + " min" : ""}`;
 

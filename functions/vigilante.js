@@ -51,7 +51,7 @@ export const vigilante = onSchedule({ schedule: "every 5 minutes", timeZone: "Am
   const conectores = {};
   for(const [k, v] of Object.entries(con.exists ? con.data() : {})) conectores[k] = { ...v, ultimoLatido: ms(v?.ultimoLatido) };
   const esperadas = alertasEsperadas({
-    solicitudes: sol.docs.map(d => plano(d.id, d.data(), ["recibidaEn", "primeraRespuestaEn"])),
+    solicitudes: sol.docs.map(d => plano(d.id, d.data(), ["recibidaEn", "primeraRespuestaEn", "registradaEn"])),
     cotizaciones: cot.docs.map(d => { const x = d.data(); const estadoTs = {}; for(const [k, v] of Object.entries(x.estadoTs || {})) estadoTs[k] = ms(v); return { id: d.id, ...x, creadoEn: ms(x.creadoEn), estadoTs }; }),
     servicios: srv.docs.map(d => ({ id: d.id, ...d.data() })),
     conectores,

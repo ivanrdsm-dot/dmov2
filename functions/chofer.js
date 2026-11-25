@@ -11,10 +11,14 @@ import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA, resumenCambio, e
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { ordenarParadas, clasificarRuta, fechaMasDias } from "./lib/rutas.js";
 import { fusionarClaims } from "./permisos.js";
-import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER } from "./lib/vigilancia.js";
+import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER, TITULO_ALERTA } from "./lib/vigilancia.js";
+import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCDMX, kmDesdeZocalo } from "./lib/jornadaReglas.js";
+import { defineSecret } from "firebase-functions/params";
 import { revisarFotoJornada, lineaDeTexto, lineaATexto } from "./lib/evidencia.js";
 
 const OPC = { region: "us-central1", maxInstances: 5, memory: "256MiB", timeoutSeconds: 30 };
+const GOOGLE = defineSecret("GOOGLE_MAPS_KEY");
+const OPC_LUGAR = { ...OPC, secrets: [GOOGLE] };   // check-in/out: nombra el lugar donde está el chofer
 const db = () => getFirestore();
 const ahora = () => FieldValue.serverTimestamp();
 const fechaCDMX = (ms = Date.now()) => new Date(ms - 6 * 3600000).toISOString().slice(0, 10);
@@ -47,11 +51,47 @@ async function oficinaDe(req, { admin = false } = {}){
 const actorChofer = c => ({ actorUid: "chofer:" + c.id, actorNombre: c.nombre || c.id, actorRol: "chofer" });
 const actorOficina = o => ({ actorUid: o.uid, actorNombre: o.nombre, actorRol: o.rol });
 const eventoServicio = (tx, servicioId, datos) => tx.set(db().collection(`servicios/${servicioId}/eventos`).doc(), { ...datos, ts: ahora() });
-const alerta = (datos) => db().collection("alertas").add({ atendida: false, ts: ahora(), ...datos });
+const alerta = (datos) => db().collection("alertas").add({ atendida: false, ts: ahora(), titulo: TITULO_ALERTA[datos.type] || "Alerta de chofer", ...datos });
+
+/* ── Dónde está y si tiene sentido que esté ahí ─────────────────────────── */
+/** Dirección corta del lugar más cercano (Google Places). Si falla, "" y el aviso lleva las coordenadas. */
+async function dondeEsta(pos){
+  try {
+    const r = await fetch("https://places.googleapis.com/v1/places:searchNearby", { method: "POST", signal: AbortSignal.timeout(4000),
+      headers: { "Content-Type": "application/json", "X-Goog-Api-Key": GOOGLE.value(), "X-Goog-FieldMask": "places.shortFormattedAddress,places.formattedAddress" },
+      body: JSON.stringify({ maxResultCount: 1, rankPreference: "DISTANCE", languageCode: "es", locationRestriction: { circle: { center: { latitude: pos.lat, longitude: pos.lng }, radius: 500 } } }) });
+    const p = (await r.json())?.places?.[0];
+    return txt(p?.shortFormattedAddress || p?.formattedAddress || "", 160);
+  } catch { return ""; }
+}
+const textoLugar = (lugar, pos) => lugar || `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
+/** Paradas de sus rutas activas y de los últimos 4 días: lo que "explica" que esté lejos. */
+async function paradasRecientes(choferId){
+  const hoy = fechaCDMX(), dias = [0, 1, 2, 3].map(n => fechaMasDias(hoy, -n));
+  const [act, rec] = await Promise.all([
+    db().collection("servicios").where("choferId", "==", choferId).where("estado", "in", ["Asignada", "En ruta"]).limit(10).get(),
+    db().collection("servicios").where("choferId", "==", choferId).where("fechaServicio", "in", dias).limit(20).get()]);
+  const docs = [...new Map([...act.docs, ...rec.docs].map(d => [d.id, d])).values()].slice(0, 12);
+  const out = [];
+  for(const d of docs) (await d.ref.collection("paradas").get()).forEach(p => { const x = p.data(); if(coordenadaValida({ lat: Number(x.lat), lng: Number(x.lng) })) out.push({ lat: Number(x.lat), lng: Number(x.lng) }); });
+  return out;
+}
+/** Si está fuera de la zona metropolitana y ninguna ruta suya lo explica, alerta (una por día). */
+const zonaExplicada = new Map();   // choferId → hasta cuándo ya se revisó que su ruta lo explica (evita consultar en cada lote)
+async function revisarZona(chofer, pos, momento){
+  if(!fueraDeCdmx(pos)) return false;
+  const id = `chf-zona-${chofer.id}-${fechaCDMX()}`;
+  if((zonaExplicada.get(chofer.id) || 0) > Date.now()) return false;
+  if((await db().doc("alertas/" + id).get()).exists) return true;
+  if(rutaCoherente(pos, await paradasRecientes(chofer.id))){ zonaExplicada.set(chofer.id, Date.now() + 20 * 60000); return false; }
+  await alertaUnica({ id, type: "fuera_de_cdmx", choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
+    message: `${chofer.nombre || "Chofer"} está a ${kmDesdeZocalo(pos)} km del Zócalo (${momento}) y no tiene ninguna ruta por esa zona.` });
+  return true;
+}
 
 /* Alerta con id estable (la misma situación nunca se duplica). Si ya existe, no hace nada. */
 async function alertaUnica(a){
-  await db().collection("alertas").doc(a.id).create({ type: a.type, titulo: TIPOS_ALERTA_CHOFER[a.type] || a.type, message: a.message, msg: a.message, folio: a.folio || "",
+  await db().collection("alertas").doc(a.id).create({ type: a.type, titulo: TITULO_ALERTA[a.type] || TIPOS_ALERTA_CHOFER[a.type] || "Alerta de chofer", message: a.message, msg: a.message, folio: a.folio || "",
     choferId: a.choferId || "", choferNombre: a.choferNombre || "", servicioId: a.servicioId || "", ref: a.ref || null,
     ...(Number.isFinite(a.lat) && Number.isFinite(a.lng) ? { lat: a.lat, lng: a.lng } : {}),
     origen: "vigilante", atendida: false, read: false, ts: ahora(), createdAt: ahora() }).catch(() => {});
@@ -133,7 +173,7 @@ export const choferRegistrarDispositivo = onCall(OPC, async req => {
 });
 
 /** Check-in de jornada: selfie + inspección de unidad, sellado con hora del servidor. Uno por día. */
-export const choferCheckIn = onCall(OPC, async req => {
+export const choferCheckIn = onCall(OPC_LUGAR, async req => {
   const { chofer } = await choferDe(req);
   const d = req.data || {};
   const v = validarCheckIn(d);
@@ -148,13 +188,26 @@ export const choferCheckIn = onCall(OPC, async req => {
     ...(Number.isFinite(precisionM) && precisionM > 150 ? [`GPS impreciso (±${Math.round(precisionM)} m)`] : []),
     ...(Number.isFinite(posTMs) && Math.abs(Date.now() - posTMs) > 3 * 60000 ? ["la ubicación no era del momento"] : []),
     ...(d.simulada === true ? ["ubicación simulada"] : [])];
+  /* Hora de llegada: 7:00 (tolerancia 10 min); en ruta foránea, 9:00. Queda registrada si llegó tarde. */
+  const [enRutaHoy, rutasHoy, lugar] = await Promise.all([
+    db().collection("servicios").where("choferId", "==", chofer.id).where("estado", "==", "En ruta").limit(1).get(),
+    db().collection("servicios").where("choferId", "==", chofer.id).where("fechaServicio", "==", fecha).limit(5).get(),
+    dondeEsta(pos)]);
+  const foraneo = !enRutaHoy.empty && enRutaHoy.docs[0].data().foraneo === true;
+  const ll = llegada(Date.now(), foraneo ? UMBRALES_CHOFER.horaCheckInForaneo : UMBRALES_CHOFER.horaCheckIn, UMBRALES_CHOFER.toleranciaEntradaMin);
+  /* La camioneta debe coincidir con la de su ruta de hoy. */
+  const placa = txt(d.unidadPlaca, 20).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const placaRuta = rutasHoy.docs.map(x => String(x.data().unidadPlaca || "").toUpperCase().replace(/[^A-Z0-9]/g, "")).find(Boolean) || "";
+  const otraUnidad = !!(placa && placaRuta && placa !== placaRuta);
   const creada = await db().runTransaction(async tx => {
     if((await tx.get(ref)).exists) return false;
     tx.set(ref, { choferId: chofer.id, choferNombre: chofer.nombre || "", fecha, estado: "Abierta", checkInEn: ahora(), dispositivoId: chofer.dispositivoId,
       selfieRuta: txt(d.selfieRuta, 400), fotoPlacasRuta: txt(d.fotoPlacasRuta, 400), fotoOdometroRuta: txt(d.fotoOdometroRuta, 400),
       unidadPlaca: txt(d.unidadPlaca, 20).toUpperCase(), odometroKm: Number(d.odometroKm), combustiblePct: Number(d.combustiblePct),
       ubicacion: pos, precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, ubicacionTMs: Number.isFinite(posTMs) ? posTMs : null,
-      ubicacionSimulada: d.simulada === true, fotos, dudas, verificacionFacial: "no_aplicada" });
+      ubicacionSimulada: d.simulada === true, fotos, dudas, verificacionFacial: "no_aplicada",
+      horaEntradaEsperada: foraneo ? UMBRALES_CHOFER.horaCheckInForaneo : UMBRALES_CHOFER.horaCheckIn, minutosDespuesEntrada: ll.minutosDespues, llegoTarde: ll.tarde, tardeMin: ll.tardeMin,
+      lugarEntrada: lugar, kmDesdeZocaloEntrada: kmDesdeZocalo(pos), fueraDeCdmxEntrada: fueraDeCdmx(pos), placaRuta: placaRuta || null });
     return true;
   });
   if(creada){
@@ -162,8 +215,14 @@ export const choferCheckIn = onCall(OPC, async req => {
       tMs: Number.isFinite(posTMs) && posTMs <= Date.now() + 60000 ? posTMs : Date.now(), precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, confiable: d.simulada !== true, origen: "check-in", actualizadoEn: ahora() });
     if(dudas.length) await alerta({ type: d.simulada === true ? "ubicacion_simulada" : "checkin_dudoso", choferId: chofer.id, choferNombre: chofer.nombre || "",
       msg: `Check-in de ${chofer.nombre || "chofer"} con dudas: ${dudas.join(", ")}`, lat: pos.lat, lng: pos.lng });
+    /* Aviso al celular del director: quién, a qué hora, si llegó tarde y DÓNDE está (toca y abre el mapa). */
+    await alerta({ type: ll.tarde ? "checkin_tarde" : "checkin_registrado", informativa: true, atendida: true, choferId: chofer.id, choferNombre: chofer.nombre || "",
+      msg: `${chofer.nombre || "Chofer"} · ${horaCDMX(Date.now())}${ll.tarde ? ` · ${ll.tardeMin} min tarde` : ""} · ${textoLugar(lugar, pos)}${placa ? " · " + placa : ""}`, lat: pos.lat, lng: pos.lng });
+    if(otraUnidad) await alerta({ type: "unidad_no_coincide", choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
+      msg: `${chofer.nombre || "Chofer"} hizo check-in con la camioneta ${placa}, pero su ruta de hoy es con ${placaRuta}.` });
+    await revisarZona(chofer, pos, "en su check-in").catch(e => console.warn("zona", e?.message));
   }
-  return { ok: true, fecha, yaExistia: !creada };
+  return { ok: true, fecha, yaExistia: !creada, llegoTarde: ll.tarde, tardeMin: ll.tardeMin };
 });
 
 /** El chofer inicia la ruta: exige check-in de hoy. */
@@ -249,6 +308,8 @@ export const choferSubirPosiciones = onCall(OPC, async req => {
       }
     } catch(e){ console.warn("aviso de llegada", e?.message); }
   }
+  /* Ojo de águila todo el día: si su última ubicación confiable está fuera de la zona metropolitana sin ruta que lo explique. */
+  if(ultima) await revisarZona(chofer, ultima, "ubicación en vivo").catch(e => console.warn("zona", e?.message));
   for(const a of r.alertas) await alerta({ type: a.tipo, choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: servicio?.id || "",
     msg: a.tipo === "ubicacion_simulada" ? "Ubicación simulada detectada" : a.tipo === "velocidad_imposible" ? `Salto imposible: ${a.kmh} km/h` : "Reloj del equipo adelantado", lat: a.lat ?? null, lng: a.lng ?? null });
   return { ok: true, aceptadas: r.aceptadas.length, rechazadas: r.rechazadas.length };
@@ -318,7 +379,7 @@ export const choferCerrarParada = onCall(OPC, async req => {
 });
 
 /** Fin de la jornada: deja la hora de salida (la pone el servidor). No se puede con una ruta a medias. */
-export const choferTerminarJornada = onCall(OPC, async req => {
+export const choferTerminarJornada = onCall(OPC_LUGAR, async req => {
   const { chofer } = await choferDe(req);
   /* La jornada abierta más reciente (puede ser de ayer si se termina después de medianoche). */
   const abiertas = await db().collection("jornadas").where("choferId", "==", chofer.id).where("estado", "==", "Abierta").limit(10).get();
@@ -342,9 +403,26 @@ export const choferTerminarJornada = onCall(OPC, async req => {
     tx.update(ref, { estado: "Cerrada", checkOutEn: ahora(), ubicacionSalida: pos, precisionSalidaM: Number.isFinite(precisionM) ? Math.round(precisionM) : null,
       odometroFinalKm: km, kmRecorridos: Number.isFinite(kmIni) ? km - kmIni : null, fotosSalida: fotos, dudasSalida: dudas,
       ...(foranea ? { descansoEnRuta: true, servicioForaneoId: enRuta.docs[0].id } : {}) });
-    return { yaEstaba: false, kmIni };
+    return { yaEstaba: false, kmIni, kmRec: Number.isFinite(kmIni) ? km - kmIni : null, desdeMs: j.data().checkInEn?.toMillis?.() || 0, fecha: j.data().fecha };
   });
   if(!r.yaEstaba){
+    /* Kilómetros del tablero contra los que registró el GPS durante el día: si no cuadran, alguien miente. */
+    let kmGps = null, puntosGps = 0;
+    try {
+      const lotes = [...(await ref.collection("posiciones").get()).docs];
+      const srvs = await db().collection("servicios").where("choferId", "==", chofer.id).where("fechaServicio", "==", r.fecha || fechaCDMX()).limit(5).get();
+      for(const sv of srvs.docs) lotes.push(...(await sv.ref.collection("posiciones").get()).docs);
+      const puntos = lotes.flatMap(l => l.data().puntos || []).filter(p => !r.desdeMs || p.tMs >= r.desdeMs);
+      puntosGps = puntos.length; kmGps = kmDePuntos(puntos);
+    } catch(e){ console.warn("km gps", e?.message); }
+    const lugar = await dondeEsta(pos);
+    await ref.update({ kmGps, puntosGps, lugarSalida: lugar, kmDesdeZocaloSalida: kmDesdeZocalo(pos), fueraDeCdmxSalida: fueraDeCdmx(pos) });
+    const dudaKm = puntosGps >= 20 ? dudaKilometros(r.kmRec, kmGps) : "";
+    if(dudaKm) await alerta({ type: "km_no_coinciden", choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
+      msg: `${chofer.nombre || "Chofer"}: ${dudaKm}. Revisa las fotos del tablero.` });
+    await alerta({ type: "checkout_registrado", informativa: true, atendida: true, choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
+      msg: `${chofer.nombre || "Chofer"} · ${horaCDMX(Date.now())} · ${r.kmRec != null ? r.kmRec + " km" : "sin km"}${kmGps ? ` (GPS ${kmGps} km)` : ""} · ${textoLugar(lugar, pos)}` });
+    await revisarZona(chofer, pos, "en su check-out").catch(e => console.warn("zona", e?.message));
     await db().doc("ubicaciones/" + chofer.id).set({ choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: "", servicioFolio: "", lat: pos.lat, lng: pos.lng,
       tMs: Date.now(), precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, confiable: true, origen: "check-out", jornadaCerrada: true, actualizadoEn: ahora() });
     if(dudas.length) await alerta({ type: "checkin_dudoso", choferId: chofer.id, choferNombre: chofer.nombre || "", msg: `Check-out de ${chofer.nombre || "chofer"} con dudas: ${dudas.join(", ")}`, lat: pos.lat, lng: pos.lng });
