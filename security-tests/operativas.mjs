@@ -9,7 +9,9 @@ let env;
 const projectId = 'demo-dmov-archive';
 const token = { email: 'user@example.invalid', email_verified: true };
 const ctx = (uid, provider = 'google.com') => env.authenticatedContext(uid, { ...token, firebase: { sign_in_provider: provider } });
-const COLS = ['rutas', 'driverLocations', 'choferes', 'gastosChofer', 'jornadas', 'mensajes', 'alertas'];
+const COLS = ['rutas', 'driverLocations', 'choferes', 'jornadas', 'mensajes', 'alertas'];
+/* Finanzas y precios: solo el director. Operaciones (Ilse) no ve números. */
+const FINANZAS = ['facturas', 'pagos', 'pagosProveedores', 'presupuestos', 'cotizaciones', 'cotizaciones_logistica', 'planes', 'cierresContables', 'viaticos', 'gastosChofer', 'tarifario'];
 
 before(async () => {
   env = await initializeTestEnvironment({ projectId, firestore: { host: '127.0.0.1', port: 8087, rules: readFileSync('firestore.rules', 'utf8') } });
@@ -18,7 +20,8 @@ before(async () => {
     const db = c.firestore();
     for(const [uid, rol, activo] of [['admin', 'admin', true], ['ops', 'operaciones', true], ['inactive', 'operaciones', false]])
       await setDoc(doc(db, 'dmov_usuarios', uid), { uid, rol, activo, email: uid + '@example.invalid', nombre: uid });
-    for(const col of COLS) await setDoc(doc(db, col, 'uno'), { nombre: 'Ejemplo', trackingId: 'TRK-1', tel: '5500000000', codigoAcceso: 'ABC123', lat: 19.4, lng: -99.1 });
+    for(const col of [...COLS, 'gastosChofer']) await setDoc(doc(db, col, 'uno'), { nombre: 'Ejemplo', trackingId: 'TRK-1', tel: '5500000000', codigoAcceso: 'ABC123', lat: 19.4, lng: -99.1 });
+    for(const col of FINANZAS) await setDoc(doc(db, col, 'fin'), { monto: 1000, total: 1160 });
   });
 });
 after(async () => env?.cleanup());
@@ -71,6 +74,15 @@ test('operaciones (Ilse) ve todo lo operativo, pero no edita choferes, gastos, a
   await assertFails(updateDoc(doc(db, 'alertas', 'uno'), { atendida: true }));                 // pero no darla por atendida
   for(const col of ['viaticos', 'unidades']) await assertFails(setDoc(doc(db, col, 'nuevo-ops'), { nombre: 'x' }));
   await assertFails(setDoc(doc(db, 'driverLocations', 'uno'), { lat: 0, lng: 0 }));
+});
+
+test('operaciones (Ilse) no ve números ni finanzas; el director sí', async () => {
+  const dbO = ctx('ops').firestore(), dbA = ctx('admin').firestore();
+  for(const col of FINANZAS){
+    await assertFails(getDoc(doc(dbO, col, 'fin')));
+    await assertFails(getDocs(collection(dbO, col)));
+    await assertSucceeds(getDoc(doc(dbA, col, 'fin')));
+  }
 });
 
 test('nadie edita un check-in: ni operaciones ni el administrador (solo el servidor)', async () => {

@@ -34,10 +34,10 @@ test('admin da de alta y cambia precios; cada cambio queda en el historial', asy
   assert.deepEqual(cambios.docs.map(d => d.data().tipo).sort(), ['alta', 'precio']);
 });
 
-test('operaciones consulta el tarifario pero no cambia precios ni escribe historial', async () => {
+test('operaciones no ve el tarifario ni cambia precios ni escribe historial', async () => {
   const db = ctx('ops').firestore();
-  await assertSucceeds(getDoc(doc(db, 'tarifario', id)));
-  await assertSucceeds(getDocs(collection(db, 'tarifario')));
+  await assertFails(getDoc(doc(db, 'tarifario', id)));
+  await assertFails(getDocs(collection(db, 'tarifario')));
   await assertFails(updateDoc(doc(db, 'tarifario', id), { 'base.eur': 1 }));
   await assertFails(setDoc(doc(db, 'tarifario', 'nacional_falso'), tarifa));
   await assertFails(crearTarifarioStore(db).guardar(usuario('ops', 'admin'), { id, ...tarifa, base: { eur: 1100 } }, { ...tarifa, base: { eur: 5 } }));
