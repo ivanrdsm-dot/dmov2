@@ -13,6 +13,7 @@ import { getStorage, ref as refStorage, uploadBytes } from "firebase/storage";
 import { correoDeChofer, enlaceNavegar, enlaceRutaCompleta } from "./lugares.ts";
 import { leerCola, agregarACola, quitarDeCola, marcarError, esErrorDeRed, yaEstabaCerrada } from "./colaChofer.ts";
 import FirmaPad from "./FirmaPad.jsx";
+import AvisoPrivacidad, { useAvisoAutorizado } from "./AvisoPrivacidad.jsx";
 
 const LETRA = "system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
 const AZUL = "#042552", NARANJA = "#F27B13", VERDE = "#059669", ROJO = "#dc2626", GRIS = "#5b6b80", FONDO = "#f1f4fb";
@@ -693,6 +694,7 @@ function TerminarDia({ chofer, llamar, subir, onCerrar, onListo }){
 export default function ChoferWeb({ db, auth, app }){
   const [usuario, setUsuario] = useState(undefined);
   const [chofer, setChofer] = useState(null), [errorCuenta, setErrorCuenta] = useState("");
+  const [avisoOk, setAvisoOk] = useAvisoAutorizado(db, usuario?.uid);   // aviso de privacidad autorizado (versión vigente)
   const [servicios, setServicios] = useState(null), [jornada, setJornada] = useState(undefined);
   const [aviso, setAviso] = useState(null), [ultimoEnvio, setUltimoEnvio] = useState(0), [errorGps, setErrorGps] = useState("");
   const [vuelta, setVuelta] = useState(0), [errorRutas, setErrorRutas] = useState(""), [avance, setAvance] = useState({});
@@ -844,6 +846,9 @@ export default function ChoferWeb({ db, auth, app }){
       <div className="dm-card"><h2 className="dm-titulo" style={{ color: ROJO }}>No se pudo entrar</h2><p className="dm-sub" style={{ color: AZUL, fontSize: 17 }}>{errorCuenta}</p>
         <button onClick={() => signOut(auth)} className="dm-btn dm-azul" style={{ marginTop: 14 }}>Salir</button></div></div></div>);
   if(!chofer) return <Cargando texto="Revisando tu cuenta…"/>;
+  /* Sin autorizar el aviso de privacidad no se avanza (el servidor también lo exige). */
+  if(avisoOk === undefined) return <Cargando texto="Revisando tu cuenta…"/>;
+  if(!avisoOk) return <AvisoPrivacidad app={app} tipo="chofer" nombre={chofer.nombre} onAutorizado={() => setAvisoOk(true)} onSalir={() => signOut(auth)}/>;
 
   /* Los 4 pasos del día */
   const a = Object.values(avance);

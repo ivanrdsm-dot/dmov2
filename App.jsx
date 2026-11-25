@@ -25,6 +25,7 @@ import {
 import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, genTrackingId, hashPin, buildEstadoResultados, generarAnalisisCFO, PL_ORDEN_DIRECTOS, PLANES, planPorNumero, etiquetaPlan, normalizarPlan, planDeFactura, planearNormalizacionPlanes, etapaFactura, ETAPAS_FACTURA, facturasLigadas, buscarCotizaciones, rangoPeriodo, etiquetaPeriodo, filasPorPeriodo, ingresosPorColumna, pctGuardado, kpisCierre, resumenEstimados, conciliarIngresos, conciliarCxC, coincideAlias, fechaLocalISO, mismaEmpresa, clienteIdCorrecto, catalogoPlanes, setCatalogoPlanes, fusionarCatalogoPlanes } from "./domain";
 import CfdiArchive from "./CfdiArchive.jsx";
 import { crearServiciosStore } from "./serviciosStore.js";
+import AvisoPrivacidad, { useAvisoAutorizado } from "./AvisoPrivacidad.jsx";
 import { faltantesCapacidad } from "./dimensionamiento.ts";
 import { crearSolicitudesStore } from "./solicitudesStore.js";
 const SolicitudesVista = lazy(()=>import("./Solicitudes.jsx"));
@@ -14964,6 +14965,7 @@ export default function App(){
 
   // 1. Auth anónima — firebase auth para Firestore, no requiere Google login
   const [authUser,setAuthUser]=useState(undefined);
+  const [avisoOk,setAvisoOk]=useAvisoAutorizado(db,authUser&&!authUser.isAnonymous?authUser.uid:null); // aviso de privacidad (versión vigente)
   useEffect(()=>{
     const unsub=onAuthStateChanged(auth,u=>{
       // RBAC: el panel de oficina YA NO cae a sesión anónima — exige Google.
@@ -15144,6 +15146,9 @@ export default function App(){
   if(!userProfile){
     return <><style>{CSS}</style><VerificandoPerfil/></>;
   }
+  /* Aviso de privacidad: sin autorizarlo no se entra al sistema (oficina). */
+  if(avisoOk===undefined) return <><style>{CSS}</style><VerificandoPerfil/></>;
+  if(!avisoOk) return <AvisoPrivacidad app={fbApp} tipo="oficina" nombre={userProfile?.nombre||""} onAutorizado={()=>setAvisoOk(true)} onSalir={async()=>{await fbSignOut(auth).catch(()=>{});window.location.reload();}}/>;
 
   const rol=userProfile?.rol||"admin";
   const isAdmin=rol==="admin";

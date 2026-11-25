@@ -16,6 +16,7 @@ import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCD
 import { defineSecret } from "firebase-functions/params";
 import { TIPOS_GASTO, revisarCarga, rendimientoHistorico } from "./lib/gasolina.js";
 import { coleccionDeAlerta } from "./lib/avisosOficina.js";
+import { VERSION_AVISO } from "./lib/avisoPrivacidad.js";
 import { revisarFotoJornada, lineaDeTexto, lineaATexto } from "./lib/evidencia.js";
 
 const OPC = { region: "us-central1", maxInstances: 5, memory: "256MiB", timeoutSeconds: 30 };
@@ -28,7 +29,9 @@ const txt = (v, max = 300) => String(v ?? "").trim().slice(0, max);
 const falla = (codigo, mensaje) => new HttpsError(codigo, mensaje);
 
 /* ── Identidad ───────────────────────────────────────────────────────────── */
-async function choferDe(req, { exigirDispositivo = true } = {}){
+/* Sin la autorización del aviso de privacidad no se trabaja (check-in, rutas, entregas, gastos...).
+   Quedan libres: ligar el celular, pedir la dirección y el SOS (que debe pasar SIEMPRE). */
+async function choferDe(req, { exigirDispositivo = true, exigirAviso = exigirDispositivo } = {}){
   const auth = req.auth;
   if(!auth || auth.token?.firebase?.sign_in_provider === "anonymous") throw falla("unauthenticated", "Inicia sesión para continuar");
   const liga = await db().doc("choferes_auth/" + auth.uid).get();
@@ -39,6 +42,10 @@ async function choferDe(req, { exigirDispositivo = true } = {}){
   if(exigirDispositivo){
     const disp = txt(req.data?.dispositivoId, 120);
     if(!disp || !chofer.dispositivoId || disp !== chofer.dispositivoId) throw falla("permission-denied", "Este equipo no está autorizado para tu cuenta. Avisa a operaciones.");
+  }
+  if(exigirAviso){
+    const c = await db().doc(`consentimientos/${auth.uid}_${VERSION_AVISO}`).get();
+    if(!c.exists || c.data().acepto !== true) throw falla("failed-precondition", "Primero autoriza el aviso de privacidad: cierra y vuelve a abrir la app.");
   }
   return { chofer, ref };
 }
@@ -527,6 +534,31 @@ export const choferLugar = onCall(OPC_LUGAR, async req => {
   const pos = { lat: Number(req.data?.lat), lng: Number(req.data?.lng) };
   if(!coordenadaValida(pos)) return { lugar: "" };
   return { lugar: await dondeEsta(pos) };
+});
+
+/** Aviso de privacidad: el chofer o la persona de oficina autoriza (o no). Queda con la hora del servidor,
+    el celular desde el que lo hizo y su historial (nada se borra). */
+export const aceptarAvisoPrivacidad = onCall(OPC, async req => {
+  const auth = req.auth;
+  if(!auth || auth.token?.firebase?.sign_in_provider === "anonymous") throw falla("unauthenticated", "Inicia sesión para continuar");
+  const version = txt(req.data?.version, 20);
+  if(version !== VERSION_AVISO) throw falla("failed-precondition", "El aviso cambió: vuelve a abrir la app.");
+  const acepto = req.data?.acepto === true;
+  const [liga, perfil] = await Promise.all([db().doc("choferes_auth/" + auth.uid).get(), db().doc("dmov_usuarios/" + auth.uid).get()]);
+  let quien;
+  if(liga.exists){ const c = await db().doc("choferes/" + liga.data().choferId).get(); quien = { tipo: "chofer", choferId: liga.data().choferId, nombre: c.data()?.nombre || "" }; }
+  else if(perfil.exists && perfil.data().activo === true) quien = { tipo: "oficina", rol: perfil.data().rol || "", nombre: perfil.data().nombre || perfil.data().email || "" };
+  else throw falla("permission-denied", "Cuenta sin acceso");
+  const ref = db().doc(`consentimientos/${auth.uid}_${version}`);
+  const prev = await ref.get();
+  if(prev.exists && prev.data().acepto === true && acepto) return { ok: true, yaEstaba: true };
+  const huella = { userAgent: txt(req.rawRequest?.headers?.["user-agent"], 300), ip: txt(req.rawRequest?.ip, 60), en: ahora() };
+  const lote = db().batch();
+  lote.set(ref, { uid: auth.uid, email: txt(auth.token?.email, 200), version, acepto, ...quien, ...huella });
+  lote.set(ref.collection("historial").doc(), { acepto, ...huella });
+  if(liga.exists) lote.update(db().doc("choferes/" + liga.data().choferId), { avisoPrivacidad: { version, acepto, en: ahora() } });
+  await lote.commit();
+  return { ok: true, acepto };
 });
 
 /** "Llegué": guarda la hora (del servidor) en que el chofer dice que llegó. Respaldo de la llegada por GPS. */
