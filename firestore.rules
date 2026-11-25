@@ -61,6 +61,7 @@ service cloud.firestore {
     match /jornadas/{id}/posiciones/{p} { allow read: if esOficina(); allow write: if false; }
     match /mensajes/{id}             { allow read, create, update: if esOficina(); allow delete: if false; }
     match /alertas/{id}              { allow read, create: if esOficina(); allow update: if esAdmin(); allow delete: if false; }
+    match /alertas_director/{id}     { allow read, update: if esAdmin(); allow create, delete: if false; }   // auditoría: solo el director; las escribe el servidor
     match /avisos_oficina/{id}       { allow read, write: if false; }
     match /servicios_precios/{id} {                                                   // montos de cada servicio: solo el director
       allow read, create, update: if esAdmin();
@@ -431,7 +432,7 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','avisos_oficina','activaciones','resumenes_ia','servicios_precios','tarifario','cotizaciones_logistica',
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','avisos_oficina','activaciones','resumenes_ia','servicios_precios','alertas_director','tarifario','cotizaciones_logistica',
         // Con papelera: el borrado lo controla su propia regla (copia obligatoria); la papelera no se edita.
         'papelera','rutas','choferes','pagosProveedores','presupuestos','cuentas','viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas','pagosAdjuntos',
         // Estas no se borran nunca (ni admin): son historia de la operación.

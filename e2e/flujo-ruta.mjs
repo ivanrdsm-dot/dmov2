@@ -194,7 +194,9 @@ test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () =
   assert.deepEqual(j.data().dudas, []);
   // Se registra si llegó tarde (contra las 7:00) y dónde estaba; al director le llega el aviso con la ubicación.
   assert.equal(typeof j.data().llegoTarde, "boolean"); assert.equal(j.data().fueraDeCdmxEntrada, false); assert.equal(j.data().placaRuta, "ABC1234");
-  const avisoIn = (await admin.firestore().collection("alertas").where("choferId", "==", "ch1").get()).docs.map(d => d.data()).find(a => ["checkin_registrado", "checkin_tarde"].includes(a.type));
+  // Los check-ins (con dirección) se guardan en alertas_director: solo el director los ve; Ilse no puede leerlos.
+  const avisoIn = (await admin.firestore().collection("alertas_director").where("choferId", "==", "ch1").get()).docs.map(d => d.data()).find(a => ["checkin_registrado", "checkin_tarde"].includes(a.type));
+  await assert.rejects(getDocs(collection(ilse.db, "alertas_director")));
   assert.ok(avisoIn && avisoIn.informativa === true && avisoIn.atendida === true && Number.isFinite(avisoIn.lat), "aviso de check-in con ubicación");
   // Gasolina: foto del ticket obligatoria; el servidor calcula el precio por litro y queda pendiente de aprobar.
   await assert.rejects(chofer.llamar("choferRegistrarGasto", { dispositivoId: "equipo-prueba-0001", tipo: "gasolina", monto: 1200, litros: 50, odometroKm: 85010, lat: BODEGA.lat, lng: BODEGA.lng }), /ticket/);
@@ -257,7 +259,7 @@ test("6 · sale a la ruta, manda su ubicación y cierra cada parada (una con pro
   const s = (await admin.firestore().doc("servicios/" + servicioId).get()).data();
   assert.equal(s.estado, "Entregada");
   assert.equal(s.paradasConProblema, 1); assert.equal(s.paradasEntregadas, 2); assert.equal(s.sinEntregas, false);
-  const alertas = (await admin.firestore().collection("alertas").get()).docs.map(d => d.data().type);
+  const alertas = [...(await admin.firestore().collection("alertas").get()).docs, ...(await admin.firestore().collection("alertas_director").get()).docs].map(d => d.data().type);
   assert.ok(!alertas.includes("velocidad_imposible"), "no debe haber falsas alertas de salto");
   assert.ok(alertas.includes("incidencia"));
   // Ya entregado: el cliente deja de ver la camioneta y ve el aviso de la parada con problema.
@@ -281,7 +283,8 @@ test("7 · la oficina lo ve en vivo y el chofer termina su día", async () => {
   const jc = (await getDoc(doc(ilse.db, "jornadas", `ch1_${fechaCDMX()}`))).data();
   assert.equal(jc.kmRecorridos, 12); assert.ok(jc.fotosSalida.odometroSalida.md5);
   assert.ok(Number.isFinite(jc.kmGps) || jc.kmGps === null); assert.equal(jc.fueraDeCdmxSalida, false);
-  const tiposCh1 = (await admin.firestore().collection("alertas").where("choferId", "==", "ch1").get()).docs.map(d => d.data().type);
+  const tiposCh1 = [...(await admin.firestore().collection("alertas").where("choferId", "==", "ch1").get()).docs,
+    ...(await admin.firestore().collection("alertas_director").where("choferId", "==", "ch1").get()).docs].map(d => d.data().type);
   assert.ok(tiposCh1.includes("checkout_registrado"), "aviso de check-out");
   assert.ok(!tiposCh1.includes("fuera_de_cdmx") && !tiposCh1.includes("unidad_no_coincide"), "sin falsas alarmas dentro de CDMX y con su camioneta");
   assert.equal((await getDoc(doc(chofer.db, "jornadas", `ch1_${fechaCDMX()}`))).data().estado, "Cerrada");

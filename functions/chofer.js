@@ -15,6 +15,7 @@ import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChofere
 import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCDMX, kmDesdeZocalo, llegadaPorGps } from "./lib/jornadaReglas.js";
 import { defineSecret } from "firebase-functions/params";
 import { TIPOS_GASTO, revisarCarga, rendimientoHistorico } from "./lib/gasolina.js";
+import { coleccionDeAlerta } from "./lib/avisosOficina.js";
 import { revisarFotoJornada, lineaDeTexto, lineaATexto } from "./lib/evidencia.js";
 
 const OPC = { region: "us-central1", maxInstances: 5, memory: "256MiB", timeoutSeconds: 30 };
@@ -52,7 +53,7 @@ async function oficinaDe(req, { admin = false } = {}){
 const actorChofer = c => ({ actorUid: "chofer:" + c.id, actorNombre: c.nombre || c.id, actorRol: "chofer" });
 const actorOficina = o => ({ actorUid: o.uid, actorNombre: o.nombre, actorRol: o.rol });
 const eventoServicio = (tx, servicioId, datos) => tx.set(db().collection(`servicios/${servicioId}/eventos`).doc(), { ...datos, ts: ahora() });
-const alerta = (datos) => db().collection("alertas").add({ atendida: false, ts: ahora(), titulo: TITULO_ALERTA[datos.type] || "Alerta de chofer", ...datos });
+const alerta = (datos) => db().collection(coleccionDeAlerta(datos.type)).add({ atendida: false, ts: ahora(), titulo: TITULO_ALERTA[datos.type] || "Alerta de chofer", ...datos });
 
 /* ── Dónde está y si tiene sentido que esté ahí ─────────────────────────── */
 /** Dirección corta del lugar más cercano (Google Places). Si falla, "" y el aviso lleva las coordenadas. */
@@ -86,12 +87,25 @@ async function paradasRecientes(choferId){
   return out;
 }
 /** Si está fuera de la zona metropolitana y ninguna ruta suya lo explica, alerta (una por día). */
+const MOVIMIENTO_SIN_RUTA_KM = 3;
+async function revisarMovimientoSinRuta(chofer, jornadaRef, pos){
+  const j = (await jornadaRef.get()).data() || {};
+  if(!coordenadaValida(j.ubicacion)) return;
+  const km = distanciaM(j.ubicacion, pos) / 1000;
+  if(km < MOVIMIENTO_SIN_RUTA_KM) return;
+  const id = `chf-mov-${chofer.id}-${j.fecha || fechaCDMX()}`;
+  if((await db().doc("alertas_director/" + id).get()).exists) return;
+  const activas = await serviciosDe(chofer.id, q => q.where("estado", "in", ["Asignada", "En ruta"]), 5);
+  if(activas.length) return;   // tiene ruta: no es movimiento sin ruta
+  await alertaUnica({ id, type: "movimiento_sin_ruta", choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
+    message: `${chofer.nombre || "Chofer"} está a ${Math.round(km * 10) / 10} km de donde hizo su check-in y no tiene ninguna ruta asignada.` });
+}
 const zonaExplicada = new Map();   // choferId → hasta cuándo ya se revisó que su ruta lo explica (evita consultar en cada lote)
 async function revisarZona(chofer, pos, momento){
   if(!fueraDeCdmx(pos)) return false;
   const id = `chf-zona-${chofer.id}-${fechaCDMX()}`;
   if((zonaExplicada.get(chofer.id) || 0) > Date.now()) return false;
-  if((await db().doc("alertas/" + id).get()).exists) return true;
+  if((await db().doc("alertas_director/" + id).get()).exists || (await db().doc("alertas/" + id).get()).exists) return true;
   if(rutaCoherente(pos, await paradasRecientes(chofer.id))){ zonaExplicada.set(chofer.id, Date.now() + 20 * 60000); return false; }
   await alertaUnica({ id, type: "fuera_de_cdmx", choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
     message: `${chofer.nombre || "Chofer"} está a ${kmDesdeZocalo(pos)} km del Zócalo (${momento}) y no tiene ninguna ruta por esa zona.` });
@@ -100,7 +114,7 @@ async function revisarZona(chofer, pos, momento){
 
 /* Alerta con id estable (la misma situación nunca se duplica). Si ya existe, no hace nada. */
 async function alertaUnica(a){
-  await db().collection("alertas").doc(a.id).create({ type: a.type, titulo: TITULO_ALERTA[a.type] || TIPOS_ALERTA_CHOFER[a.type] || "Alerta de chofer", message: a.message, msg: a.message, folio: a.folio || "",
+  await db().collection(coleccionDeAlerta(a.type)).doc(a.id).create({ type: a.type, titulo: TITULO_ALERTA[a.type] || TIPOS_ALERTA_CHOFER[a.type] || "Alerta de chofer", message: a.message, msg: a.message, folio: a.folio || "",
     choferId: a.choferId || "", choferNombre: a.choferNombre || "", servicioId: a.servicioId || "", ref: a.ref || null,
     ...(Number.isFinite(a.lat) && Number.isFinite(a.lng) ? { lat: a.lat, lng: a.lng } : {}),
     origen: "vigilante", atendida: false, read: false, ts: ahora(), createdAt: ahora() }).catch(() => {});
@@ -325,6 +339,8 @@ export const choferSubirPosiciones = onCall(OPC, async req => {
       }
     } catch(e){ console.warn("aviso de llegada", e?.message); }
   }
+  /* Se movió sin ruta: con la jornada abierta y SIN ruta asignada, a más de 3 km de donde hizo su check-in → al director. */
+  if(ultima && !servicio && jornadaRef) await revisarMovimientoSinRuta(chofer, jornadaRef, ultima).catch(e => console.warn("movimiento sin ruta", e?.message));
   /* Ojo de águila todo el día: si su última ubicación confiable está fuera de la zona metropolitana sin ruta que lo explique. */
   if(ultima) await revisarZona(chofer, ultima, "ubicación en vivo").catch(e => console.warn("zona", e?.message));
   for(const a of r.alertas) await alerta({ type: a.tipo, choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: servicio?.id || "",
@@ -444,6 +460,15 @@ export const choferTerminarJornada = onCall(OPC_LUGAR, async req => {
     const lugar = await dondeEsta(pos);
     await ref.update({ kmGps, puntosGps, lugarSalida: lugar, kmDesdeZocaloSalida: kmDesdeZocalo(pos), fueraDeCdmxSalida: fueraDeCdmx(pos) });
     const dudaKm = puntosGps >= 20 ? dudaKilometros(r.kmRec, kmGps) : "";
+    /* Km sin explicar: lo recorrido (tablero, o GPS si no hay tablero) contra lo que suman sus rutas del día (estimado del mapa). */
+    try {
+      const rutasDia = await serviciosDe(chofer.id, q => q.where("fechaServicio", "==", r.fecha || fechaCDMX()), 10);
+      const kmRutas = rutasDia.filter(d => d.data().estado !== "Cancelada").reduce((s, d) => s + (Number(d.data().rutaKm) || 0), 0);
+      const kmHechos = Number(r.kmRec) > 0 ? Number(r.kmRec) : Number(kmGps) || 0;
+      const sobran = Math.round(kmHechos - kmRutas * 1.5);
+      if(kmHechos > 20 && sobran > 20) await alerta({ type: "km_sin_explicar", choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
+        msg: `${chofer.nombre || "Chofer"} recorrió ${Math.round(kmHechos)} km hoy y sus rutas suman ${Math.round(kmRutas)} km: unos ${Math.round(kmHechos - kmRutas)} km sin explicar.` });
+    } catch(e){ console.warn("km sin explicar", e?.message); }
     if(dudaKm) await alerta({ type: "km_no_coinciden", choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
       msg: `${chofer.nombre || "Chofer"}: ${dudaKm}. Revisa las fotos del tablero.` });
     await alerta({ type: "checkout_registrado", informativa: true, atendida: true, choferId: chofer.id, choferNombre: chofer.nombre || "", lat: pos.lat, lng: pos.lng,
