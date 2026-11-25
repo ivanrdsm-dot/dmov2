@@ -16,7 +16,9 @@ export function revisarFotoJornada(meta, ahoraMs){
   /* Sello que pone la app (hora y GPS del celular). Si no coincide con la hora real, se avisa (no se bloquea). */
   const sello = String(meta.metadata?.sello || "");
   const tSello = Number(meta.metadata?.tomadaMs);
-  const aviso = !sello ? "foto sin sello de la app" : Number.isFinite(tSello) && Math.abs(subidaEnMs - tSello) > 10 * 60000 ? "la hora del celular no coincide con la real" : "";
+  const aviso = !sello ? "foto sin sello de la app"
+    : meta.metadata?.selloImpreso === "no" ? "la foto no lleva impresos el lugar y la hora"
+    : Number.isFinite(tSello) && Math.abs(subidaEnMs - tSello) > 10 * 60000 ? "la hora del celular no coincide con la real" : "";
   return { ok: true, md5: String(meta.md5Hash || ""), bytes, subidaEnMs, aviso };
 }
 

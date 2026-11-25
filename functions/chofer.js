@@ -496,6 +496,14 @@ export const choferRegistrarGasto = onCall(OPC_LUGAR, async req => {
   return { ok: true, id: ref.id, precioLitro: calc.precioLitro ?? null, rendimientoKmL: calc.rendimientoKmL ?? null, dudas: dudas.length };
 });
 
+/** Dirección donde está el chofer, para imprimirla en sus fotos (check-in, check-out, tickets). */
+export const choferLugar = onCall(OPC_LUGAR, async req => {
+  await choferDe(req, { exigirDispositivo: false });
+  const pos = { lat: Number(req.data?.lat), lng: Number(req.data?.lng) };
+  if(!coordenadaValida(pos)) return { lugar: "" };
+  return { lugar: await dondeEsta(pos) };
+});
+
 /** "Llegué": guarda la hora (del servidor) en que el chofer dice que llegó. Respaldo de la llegada por GPS. */
 export const choferLlegue = onCall(OPC, async req => {
   const { chofer } = await choferDe(req);
