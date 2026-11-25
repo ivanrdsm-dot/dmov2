@@ -561,6 +561,60 @@ export const aceptarAvisoPrivacidad = onCall(OPC, async req => {
   return { ok: true, acepto };
 });
 
+/* ── Asistencia de la OFICINA (Ilse y quien no sea director): entrada y salida con selfie EN VIVO,
+   ubicación con dirección y hora del servidor. Sin entrada no se usa el sistema (lo pide la app).
+   Horario: el de los choferes (entrada 7:00, tolerancia 10 min) mientras el director no indique otro. */
+async function horarioOficina(){
+  const e = (await db().doc("sistema/empresa").get()).data() || {};
+  return { entrada: /^\d{2}:\d{2}$/.test(e.horaEntradaOficina || "") ? e.horaEntradaOficina : UMBRALES_CHOFER.horaCheckIn, tolerancia: UMBRALES_CHOFER.toleranciaEntradaMin };
+}
+function datosFotoOficina(d){
+  const pos = { lat: Number(d.lat), lng: Number(d.lng) }, precisionM = Number(d.precisionM), posTMs = Number(d.posTMs);
+  if(!coordenadaValida(pos)) throw falla("failed-precondition", "No llegó tu ubicación. Permite la ubicación y vuelve a intentar.");
+  if(!txt(d.selfieRuta, 400)) throw falla("invalid-argument", "Toma tu foto con la cámara");
+  return { pos, precisionM, posTMs };
+}
+export const oficinaCheckIn = onCall(OPC_LUGAR, async req => {
+  const of = await oficinaDe(req);
+  const d = req.data || {}, { pos, precisionM, posTMs } = datosFotoOficina(d);
+  const fecha = fechaCDMX(), ref = db().doc(`asistencia_oficina/${of.uid}_${fecha}`);
+  if((await ref.get()).exists) return { ok: true, yaExistia: true };
+  const { fotos, problemas } = await sellarFotos({ selfie: d.selfieRuta }, `asistencia_oficina/${of.uid}/`);
+  const dudas = [...problemas, ...(Number.isFinite(precisionM) && precisionM > 150 ? [`ubicación imprecisa (±${Math.round(precisionM)} m)`] : []),
+    ...(Number.isFinite(posTMs) && Math.abs(Date.now() - posTMs) > 3 * 60000 ? ["la ubicación no era del momento"] : [])];
+  const h = await horarioOficina(), ll = llegada(Date.now(), h.entrada, h.tolerancia), lugar = await dondeEsta(pos);
+  const creada = await db().runTransaction(async tx => {
+    if((await tx.get(ref)).exists) return false;
+    tx.set(ref, { uid: of.uid, nombre: of.nombre, rol: of.rol, fecha, estado: "Abierta", checkInEn: ahora(), ubicacion: pos,
+      precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, lugarEntrada: lugar, fotos, dudas,
+      horaEntradaEsperada: h.entrada, llegoTarde: ll.tarde, tardeMin: ll.tardeMin, equipo: txt(req.rawRequest?.headers?.["user-agent"], 300) });
+    return true;
+  });
+  if(creada) await alerta({ type: ll.tarde ? "checkin_oficina_tarde" : "checkin_oficina", informativa: true, atendida: true, oficinaUid: of.uid, choferNombre: of.nombre,
+    msg: `${of.nombre} (oficina) · ${horaCDMX(Date.now())}${ll.tarde ? ` · ${ll.tardeMin} min tarde` : ""} · ${textoLugar(lugar, pos)}${dudas.length ? " · ⚠️ " + dudas.join(", ") : ""}`, lat: pos.lat, lng: pos.lng });
+  return { ok: true, yaExistia: !creada, llegoTarde: ll.tarde, tardeMin: ll.tardeMin };
+});
+export const oficinaCheckOut = onCall(OPC_LUGAR, async req => {
+  const of = await oficinaDe(req);
+  const d = req.data || {}, { pos, precisionM } = datosFotoOficina(d);
+  const ab = await db().collection("asistencia_oficina").where("uid", "==", of.uid).where("estado", "==", "Abierta").limit(5).get();
+  if(ab.empty) throw falla("failed-precondition", "No tienes una entrada abierta");
+  const ref = ab.docs.map(x => x.ref).sort((a, b) => b.id.localeCompare(a.id))[0];
+  const { fotos, problemas } = await sellarFotos({ selfieSalida: d.selfieRuta }, `asistencia_oficina/${of.uid}/`);
+  const lugar = await dondeEsta(pos);
+  const r = await db().runTransaction(async tx => {
+    const j = await tx.get(ref);
+    if(j.data().estado === "Cerrada") return { yaEstaba: true };
+    const desde = j.data().checkInEn?.toMillis?.() || Date.now();
+    tx.update(ref, { estado: "Cerrada", checkOutEn: ahora(), ubicacionSalida: pos, precisionSalidaM: Number.isFinite(precisionM) ? Math.round(precisionM) : null,
+      lugarSalida: lugar, fotosSalida: fotos, dudasSalida: problemas, horasTrabajadas: Math.round((Date.now() - desde) / 360000) / 10 });
+    return { yaEstaba: false, horas: Math.round((Date.now() - desde) / 360000) / 10 };
+  });
+  if(!r.yaEstaba) await alerta({ type: "checkout_oficina", informativa: true, atendida: true, oficinaUid: of.uid, choferNombre: of.nombre,
+    msg: `${of.nombre} (oficina) · ${horaCDMX(Date.now())} · ${r.horas} h · ${textoLugar(lugar, pos)}`, lat: pos.lat, lng: pos.lng });
+  return { ok: true, ...r };
+});
+
 /** "Llegué": guarda la hora (del servidor) en que el chofer dice que llegó. Respaldo de la llegada por GPS. */
 export const choferLlegue = onCall(OPC, async req => {
   const { chofer } = await choferDe(req);
