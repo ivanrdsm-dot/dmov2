@@ -10,6 +10,11 @@ export const ALERTAS_AL_CELULAR = {
 export const AVISOS_INFORMATIVOS = {
   checkin_registrado: "✅ Check-in", checkin_tarde: "⏰ Check-in TARDE", checkout_registrado: "🏁 Check-out", resumen_diario: "📋 Resumen del día",
 };
+/* Avisos que puede recibir operaciones (Ilse): solo lo necesario para atender la operación, sin direcciones.
+   TODO lo demás (check-in/out con dirección y mapa, posibles trampas, gastos, resumen) llega SOLO al director. */
+export const AVISOS_PARA_OPERACIONES = ["sos", "detenido", "fuera_de_ruta", "sin_ubicacion", "sin_checkin", "sin_checkout", "incidencia", "cierre_fuera_de_punto", "ruta_excedida", "cambio_sin_enterado"];
+export const soloDirector = a => a?.informativa === true || !AVISOS_PARA_OPERACIONES.includes(a?.type);
+
 export function avisoDeAlerta(a){
   const info = a?.informativa === true ? AVISOS_INFORMATIVOS[a?.type] : null;
   const titulo = info || ALERTAS_AL_CELULAR[a?.type];
@@ -17,5 +22,6 @@ export function avisoDeAlerta(a){
   const quien = String(a.choferNombre || "").trim();
   const texto = String(a.message || a.msg || "").trim() || (quien ? quien : "Revisa el sistema");
   const mapa = Number.isFinite(a.lat) && Number.isFinite(a.lng) ? `https://www.google.com/maps?q=${a.lat},${a.lng}` : "";
-  return { title: titulo + (quien && !texto.includes(quien) ? " · " + quien : ""), body: texto.slice(0, 220), tag: "alerta-" + a.id, url: info && mapa ? mapa : "/?v=operacion" };
+  return { title: titulo + (quien && !texto.includes(quien) ? " · " + quien : ""), body: texto.slice(0, 220), tag: "alerta-" + a.id, url: info && mapa ? mapa : "/?v=operacion",
+    soloDirector: soloDirector(a) };
 }

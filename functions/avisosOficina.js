@@ -41,12 +41,14 @@ export const avisarOficinaPush = onDocumentCreated({ document: "alertas/{aid}", 
   if(!n) return;
   const publica = String(process.env.VAPID_PUBLIC_KEY || ""), privada = String(VAPID_PRIVADA.value() || "");
   if(!publica || !privada) return;
-  const subs = await getFirestore().collection("avisos_oficina").where("activo", "==", true).limit(50).get();
-  if(subs.empty) return;
+  const todas = await getFirestore().collection("avisos_oficina").where("activo", "==", true).limit(50).get();
+  /* Direcciones, check-ins y posibles trampas: solo al celular del director (nunca a operaciones). */
+  const subs = { docs: todas.docs.filter(d => !n.soloDirector || d.data().rol === "admin") };
+  if(!subs.docs.length) return;
   webpush.setVapidDetails("https://salesflow-crm-13c4a.web.app", publica, privada);
   let enviados = 0;
   await Promise.all(subs.docs.map(async d => {
-    try { await webpush.sendNotification({ endpoint: d.data().endpoint, keys: d.data().keys }, JSON.stringify(n), { TTL: 3600, urgency: "high" }); enviados++; }
+    try { const { soloDirector: _sd, ...aviso } = n; await webpush.sendNotification({ endpoint: d.data().endpoint, keys: d.data().keys }, JSON.stringify(aviso), { TTL: 3600, urgency: "high" }); enviados++; }
     catch(err){
       if([404, 410].includes(err?.statusCode)) await d.ref.update({ activo: false, bajaEn: FieldValue.serverTimestamp(), bajaMotivo: "El celular ya no acepta avisos" });
       else logger.warn("avisos oficina: no se pudo mandar", { status: err?.statusCode });
