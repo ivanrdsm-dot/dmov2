@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, query, where, limit, getDocs, Timestamp } from "firebase/firestore";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, boton, Chip } from "./uiBasico.jsx";
-import { tarjetasOperadores, volumenHistorico, REGLAS_INCENTIVO } from "./desempeno.ts";
+import { tarjetasOperadores, volumenHistorico, costosOperador, resumenCamionetas, REGLAS_INCENTIVO } from "./desempeno.ts";
 
 const ms = v => v?.toMillis ? v.toMillis() : typeof v === "number" ? v : null;
 const mesCDMX = (n = 0) => { const d = new Date(Date.now() - 6 * 3600000); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 7); };
@@ -12,6 +12,7 @@ const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "
 const nombreMes = m => `${MESES[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
 const horas = m => m == null ? "sin dato" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
 const tarjeta = { background: "#fff", border: "1px solid " + BORDER, borderRadius: 14, padding: "14px 16px" };
+const pesos = n => "$" + Number(n || 0).toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const bonito = n => String(n || "").toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
 const COLOR = { "Califica": GREEN, "Casi": AMBER, "No califica": MUTED };
 
@@ -27,12 +28,13 @@ export default function Desempeno({ db }){
     let vivo = true; setDatos(null); setError("");
     (async () => {
       const ini = mes + "-01", fin = mes + "-31", iniMs = Date.parse(ini + "T00:00:00-06:00"), finMs = Date.parse(mesSiguiente(mes) + "-01T00:00:00-06:00");
-      const [srv, jor, ale, cho, his] = await Promise.all([
+      const [srv, jor, ale, cho, his, gas] = await Promise.all([
         getDocs(query(collection(db, "servicios"), where("fechaServicio", ">=", ini), where("fechaServicio", "<=", fin), limit(600))),
         getDocs(query(collection(db, "jornadas"), where("fecha", ">=", ini), where("fecha", "<=", fin), limit(1000))),
         getDocs(query(collection(db, "alertas"), where("ts", ">=", Timestamp.fromMillis(iniMs)), where("ts", "<", Timestamp.fromMillis(finMs)), limit(2000))),
         getDocs(collection(db, "choferes")),
-        getDocs(query(collection(db, "servicios"), where("historico", "==", true), limit(1000)))]);
+        getDocs(query(collection(db, "servicios"), where("historico", "==", true), limit(1000))),
+        getDocs(query(collection(db, "gastosChofer"), where("fechaTs", ">=", Timestamp.fromMillis(iniMs)), where("fechaTs", "<", Timestamp.fromMillis(finMs)), limit(2000)))]);
       const nombres = Object.fromEntries(cho.docs.map(d => [d.id, String(d.data().nombre || "")]));
       const deApp = srv.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.choferId && !s.historico && s.estado !== "Cancelada");
       const rutas = await Promise.all(deApp.map(async s => {
@@ -41,12 +43,14 @@ export default function Desempeno({ db }){
           salidaMs: ms(s.estadoTs?.["En ruta"]), finMs: ms(s.estadoTs?.Entregada), estimadoManejoSeg: s.rutaDuracionSeg ?? null, km: s.rutaKm ?? null, foraneo: s.foraneo === true,
           paradas: (ps?.docs || []).map(d => { const p = d.data(), e = p.evidencia || {};
             return { tipo: p.tipo, estado: p.estado, llegadaMs: p.llegadaGpsMs ?? p.llegadaMs ?? null, cerradaMs: p.cerradaMs ?? ms(p.cerradaEn),
-              incidencia: p.incidencia, conFoto: (e.fotos || []).length > 0, conFirmaOReceptor: !!(e.firmaRuta || e.receptor), porExcepcion: p.cerradaPorExcepcion === true }; }) };
+              incidencia: p.incidencia, conFoto: (e.fotos || []).length > 0, conFirmaOReceptor: !!(e.firmaRuta || e.receptor), porExcepcion: p.cerradaPorExcepcion === true, horaPactada: p.horaPactada || "" }; }) };
       }));
       const jornadas = jor.docs.map(d => d.data()).filter(j => j.choferId);
       const alertas = ale.docs.map(d => d.data());
       const historico = volumenHistorico(his.docs.map(d => d.data()), nombres);
-      if(vivo) setDatos({ tarjetas: tarjetasOperadores(rutas, jornadas, alertas, nombres), historico, rutasMes: rutas.length });
+      const gastos = gas.docs.map(d => d.data());
+      const tarjetas = tarjetasOperadores(rutas, jornadas, alertas, nombres).map(t => ({ ...t, costos: costosOperador(t.choferId, jornadas, gastos) }));
+      if(vivo) setDatos({ tarjetas, historico, rutasMes: rutas.length, camionetas: resumenCamionetas(jornadas, gastos) });
     })().catch(e => vivo && setError("No se pudieron leer los datos: " + String(e?.message || "").replace(/^.*?:\s*/, "")));
     return () => { vivo = false; };
   }, [db, mes]);
@@ -89,7 +93,12 @@ export default function Desempeno({ db }){
               <Dato t="Puntualidad" v={t.puntualidad == null ? "sin dato" : t.puntualidad + " %"} sub={t.retardos ? `${t.retardos} retardo${t.retardos > 1 ? "s" : ""} · ${t.minTarde} min` : t.diasTrabajados ? `${t.diasTrabajados} día${t.diasTrabajados > 1 ? "s" : ""}` : ""}
                 color={t.puntualidad == null ? MUTED : t.puntualidad >= REGLAS_INCENTIVO.puntualidadMin ? GREEN : ROSE}/>
               <Dato t="Evidencia" v={t.evidencia == null ? "sin dato" : t.evidencia + " %"} sub={t.incidencias ? `${t.incidencias} incidencias` : ""} color={t.evidencia == null ? MUTED : t.evidencia >= REGLAS_INCENTIVO.evidenciaMin ? GREEN : AMBER}/>
+              <Dato t="A tiempo con cliente" v={t.aTiempoCliente == null ? "sin horas" : t.aTiempoCliente + " %"} sub={t.conPactada ? `${t.conPactada} con hora pactada${t.minTardeCliente ? ` · ${t.minTardeCliente} min tarde` : ""}` : "pacta horas al asignar"}
+                color={t.aTiempoCliente == null ? MUTED : t.aTiempoCliente >= REGLAS_INCENTIVO.aTiempoClienteMin ? GREEN : ROSE}/>
               <Dato t="Alertas de ruta" v={t.alertasOperacion} color={t.alertasOperacion ? AMBER : TEXT}/>
+              <Dato t="Kilómetros" v={t.costos.km ? t.costos.km.toLocaleString("es-MX") + " km" : "sin dato"} sub={t.costos.kmGps ? `GPS ${t.costos.kmGps.toLocaleString("es-MX")} km` : ""} color={t.costos.km ? TEXT : MUTED}/>
+              <Dato t="Gasolina" v={t.costos.gasolina ? pesos(t.costos.gasolina) : "sin cargas"} sub={t.costos.litros ? `${t.costos.litros} L${t.costos.costoGasKm ? ` · ${pesos(t.costos.costoGasKm)}/km` : ""}` : ""} color={t.costos.gasolina ? TEXT : MUTED}/>
+              <Dato t="Otros gastos" v={t.costos.otros ? pesos(t.costos.otros) : "$0"} sub={t.costos.gastosDudosos ? `⚠️ ${t.costos.gastosDudosos} que no cuadran` : ""} color={t.costos.gastosDudosos ? ROSE : TEXT}/>
             </div>
             {abierto === t.choferId && <div style={{ marginTop: 12, borderTop: "1px solid " + BORDER, paddingTop: 10, display: "grid", gap: 10 }}>
               <div style={{ display: "grid", gap: 4 }}>{t.incentivo.reglas.map(r => <div key={r.regla} style={{ fontSize: 14, color: r.ok ? GREEN : ROSE }}>{r.ok ? "✓" : "✗"} {r.regla} <span style={{ color: MUTED }}>· {r.valor}</span></div>)}</div>
@@ -101,6 +110,18 @@ export default function Desempeno({ db }){
                   <td style={{ padding: "5px 6px" }}>{horas(m.estimadoMin)}</td><td style={{ padding: "5px 6px", fontWeight: 800 }}>{m.eficiencia == null ? "—" : m.eficiencia + " %"}</td></tr>)}</tbody></table></div>}
             </div>}
           </div>)}
+
+          {datos.camionetas.length > 0 && <div style={tarjeta}>
+            <b style={{ fontSize: 16, color: TEXT }}>Camionetas · {nombreMes(mes)}</b>
+            <div style={{ fontSize: 13, color: MUTED, margin: "2px 0 8px" }}>Kilómetros del tablero (check-in a check-out) y cargas de gasolina con ticket. Rendimiento = km ÷ litros.</div>
+            <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14, minWidth: 560 }}>
+              <thead><tr style={{ color: MUTED, textAlign: "left", fontSize: 11 }}>{["Placa", "Días", "Km", "Cargas", "Litros", "Gasolina", "Rendimiento", "$ por km", "$ por litro"].map(h => <th key={h} style={{ padding: "4px 6px" }}>{h}</th>)}</tr></thead>
+              <tbody>{datos.camionetas.map(c => <tr key={c.placa} style={{ borderTop: "1px solid " + BORDER, fontVariantNumeric: "tabular-nums" }}>
+                <td style={{ padding: "5px 6px", fontFamily: MONO, fontWeight: 700 }}>{c.placa}{c.dudas ? " ⚠️" : ""}</td><td style={{ padding: "5px 6px" }}>{c.dias}</td>
+                <td style={{ padding: "5px 6px" }}>{c.km.toLocaleString("es-MX")}</td><td style={{ padding: "5px 6px" }}>{c.cargas}</td><td style={{ padding: "5px 6px" }}>{c.litros || "—"}</td>
+                <td style={{ padding: "5px 6px" }}>{c.gasto ? pesos(c.gasto) : "—"}</td><td style={{ padding: "5px 6px", fontWeight: 800 }}>{c.rendimiento ? c.rendimiento + " km/L" : "sin dato"}</td>
+                <td style={{ padding: "5px 6px" }}>{c.costoKm ? pesos(c.costoKm) : "—"}</td><td style={{ padding: "5px 6px" }}>{c.precioLitro ? pesos(c.precioLitro) : "—"}</td></tr>)}</tbody></table></div>
+          </div>}
 
           {datos.historico.length > 0 && <div style={tarjeta}>
             <b style={{ fontSize: 16, color: TEXT }}>Viajes por chofer · bitácora de Ilse (antes de la app)</b>

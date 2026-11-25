@@ -179,6 +179,14 @@ test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () =
   assert.equal(typeof j.data().llegoTarde, "boolean"); assert.equal(j.data().fueraDeCdmxEntrada, false); assert.equal(j.data().placaRuta, "ABC1234");
   const avisoIn = (await admin.firestore().collection("alertas").where("choferId", "==", "ch1").get()).docs.map(d => d.data()).find(a => ["checkin_registrado", "checkin_tarde"].includes(a.type));
   assert.ok(avisoIn && avisoIn.informativa === true && avisoIn.atendida === true && Number.isFinite(avisoIn.lat), "aviso de check-in con ubicación");
+  // Gasolina: foto del ticket obligatoria; el servidor calcula el precio por litro y queda pendiente de aprobar.
+  await assert.rejects(chofer.llamar("choferRegistrarGasto", { dispositivoId: "equipo-prueba-0001", tipo: "gasolina", monto: 1200, litros: 50, odometroKm: 85010, lat: BODEGA.lat, lng: BODEGA.lng }), /ticket/);
+  const ticket = await subir("ticket_gasolina.jpg");
+  const g = await chofer.llamar("choferRegistrarGasto", { dispositivoId: "equipo-prueba-0001", tipo: "gasolina", monto: 1200, litros: 50, odometroKm: 85010, fotoTicketRuta: ticket, lat: BODEGA.lat, lng: BODEGA.lng });
+  assert.equal(g.precioLitro, 24);
+  const gd = (await admin.firestore().doc("gastosChofer/" + g.id).get()).data();
+  assert.equal(gd.estado, "pendiente"); assert.equal(gd.unidadPlaca, "ABC1234"); assert.ok(gd.fotoTicket.md5, "huella del ticket");
+  await assert.rejects(chofer.llamar("choferRegistrarGasto", { dispositivoId: "equipo-prueba-0001", tipo: "gasolina", monto: 1200, litros: 50, odometroKm: 84000, fotoTicketRuta: await subir("ticket2.jpg"), lat: BODEGA.lat, lng: BODEGA.lng }).then(r => { if(r.dudas < 1) throw new Error("debió marcar duda"); throw new Error("ok"); }), /ok/);   // km hacia atrás → duda
   // Con la jornada abierta (aún sin ruta) su ubicación también se registra.
   const r = await chofer.llamar("choferSubirPosiciones", { dispositivoId: "equipo-prueba-0001", servicioId: "", posiciones: [{ ...BODEGA, tMs: Date.now() - 2 * MIN + 1000, precisionM: 10 }] });   // antes de salir a ruta
   assert.equal(r.aceptadas, 1);

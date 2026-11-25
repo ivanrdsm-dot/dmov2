@@ -476,6 +476,7 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
       <span className="dm-kicker">Siguiente · {siguiente.tipo === "carga" ? "Recoger" : "Entregar"}</span>
       <h2 className="dm-titulo" style={{ marginTop: 10, fontSize: 24 }}>{siguiente.nombre}</h2>
       <p className="dm-sub" style={{ fontSize: 16 }}>{siguiente.direccion}</p>
+      {siguiente.horaPactada && <div style={{ display: "inline-block", background: "#fff7ed", color: "#c2410c", borderRadius: 10, padding: "6px 10px", fontWeight: 900, fontSize: 16, marginTop: 4 }}>⏰ Llega antes de las {siguiente.horaPactada}</div>}
       {(siguiente.contacto || siguiente.telefono) && <p className="dm-sub" style={{ color: AZUL, fontWeight: 700 }}>👤 {siguiente.contacto} {siguiente.telefono && <a href={"tel:" + siguiente.telefono} style={{ color: AZUL }}>📞 {siguiente.telefono}</a>}</p>}
       <div className="dm-dos">
         <a className="dm-btn dm-linea" href={enlaceNavegar({ lat: siguiente.lat, lng: siguiente.lng })} target="_blank" rel="noreferrer">🧭 Cómo llegar</a>
@@ -491,7 +492,7 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
           return (
             <div key={p.id} className={"dm-tl-item" + (p.estado === "Incidencia" ? " prob" : lista ? " hecha" : esSig ? " sig" : "")}>
               <div className="dm-tl-dot">{p.estado === "Incidencia" ? "!" : lista ? "✓" : p.orden}</div>
-              <div style={{ fontWeight: 900, fontSize: 16 }}>{p.tipo === "carga" ? "Recoger · " : "Entregar · "}{p.nombre}</div>
+              <div style={{ fontWeight: 900, fontSize: 16 }}>{p.tipo === "carga" ? "Recoger · " : "Entregar · "}{p.nombre}{p.horaPactada ? ` · ⏰ ${p.horaPactada}` : ""}</div>
               <div style={{ color: GRIS, fontSize: 14 }}>{p.direccion}</div>
               {detenida(p) && !lista && <div style={{ color: ROJO, fontWeight: 900, fontSize: 14, marginTop: 2 }}>⛔ NO ENTREGAR · {p.detenida.motivo || "detenida por la oficina"}</div>}
               {p.estado === "Incidencia" && <div style={{ color: "#c2410c", fontWeight: 800, fontSize: 13, marginTop: 2 }}>⚠️ {p.incidencia || "Con problema"}</div>}
@@ -508,6 +509,62 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
     {abierta && <Entregar chofer={chofer} servicio={servicio} parada={abierta} llamar={llamar} subir={subir} mandarAhora={() => mandarAhora(servicio.id)}
       onEnCola={() => { onEnCola?.(); avisar("📶 Sin señal: la entrega quedó guardada con su hora y se manda sola cuando vuelva la señal."); }}
       onCerrar={ok => { setAbierta(null); if(ok && !enCola.includes(`${servicio.id}_${abierta.id}`)) avisar(abierta.tipo === "carga" ? "📦 Carga registrada." : "✅ Entrega registrada. ¡Bien!"); }}/>}
+  </>);
+}
+
+/* ── Gasolina o gasto: foto del ticket en este momento, monto y (en gasolina) litros y km del tablero.
+      El servidor calcula precio por litro y rendimiento, y avisa a la oficina si algo no cuadra. ── */
+const TIPOS = [["gasolina", "⛽ Gasolina"], ["caseta", "🛣️ Caseta"], ["comida", "🍽️ Comida"], ["hotel", "🏨 Hotel"], ["refaccion", "🔧 Refacción"], ["otro", "📄 Otro"]];
+function RegistrarGasto({ chofer, llamar, subir, onCerrar, onListo }){
+  const [tipo, setTipo] = useState("gasolina"), [ticket, setTicket] = useState(null), [monto, setMonto] = useState(""), [litros, setLitros] = useState(""), [km, setKm] = useState("");
+  const [lleno, setLleno] = useState(true), [nota, setNota] = useState(""), [error, setError] = useState(""), [paso, setPaso] = useState("");
+  const tomada = useRef(0), gas = tipo === "gasolina";
+  const enviar = async () => {
+    const faltan = [!ticket && "foto del ticket", !(Number(monto) > 0) && "cuánto pagaste", gas && !(Number(litros) > 0) && "litros", gas && !(Number(km) > 0) && "km del tablero"].filter(Boolean);
+    if(faltan.length){ setError("Falta: " + faltan.join(", ") + "."); return; }
+    if(Date.now() - tomada.current > FOTO_VIGENTE_MIN * 60000){ setError("Vuelve a tomar la foto del ticket: debe ser de este momento."); return; }
+    setError("");
+    try {
+      setPaso("Leyendo tu ubicación…"); const p = await posicionAhora();
+      setPaso("Subiendo el ticket…");
+      const lineas = [`D MOVIMIENTO · ${tipo.toUpperCase()} · ${chofer.nombre || ""}`, horaLocal(tomada.current), `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)}`];
+      const ruta = await subir(`jornadas/${chofer.id}/${fechaCDMX()}_${Date.now()}_ticket_${tipo}.jpg`, await conSello(ticket, lineas), { sello: lineas.join(" | "), tomadaMs: String(tomada.current) });
+      setPaso("Registrando…");
+      const r = await llamar("choferRegistrarGasto", { tipo, monto: Number(monto), litros: gas ? Number(litros) : null, odometroKm: gas ? Number(km) : null, tanqueLleno: lleno,
+        nota: nota.trim(), fotoTicketRuta: ruta, lat: p.coords.latitude, lng: p.coords.longitude });
+      onListo(r);
+    } catch(e){ setError(mensaje(e)); }
+    setPaso("");
+  };
+  return (<>
+    <div className="dm-velo" onClick={() => !paso && onCerrar()}/>
+    <div className="dm-hoja" role="dialog" aria-label="Registrar gasto">
+      <div className="dm-asa"/>
+      <h2 className="dm-titulo">⛽ Gasolina o gasto</h2>
+      <p className="dm-sub">Toma la foto del ticket con la cámara. Se guarda con tu ubicación y la hora.</p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
+        {TIPOS.map(([k, t]) => <button key={k} type="button" onClick={() => setTipo(k)} className="dm-btn" aria-pressed={tipo === k}
+          style={{ width: "auto", flex: "1 1 30%", padding: "10px 8px", fontSize: 15, background: tipo === k ? AZUL : "#fff", color: tipo === k ? "#fff" : AZUL, border: "2px solid " + AZUL }}>{t}</button>)}
+      </div>
+      <div className="dm-fotos" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <Foto titulo="Foto del ticket" icono="🧾" archivo={ticket} onCambio={f => { tomada.current = f.lastModified || Date.now(); setError(""); setTicket(f); }} camara="environment" onError={setError}/>
+      </div>
+      <div className="dm-et">¿Cuánto pagaste? ($)</div>
+      <input className="dm-in" inputMode="decimal" value={monto} onChange={e => setMonto(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Ej. 1200"/>
+      {gas && <>
+        <div className="dm-et">¿Cuántos litros?</div>
+        <input className="dm-in" inputMode="decimal" value={litros} onChange={e => setLitros(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="Ej. 50"/>
+        <div className="dm-et">Kilómetros que marca el tablero</div>
+        <input className="dm-in" inputMode="numeric" value={km} onChange={e => setKm(e.target.value.replace(/[^0-9]/g, ""))} placeholder="Ej. 85400"/>
+        <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 17, fontWeight: 700, color: AZUL, marginTop: 12 }}>
+          <input type="checkbox" checked={lleno} onChange={e => setLleno(e.target.checked)} style={{ width: 24, height: 24 }}/> Llené el tanque</label>
+      </>}
+      <div className="dm-et">Nota (opcional)</div>
+      <input className="dm-in" value={nota} onChange={e => setNota(e.target.value)} placeholder={gas ? "Ej. Gasolinera en la México-Querétaro" : "¿Para qué fue?"}/>
+      <Falla>{error}</Falla>
+      <button onClick={enviar} disabled={!!paso} className="dm-btn dm-naranja" style={{ marginTop: 16 }}>{paso || "Registrar"}</button>
+      <button onClick={onCerrar} disabled={!!paso} className="dm-btn dm-linea" style={{ marginTop: 10 }}>Cancelar</button>
+    </div>
   </>);
 }
 
@@ -679,6 +736,7 @@ export default function ChoferWeb({ db, auth, app }){
     return () => { clearInterval(t); window.removeEventListener("online", sincronizar); };
   }, [chofer, sincronizar]);
   const terminar = () => setTerminando(true);
+  const [gastando, setGastando] = useState(false);
 
   const Cargando = ({ texto }) => <div className="dm"><Estilos/><div className="dm-vacio" style={{ paddingTop: 120 }}><div>🚚</div><p className="dm-sub">{texto}</p></div></div>;
   if(usuario === undefined) return <Cargando texto="Cargando…"/>;
@@ -715,6 +773,8 @@ export default function ChoferWeb({ db, auth, app }){
       <div className="dm-pasos">{pasos.map(([t, ok], i) => <div key={t} className={"dm-paso" + (ok ? " hecho" : i === actual ? " ahora" : "")}><b>{ok ? "✓" : i + 1}</b>{t}</div>)}</div>
       {terminando && <TerminarDia chofer={chofer} llamar={llamar} subir={subir} onCerrar={() => setTerminando(false)}
         onListo={() => { setTerminando(false); setVuelta(v => v + 1); avisar("🙌 ¡Gracias! Tu día quedó cerrado."); }}/>}
+      {gastando && <RegistrarGasto chofer={chofer} llamar={llamar} subir={subir} onCerrar={() => setGastando(false)}
+        onListo={r => { setGastando(false); avisar("✓ Gasto registrado" + (r?.precioLitro ? ` · $${r.precioLitro} por litro` : "") + (r?.rendimientoKmL ? ` · ${r.rendimientoKmL} km/L` : "") + ". La oficina lo revisa."); }}/>}
       {aviso && aviso.texto && <div className="dm-toast" style={{ background: aviso.error ? ROJO : VERDE }}>{aviso.texto}</div>}
       {pidiendoSos && <div className="dm-velo" role="alertdialog" aria-modal="true" aria-labelledby="sos-t" style={{ position: "fixed", inset: 0, background: "rgba(4,37,82,.55)", zIndex: 90, display: "flex", alignItems: "flex-end" }}>
         <div className="dm-card" style={{ width: "100%", borderRadius: "22px 22px 0 0", padding: "22px 18px calc(22px + env(safe-area-inset-bottom))", margin: 0 }}>
@@ -741,6 +801,7 @@ export default function ChoferWeb({ db, auth, app }){
           {servicios.map(s => <Servicio key={s.id} db={db} chofer={chofer} servicio={s} jornadaAbierta={jornadaAbierta} llamar={llamar} subir={subir} mandarAhora={mandarAhora} avisar={avisar}
             enCola={cola.map(x => x.id)} onEnCola={() => setCola(leerCola(almacenLocal()))}
             onPaso={(id, v) => setAvance(x => ({ ...x, [id]: v }))}/>)}
+          {jornadaAbierta && <button onClick={() => setGastando(true)} className="dm-btn dm-linea" style={{ margin: "4px 0 12px" }}>⛽ Gasolina o gasto</button>}
           {jornadaAbierta && !enRuta && !(servicios || []).some(s => s.estado === "Asignada") && <div className="dm-pie"><div>
             <button onClick={terminar} className="dm-btn dm-azul">🏁 Terminar mi día</button></div></div>}
           {jornadaAbierta && enRuta?.foraneo && <div className="dm-card" style={{ textAlign: "center" }}>

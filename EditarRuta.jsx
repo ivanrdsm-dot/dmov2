@@ -44,7 +44,7 @@ export default function EditarRuta({ db, usuario, servicio, lugares, token, llam
     try {
       const conId = await guardarLugares(db, usuario, nuevas, lugares);
       const r = await llamar("oficinaEditarRuta", { servicioId: servicio.id, quitar,
-        agregar: conId.map(p => ({ puntoId: p.puntoId, nombre: String(p.nombre).trim(), direccion: p.direccion || "", tipo: p.tipo, contacto: p.contacto || "", telefono: p.telefono || "" })) });
+        agregar: conId.map(p => ({ puntoId: p.puntoId, nombre: String(p.nombre).trim(), direccion: p.direccion || "", tipo: p.tipo, contacto: p.contacto || "", telefono: p.telefono || "", horaPactada: p.horaPactada || "" })) });
       setQuitar([]); setNuevas([]);
       setHecho(`✓ Listo: ${[r.agregadas && `${r.agregadas} agregada${r.agregadas === 1 ? "" : "s"}`, r.quitadas && `${r.quitadas} quitada${r.quitadas === 1 ? "" : "s"}`].filter(Boolean).join(" y ")}. ${servicio.choferNombre || "El chofer"} ya lo ve en su celular.`);
     } catch(e){ setError(mensajeError(e)); }
