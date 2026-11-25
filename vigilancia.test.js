@@ -103,6 +103,9 @@ describe("avisos al celular de la oficina", () => {
   it("solo las alertas de choferes, con quién y qué pasó", () => {
     expect(avisoDeAlerta({ id: "a1", type: "detenido", choferNombre: "Israel", message: "Israel lleva 25 min detenido" })).toEqual({ title: "⏸️ Chofer detenido", body: "Israel lleva 25 min detenido", tag: "alerta-a1", url: "/?v=operacion", soloDirector: false });
     expect(avisoDeAlerta({ id: "a2", type: "sos", choferNombre: "Elías", msg: "SOS del chofer" }).title).toBe("🚨 SOS del chofer · Elías");
+    /* Cada ruta que asigna operaciones le llega SOLO al director, aunque nazca cerrada (es informativa). */
+    const r = avisoDeAlerta({ id: "a3", type: "ruta_asignada", informativa: true, atendida: true, choferNombre: "Elías", msg: "Ilse asignó SRV-2026-0004 · TACRE · 2026-11-27 · Elías" });
+    expect(r).toMatchObject({ title: "🚚 Ruta asignada", soloDirector: true });
     expect(avisoDeAlerta({ id: "a3", type: "solicitud_sin_respuesta", message: "x" })).toBe(null);
     expect(avisoDeAlerta({ id: "a4", type: "sos", atendida: true })).toBe(null);
   });
@@ -185,7 +188,7 @@ describe("quién recibe cada aviso", () => {
 import { coleccionDeAlerta } from "./functions/lib/avisosOficina.js";
 describe("dónde se guarda cada alerta", () => {
   it("auditoría en alertas_director (solo el director); lo operativo en alertas", () => {
-    for(const t of ["checkin_registrado", "movimiento_sin_ruta", "km_sin_explicar", "gasto_dudoso", "ubicacion_simulada", "fuera_de_cdmx"]) expect(coleccionDeAlerta(t)).toBe("alertas_director");
+    for(const t of ["checkin_registrado", "ruta_asignada", "movimiento_sin_ruta", "km_sin_explicar", "gasto_dudoso", "ubicacion_simulada", "fuera_de_cdmx"]) expect(coleccionDeAlerta(t)).toBe("alertas_director");
     for(const t of ["sos", "detenido", "incidencia", "sin_checkin"]) expect(coleccionDeAlerta(t)).toBe("alertas");
   });
 });
