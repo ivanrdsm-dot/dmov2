@@ -9,7 +9,13 @@ import { billingFields } from "./billing.js";
 import { planDeFactura } from "./domain.ts";
 const MESES_FAC = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 
-const CAMPOS_PRECIO = ["precio", "precioAprobadoPor", "precioAprobadoEn"];
+/* Montos de un servicio: viven aparte, en servicios_precios/{id} (solo el director los lee y escribe).
+   El servicio que ve operaciones nunca lleva números. */
+export const CAMPOS_DINERO = ["precio", "precioPropuesto", "precioAprobadoPor", "precioAprobadoEn", "costoTotal", "costosN", "costosPorConcepto", "costosActualizadosEn"];
+const sinDinero = o => Object.fromEntries(Object.entries(o || {}).filter(([k]) => !CAMPOS_DINERO.includes(k)));
+const conDinero = o => Object.fromEntries(Object.entries(o || {}).filter(([k, v]) => ["precio", "precioPropuesto"].includes(k) && v !== undefined && v !== "" && v !== null));
+/** Junta cada servicio con sus montos (si quien mira es el director y los puede leer). */
+export const juntarPrecios = (servicios, precios = {}) => servicios.map(s => precios[s.id] ? { ...s, ...precios[s.id], id: s.id } : s);
 const aMs = v => (v && typeof v.toMillis === "function") ? v.toMillis() : (typeof v === "number" ? v : null);
 /* Timestamps de Firestore → ms, para que el dominio y la pantalla trabajen con números. */
 export const normalizarServicio = (id, d) => {
@@ -31,8 +37,15 @@ export function crearServiciosStore(db){
   const col = collection(db, "servicios");
   return {
     suscribir(cb, onErr){
-      return onSnapshot(query(col, orderBy("creadoEn", "desc"), limit(300)),
-        s => cb(s.docs.map(d => normalizarServicio(d.id, d.data({ serverTimestamps: "estimate" })))), onErr);
+      let servicios = [], precios = {};
+      const emitir = () => cb(juntarPrecios(servicios, precios));
+      const u1 = onSnapshot(query(col, orderBy("creadoEn", "desc"), limit(300)),
+        s => { servicios = s.docs.map(d => normalizarServicio(d.id, d.data({ serverTimestamps: "estimate" }))); emitir(); }, onErr);
+      /* Montos: solo el director los puede leer; para operaciones esta lectura falla y se queda sin números. */
+      const u2 = onSnapshot(query(collection(db, "servicios_precios"), limit(2000)),
+        s => { precios = Object.fromEntries(s.docs.map(d => { const p = d.data({ serverTimestamps: "estimate" }); return [d.id, { ...p, precioAprobadoEn: aMs(p.precioAprobadoEn), costosActualizadosEn: aMs(p.costosActualizadosEn) }]; })); emitir(); },
+        () => { precios = {}; emitir(); });
+      return () => { u1(); u2(); };
     },
     suscribirEventos(id, cb, onErr){
       return onSnapshot(query(collection(db, "servicios", id, "eventos"), orderBy("ts", "asc"), limit(200)),
@@ -51,12 +64,11 @@ export function crearServiciosStore(db){
       const anio = new Date().getFullYear();
       const refContador = doc(db, "contadores", "servicios-" + anio);
       const refServicio = doc(col);
-      const cuerpo = limpio(datos);
-      /* El precio solo entra al crear si lo fija un admin o si viene de una cotización
-         aceptada; en ese caso las reglas lo comparan contra la cotización en el servidor. */
-      const deCotizacion = !!cuerpo.cotizacionId && Number(cuerpo.precio) > 0 && !!cuerpo.precioAprobadoPor;
-      if(deCotizacion) delete cuerpo.precioAprobadoEn;
-      else if(usuario.rol !== "admin") for(const k of CAMPOS_PRECIO) delete cuerpo[k];
+      const cuerpo = sinDinero(limpio(datos));
+      /* Los montos (precio de una cotización aceptada o precio propuesto) solo los guarda el director, aparte. */
+      const dinero = usuario.rol === "admin" ? conDinero(datos) : {};
+      const conPrecio = Number(dinero.precio) > 0;
+      const deCotizacion = conPrecio && !!cuerpo.cotizacionId;
       const folio = await runTransaction(db, async tx => {
         const snap = await tx.get(refContador);
         const n = (snap.exists() ? Number(snap.data().n) || 0 : 0) + 1;
@@ -66,30 +78,48 @@ export function crearServiciosStore(db){
           creadoEn: serverTimestamp(), creadoPor: usuario.uid, creadoPorNombre: usuario.nombre || usuario.email || "" });
         tx.set(doc(collection(refServicio, "eventos")), { tipo: "creado", a: "Solicitud", ...actor(usuario), ts: serverTimestamp(),
           datos: { canal: cuerpo.canal || "", recibidaEn: cuerpo.recibidaEn || "", empresa: cuerpo.empresa || "",
-            ...(deCotizacion ? { cotizacionFolio: cuerpo.cotizacionFolio || "", precio: cuerpo.precio } : {}) } });
+            ...(deCotizacion ? { cotizacionFolio: cuerpo.cotizacionFolio || "" } : {}) } });
+        if(Object.keys(dinero).length){
+          const refP = doc(db, "servicios_precios", refServicio.id);
+          tx.set(refP, { ...dinero, servicioId: refServicio.id, servicioFolio: f, actualizadoEn: serverTimestamp(),
+            ...(conPrecio ? { precio: Number(dinero.precio), precioAprobadoPor: usuario.nombre || usuario.email || usuario.uid, precioAprobadoEn: serverTimestamp() } : {}) });
+          tx.set(doc(collection(refP, "eventos")), { tipo: conPrecio ? "precio_aprobado" : "precio_propuesto", ...actor(usuario), ts: serverTimestamp(),
+            datos: { ...dinero, ...(deCotizacion ? { cotizacionFolio: cuerpo.cotizacionFolio || "" } : {}) } });
+        }
         return f;
       });
       return { id: refServicio.id, folio };
     },
     async actualizar(usuario, antes, datos){
-      const cuerpo = limpio(datos);
-      if(usuario.rol !== "admin") for(const k of CAMPOS_PRECIO) delete cuerpo[k];
-      const cambios = diffServicio(limpio(antes), { ...limpio(antes), ...cuerpo });
-      if(cambios.length === 0) return 0;
+      const cuerpo = sinDinero(limpio(datos));   // los montos se cambian aparte (aprobarPrecio), nunca en el servicio
+      const cambios = diffServicio(sinDinero(limpio(antes)), { ...sinDinero(limpio(antes)), ...cuerpo });
+      /* Precio propuesto: solo el director lo cambia, y se guarda aparte (el precio aprobado va por aprobarPrecio). */
+      const prop = usuario.rol === "admin" && datos?.precioPropuesto !== undefined && datos.precioPropuesto !== "" && Number(datos.precioPropuesto) !== Number(antes.precioPropuesto) ? Number(datos.precioPropuesto) : null;
+      if(cambios.length === 0 && prop === null) return 0;
       const ref = doc(db, "servicios", antes.id);
       const lote = writeBatch(db);
-      lote.update(ref, { ...cuerpo, actualizadoEn: serverTimestamp() });
-      lote.set(doc(collection(ref, "eventos")), { tipo: "editado", ...actor(usuario), ts: serverTimestamp(), cambios });
+      if(cambios.length){
+        lote.update(ref, { ...cuerpo, actualizadoEn: serverTimestamp() });
+        lote.set(doc(collection(ref, "eventos")), { tipo: "editado", ...actor(usuario), ts: serverTimestamp(), cambios });
+      }
+      if(prop !== null){
+        const refP = doc(db, "servicios_precios", antes.id);
+        lote.set(refP, { precioPropuesto: prop, servicioId: antes.id, servicioFolio: antes.folio || "", actualizadoEn: serverTimestamp() }, { merge: true });
+        lote.set(doc(collection(refP, "eventos")), { tipo: "precio_propuesto", ...actor(usuario), ts: serverTimestamp(), cambios: [{ campo: "precioPropuesto", antes: antes.precioPropuesto ?? "", despues: prop }] });
+      }
       await lote.commit();
-      return cambios.length;
+      return cambios.length + (prop !== null ? 1 : 0);
     },
     async aprobarPrecio(usuario, servicio, precio){
       if(usuario.rol !== "admin") throw new Error("Solo un administrador aprueba el precio");
-      const ref = doc(db, "servicios", servicio.id);
+      const ref = doc(db, "servicios", servicio.id), refP = doc(db, "servicios_precios", servicio.id);
       const lote = writeBatch(db);
-      lote.update(ref, { precio, precioAprobadoPor: usuario.nombre || usuario.email || usuario.uid, precioAprobadoEn: serverTimestamp(), actualizadoEn: serverTimestamp() });
-      lote.set(doc(collection(ref, "eventos")), { tipo: "precio_aprobado", ...actor(usuario), ts: serverTimestamp(),
+      lote.set(refP, { precio, precioAprobadoPor: usuario.nombre || usuario.email || usuario.uid, precioAprobadoEn: serverTimestamp(), servicioId: servicio.id,
+        servicioFolio: servicio.folio || "", actualizadoEn: serverTimestamp() }, { merge: true });
+      lote.set(doc(collection(refP, "eventos")), { tipo: "precio_aprobado", ...actor(usuario), ts: serverTimestamp(),
         cambios: [{ campo: "precio", antes: servicio.precio ?? "", despues: precio }] });
+      lote.set(doc(collection(ref, "eventos")), { tipo: "precio_aprobado", ...actor(usuario), ts: serverTimestamp() });   // sin el monto
+      lote.update(ref, { actualizadoEn: serverTimestamp() });
       await lote.commit();
     },
     /* Costos reales del servicio: se agregan con su evento; nunca se editan ni borran. */

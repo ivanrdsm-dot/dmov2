@@ -36,7 +36,8 @@ test('operaciones registra servicios con folio consecutivo y evento de creación
   const snap = await assertSucceeds(getDoc(doc(db, 'servicios', creado.id)));
   assert.equal(snap.data().estado, 'Solicitud');
   assert.equal(snap.data().creadoPor, 'ops');
-  const eventos = await assertSucceeds(getDocs(collection(db, 'servicios', creado.id, 'eventos')));
+  await assertFails(getDocs(collection(db, 'servicios', creado.id, 'eventos')));          // la bitácora trae montos: solo el director
+  const eventos = await assertSucceeds(getDocs(collection(ctx('admin').firestore(), 'servicios', creado.id, 'eventos')));
   assert.equal(eventos.size, 1);
   assert.equal(eventos.docs[0].data().tipo, 'creado');
 });
@@ -66,23 +67,28 @@ test('el contador de folios solo avanza de uno en uno y no se borra', async () =
   await assertFails(deleteDoc(doc(ctx('admin').firestore(), 'contadores', 'servicios-' + anio)));
 });
 
-test('operaciones edita y cambia estado, pero no fija el precio aprobado', async () => {
+test('operaciones edita y cambia estado, pero ningún monto entra al servicio', async () => {
   const db = ctx('ops').firestore();
   const store = crearServiciosStore(db);
   const antes = { id: creado.id, ...datos, estado: 'Solicitud' };
-  assert.equal(await assertSucceeds(store.actualizar(usuario('ops', 'operaciones'), antes, { ...datos, precioPropuesto: 4000, notas: 'Andén 3' })), 2);
+  assert.equal(await assertSucceeds(store.actualizar(usuario('ops', 'operaciones'), antes, { ...datos, precioPropuesto: 4000, notas: 'Andén 3' })), 1);   // el monto no se guarda
+  await assertFails(updateDoc(doc(db, 'servicios', creado.id), { precioPropuesto: 4000 }));
+  await assertFails(updateDoc(doc(ctx('admin').firestore(), 'servicios', creado.id), { precio: 4640 }));   // ni el director: los montos van aparte
   await assertSucceeds(store.cambiarEstado(usuario('ops', 'operaciones'), antes, 'Cotizada', { motivo: 'Urgente', faltantes: ['Folio de cotización'] }));
   await assertFails(updateDoc(doc(db, 'servicios', creado.id), { precio: 4640 }));
   await assertFails(updateDoc(doc(db, 'servicios', creado.id), { precioAprobadoPor: 'ops' }));
   await assertFails(store.aprobarPrecio(usuario('ops', 'admin'), antes, 4640));
 });
 
-test('admin aprueba el precio y queda en la bitácora', async () => {
+test('admin aprueba el precio: se guarda aparte (solo el director lo ve) y queda en la bitácora', async () => {
   const db = ctx('admin').firestore();
   await assertSucceeds(crearServiciosStore(db).aprobarPrecio(usuario('admin', 'admin'), { id: creado.id }, 4640));
-  const snap = await getDoc(doc(db, 'servicios', creado.id));
+  const snap = await getDoc(doc(db, 'servicios_precios', creado.id));
   assert.equal(snap.data().precio, 4640);
   assert.equal(snap.data().precioAprobadoPor, 'admin');
+  assert.equal((await getDoc(doc(db, 'servicios', creado.id))).data().precio, undefined);   // el servicio no lleva el monto
+  await assertFails(getDoc(doc(ctx('ops').firestore(), 'servicios_precios', creado.id)));
+  await assertFails(setDoc(doc(ctx('ops').firestore(), 'servicios_precios', creado.id), { precio: 1 }));
   const eventos = await getDocs(collection(db, 'servicios', creado.id, 'eventos'));
   assert.deepEqual(eventos.docs.map(d => d.data().tipo).sort(), ['creado', 'editado', 'estado', 'precio_aprobado']);
 });
@@ -102,7 +108,7 @@ test('la bitácora solo se agrega: con autor real, hora del servidor y sin reesc
   const eventos = collection(db, 'servicios', creado.id, 'eventos');
   await assertFails(addDoc(eventos, { tipo: 'estado', actorUid: 'admin', ts: serverTimestamp() }));
   await assertFails(addDoc(eventos, { tipo: 'estado', actorUid: 'ops', ts: new Date(2020, 0, 1) }));
-  const uno = (await getDocs(eventos)).docs[0].ref;
+  const uno = (await getDocs(collection(ctx('admin').firestore(), 'servicios', creado.id, 'eventos'))).docs[0].ref;
   for(const c of [db, ctx('admin').firestore()]){
     await assertFails(updateDoc(doc(c, uno.path), { tipo: 'alterado' }));
     await assertFails(deleteDoc(doc(c, uno.path)));
