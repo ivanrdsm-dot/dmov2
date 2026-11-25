@@ -18,6 +18,7 @@ import { TIPOS_GASTO, revisarCarga, rendimientoHistorico } from "./lib/gasolina.
 import { coleccionDeAlerta } from "./lib/avisosOficina.js";
 import { VERSION_AVISO } from "./lib/avisoPrivacidad.js";
 import { revisarFotoJornada, lineaDeTexto, lineaATexto } from "./lib/evidencia.js";
+import { generarCotizacionRuta } from "./cotizarRuta.js";
 
 const OPC = { region: "us-central1", maxInstances: 5, memory: "256MiB", timeoutSeconds: 30 };
 const GOOGLE = defineSecret("GOOGLE_MAPS_KEY");
@@ -772,7 +773,12 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
     await refS.update({ foraneo: clase.foraneo, kmMaxDesdeBase: clase.kmMaxDesdeBase, horasEstimadas: clase.horasEstimadas, diasEstimados: clase.dias,
       ...(servicio.diasFueraManual ? {} : { diasFuera: clase.dias, regresoEstimado: clase.regresoEstimado }) });
   } catch(e){ console.warn("clasificar ruta", e?.message); }
-  return { ok: true, paradas: paradas.length, ordenada: ordenar, kmAntes: o.kmAntes, kmDespues: o.kmDespues, foraneo: clase?.foraneo ?? null, dias: clase?.dias ?? null };
+  /* Pedido → ruta → cotización: el servidor arma la cotización con el tarifario y la liga al servicio.
+     A operaciones solo se le regresa el folio (no ve montos); el precio lo aprueba el director. */
+  let cot = null;
+  try { cot = await generarCotizacionRuta(servicioId, of); } catch(e){ console.warn("cotización automática", e?.message); }
+  return { ok: true, paradas: paradas.length, ordenada: ordenar, kmAntes: o.kmAntes, kmDespues: o.kmDespues, foraneo: clase?.foraneo ?? null, dias: clase?.dias ?? null,
+    cotizacionFolio: cot?.folio || null };
 });
 
 /** Edita una ruta YA enviada: agrega paradas (lugares verificados) o quita pendientes.

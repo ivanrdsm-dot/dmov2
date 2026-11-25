@@ -124,6 +124,14 @@ test("3 · Ilse asigna la ruta con la hoja (mismo código): lugares, servicio, r
   const s = (await admin.firestore().doc("servicios/" + id).get()).data();
   assert.equal(s.estado, "Asignada"); assert.equal(s.choferId, "ch1"); assert.equal(s.unidadPlaca, "ABC1234");
   assert.equal(s.segundoChoferId, "ch2"); assert.equal(s.segundoChoferNombre, "Chofer ch2");
+  // Pedido → ruta → cotización: el servidor la creó sola, ligada al servicio, por aprobar del director, sin duplicar al reintentar.
+  assert.match(r.cotizacionFolio || "", /^COT-20\d{2}-\d{4}$/);
+  assert.equal(s.cotizacionFolio, r.cotizacionFolio); assert.equal(s.cotizacionEstado, "Propuesta");
+  const cots = (await admin.firestore().collection("cotizaciones_logistica").where("servicioId", "==", id).get()).docs.map(d => d.data());
+  assert.equal(cots.length, 1); assert.equal(cots[0].estado, "Propuesta"); assert.equal(cots[0].origen, "ruta_asignada");
+  assert.ok(cots[0].resultado.pendientes.some(t => /ABC1234/.test(t)), "la placa sin Flota queda pendiente: no se inventa precio");
+  await assert.rejects(getDocs(collection(ilse.db, "cotizaciones_logistica")));                       // Ilse no ve montos
+  assert.ok((await admin.firestore().collection("alertas_director").where("servicioId", "==", id).get()).docs.some(d => d.data().type === "cotizacion_por_aprobar"));
   // El segundo chofer ve la ruta y sus paradas; un chofer ajeno no.
   const c2 = cliente("chofer2"); await signInWithEmailAndPassword(c2.auth, correoDeChofer("5512340002"), "clave-ch2-123");
   const q2 = await getDocs(query(collection(c2.db, "servicios"), where("segundoChoferId", "==", "ch2"), where("estado", "in", ["Asignada", "En ruta"])));

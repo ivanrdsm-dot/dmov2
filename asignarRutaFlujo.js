@@ -2,8 +2,9 @@
    y la prueba de punta a punta (e2e/flujo-ruta.mjs), así se prueba el mismo código.
    1. guardarLugares: cada lugar queda en el catálogo con su punto confirmado (o se reutiliza uno a <30 m).
    2. crearServicioRuta: el servicio con folio.
-   3-4. terminarAsignacion: el servidor arma la ruta (oficinaPrepararRuta) y queda "Asignada",
-        anotando lo que falte (cotización, precio): nada se inventa. Se puede repetir sin duplicar. */
+   3-4. terminarAsignacion: el servidor arma la ruta (oficinaPrepararRuta) y la cotización con el tarifario
+        (queda por aprobar del director), y el servicio queda "Asignada" anotando lo que falte: nada se inventa.
+        Se puede repetir sin duplicar. */
 import { crearServiciosStore } from "./serviciosStore.js";
 import { crearCatalogoStore } from "./catalogosStore.js";
 import { requisitosEstado } from "./servicios.ts";
@@ -45,10 +46,12 @@ export async function crearServicioRuta(db, usuario, datos){
 
 /** `llamar(nombre, datos)` invoca una callable. `p` = { id, datos, choferId, ordenar }. */
 export async function terminarAsignacion(db, usuario, llamar, p){
-  try { await llamar("oficinaPrepararRuta", { servicioId: p.id, choferId: p.choferId, segundoChoferId: p.segundoChoferId || "", ordenar: p.ordenar !== false }); }
+  let cotizacionFolio = null;
+  try { const r = await llamar("oficinaPrepararRuta", { servicioId: p.id, choferId: p.choferId, segundoChoferId: p.segundoChoferId || "", ordenar: p.ordenar !== false });
+    cotizacionFolio = r?.cotizacionFolio || null; }                  // la cotización la arma el servidor con el tarifario
   catch(e){ if(e?.code !== "functions/already-exists") throw e; }   // ya estaba armada: se sigue
   const faltantes = requisitosEstado({ ...p.datos, estado: "Solicitud" }, "Asignada");
   await crearServiciosStore(db).cambiarEstado(usuario, { id: p.id, estado: "Solicitud" }, "Asignada",
     { motivo: faltantes.length ? "Asignada desde Asignar ruta; falta: " + faltantes.join(", ") : "Asignada desde Asignar ruta", faltantes });
-  return { faltantes };
+  return { faltantes, cotizacionFolio };
 }
