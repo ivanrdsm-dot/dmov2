@@ -1,20 +1,20 @@
 /* AVISO DE PRIVACIDAD PARA COLABORADORES (choferes y oficina).
    Una sola fuente: la usan la app del chofer, el sistema de oficina y el servidor (que exige la autorización).
    Si cambia el texto, se sube VERSION y todos vuelven a autorizar al entrar.
-   Datos que faltan de la empresa (razón social, domicilio, correo de privacidad): van vacíos y NO se inventan;
-   en cuanto el director los dé, se agregan aquí y se sube la versión. Recomendado: revisión de un abogado laboral. */
+   Razón social y domicilio: Constancia de Situación Fiscal del SAT (5-mar-2026). Correo: lo dio el director.
+   Recomendado: revisión de un abogado laboral. */
 export const VERSION_AVISO = "2026-11-25";
 export const RESPONSABLE = {
   nombre: "D Movimiento",
-  razonSocial: "",          // PENDIENTE: la da el director
-  domicilio: "",            // PENDIENTE: la da el director
-  contacto: "WhatsApp de operación 55 9911 2326 o directamente en la oficina",
+  razonSocial: "D EN MOVIMIENTO, S.A. de C.V.",
+  domicilio: "Av. Insurgentes Sur 1814, interior 702, col. Florida, alcaldía Álvaro Obregón, C.P. 01030, Ciudad de México",
+  contacto: "el correo logistica@denmovimiento.mx, el WhatsApp de operación 55 9911 2326 o directamente en la oficina",
 };
 
 /** Secciones del aviso. tipo: "chofer" | "oficina". */
 export function textoAviso(tipo = "chofer"){
   const chofer = tipo === "chofer";
-  const quien = [RESPONSABLE.razonSocial || RESPONSABLE.nombre, RESPONSABLE.domicilio ? `con domicilio en ${RESPONSABLE.domicilio}` : ""].filter(Boolean).join(", ");
+  const quien = [RESPONSABLE.razonSocial ? `${RESPONSABLE.razonSocial} (${RESPONSABLE.nombre})` : RESPONSABLE.nombre, RESPONSABLE.domicilio ? `con domicilio en ${RESPONSABLE.domicilio}` : ""].filter(Boolean).join(", ");
   return [
     { titulo: "Quién es responsable de tus datos", texto: `${quien} es responsable del uso y la protección de tus datos personales. Para cualquier duda sobre este aviso: ${RESPONSABLE.contacto}.` },
     { titulo: "Qué datos usamos", texto: chofer
