@@ -59,20 +59,21 @@ export default function Desempeno({ db, app }){
         getDocs(query(collection(db, "servicios"), where("historico", "==", true), limit(1000))),
         getDocs(query(collection(db, "gastosChofer"), where("fechaTs", ">=", Timestamp.fromMillis(iniMs)), where("fechaTs", "<", Timestamp.fromMillis(finMs)), limit(2000)))]);
       const nombres = Object.fromEntries(cho.docs.map(d => [d.id, String(d.data().nombre || "")]));
+      const prueba = new Set(cho.docs.filter(d => d.data().prueba === true).map(d => d.id));   // perfiles de prueba: no cuentan
       const deApp = srv.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.choferId && !s.historico && s.estado !== "Cancelada");
       const rutas = await Promise.all(deApp.map(async s => {
         const ps = await getDocs(collection(db, "servicios", s.id, "paradas")).catch(() => null);
-        return { id: s.id, folio: s.folio, choferId: s.choferId, choferNombre: s.choferNombre, fechaServicio: s.fechaServicio, estado: s.estado,
+        return { id: s.id, folio: s.folio, choferId: s.choferId, segundoChoferId: s.segundoChoferId || "", choferNombre: s.choferNombre, fechaServicio: s.fechaServicio, estado: s.estado,
           salidaMs: ms(s.estadoTs?.["En ruta"]), finMs: ms(s.estadoTs?.Entregada), estimadoManejoSeg: s.rutaDuracionSeg ?? null, km: s.rutaKm ?? null, foraneo: s.foraneo === true,
           paradas: (ps?.docs || []).map(d => { const p = d.data(), e = p.evidencia || {};
             return { tipo: p.tipo, estado: p.estado, llegadaMs: p.llegadaGpsMs ?? p.llegadaMs ?? null, cerradaMs: p.cerradaMs ?? ms(p.cerradaEn),
               incidencia: p.incidencia, conFoto: (e.fotos || []).length > 0, conFirmaOReceptor: !!(e.firmaRuta || e.receptor), porExcepcion: p.cerradaPorExcepcion === true, horaPactada: p.horaPactada || "" }; }) };
       }));
-      const jornadas = jor.docs.map(d => d.data()).filter(j => j.choferId);
+      const jornadas = jor.docs.map(d => d.data()).filter(j => j.choferId && !prueba.has(j.choferId));
       const alertas = ale.docs.map(d => d.data());
       const historico = volumenHistorico(his.docs.map(d => d.data()), nombres);
       const gastos = gas.docs.map(d => d.data());
-      const tarjetas = tarjetasOperadores(rutas, jornadas, alertas, nombres).map(t => ({ ...t, costos: costosOperador(t.choferId, jornadas, gastos) }));
+      const tarjetas = tarjetasOperadores(rutas, jornadas, alertas, nombres).filter(t => !prueba.has(t.choferId)).map(t => ({ ...t, costos: costosOperador(t.choferId, jornadas, gastos) }));
       if(vivo) setDatos({ tarjetas, historico, rutasMes: rutas.length, camionetas: resumenCamionetas(jornadas, gastos) });
     })().catch(e => vivo && setError("No se pudieron leer los datos: " + String(e?.message || "").replace(/^.*?:\s*/, "")));
     return () => { vivo = false; };

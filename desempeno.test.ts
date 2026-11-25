@@ -55,6 +55,15 @@ describe("tarjeta del operador e incentivo", () => {
   });
 });
 
+describe("ruta con 2 choferes", () => {
+  it("la ruta cuenta a los dos", () => {
+    const r: any = ruta({ segundoChoferId: "c2" });
+    const ts = tarjetasOperadores([r], [], [], { c1: "Elías", c2: "Israel" });
+    expect(ts.map(t => t.choferId).sort()).toEqual(["c1", "c2"]);
+    expect(ts.every(t => t.rutas === 1 && t.entregas === 2)).toBe(true);
+  });
+});
+
 describe("bitácora histórica", () => {
   it("cuenta viajes por chofer y mes, con viajes compartidos", () => {
     const v = volumenHistorico([{ fechaServicio: "2026-05-04", choferIds: ["a", "b"] }, { fechaServicio: "2026-06-01", choferId: "a" }], { a: "Israel" });

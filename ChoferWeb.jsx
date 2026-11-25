@@ -420,6 +420,7 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
   const hecha = p => ["Entregada", "Incidencia"].includes(p.estado) || guardada(p);
   const hechas = paradas.filter(hecha).length;
   const detenida = p => p?.detenida?.activa === true;   // ⛔ la oficina la frenó: no se entrega
+  const companero = servicio.segundoChoferId ? (servicio.choferId === chofer.id ? servicio.segundoChoferNombre : servicio.choferNombre) || "" : "";
   const siguiente = paradas.find(p => !hecha(p) && !detenida(p)) || paradas.find(p => !hecha(p));
   /* Cambio de ruta que hay que confirmar con "Enterado" (no se quita hasta tocarlo). */
   const [yaEnterado, setYaEnterado] = useState("");   // id confirmado aquí: la hoja se cierra sin esperar al servidor
@@ -476,6 +477,7 @@ function Servicio({ db, chofer, servicio, jornadaAbierta, llamar, subir, mandarA
       <span className="dm-kicker">Siguiente · {siguiente.tipo === "carga" ? "Recoger" : "Entregar"}</span>
       <h2 className="dm-titulo" style={{ marginTop: 10, fontSize: 24 }}>{siguiente.nombre}</h2>
       <p className="dm-sub" style={{ fontSize: 16 }}>{siguiente.direccion}</p>
+      {companero && <div style={{ fontSize: 15, fontWeight: 800, color: AZUL, marginTop: 4 }}>👥 Vas con {companero}</div>}
       {siguiente.horaPactada && <div style={{ display: "inline-block", background: "#fff7ed", color: "#c2410c", borderRadius: 10, padding: "6px 10px", fontWeight: 900, fontSize: 16, marginTop: 4 }}>⏰ Llega antes de las {siguiente.horaPactada}</div>}
       {(siguiente.contacto || siguiente.telefono) && <p className="dm-sub" style={{ color: AZUL, fontWeight: 700 }}>👤 {siguiente.contacto} {siguiente.telefono && <a href={"tel:" + siguiente.telefono} style={{ color: AZUL }}>📞 {siguiente.telefono}</a>}</p>}
       <div className="dm-dos">
@@ -645,11 +647,17 @@ export default function ChoferWeb({ db, auth, app }){
 
   useEffect(() => {
     if(!chofer) return;
+    /* Sus rutas como chofer principal y como segundo chofer (hasta 2 por ruta): se juntan las dos listas. */
+    const partes = { a: null, b: null };
+    const juntar = () => { if(partes.a === null || partes.b === null) return; setErrorRutas("");
+      setServicios([...new Map([...partes.a, ...partes.b].map(x => [x.id, x])).values()].sort((a, b) => (b.estado === "En ruta") - (a.estado === "En ruta") || String(a.fechaServicio || "").localeCompare(String(b.fechaServicio || "")))); };
+    const fallo = e => { setServicios([]); setErrorRutas("No se pudieron cargar tus rutas (" + mensaje(e) + "). Revisa tu señal y vuelve a abrir la app."); };
     const u1 = onSnapshot(query(collection(db, "servicios"), where("choferId", "==", chofer.id), where("estado", "in", ["Asignada", "En ruta"])),
-      s => { setErrorRutas(""); setServicios(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.estado === "En ruta") - (a.estado === "En ruta") || String(a.fechaServicio || "").localeCompare(String(b.fechaServicio || "")))); },
-      e => { setServicios([]); setErrorRutas("No se pudieron cargar tus rutas (" + mensaje(e) + "). Revisa tu señal y vuelve a abrir la app."); });
+      s => { partes.a = s.docs.map(d => ({ id: d.id, ...d.data() })); juntar(); }, fallo);
+    const u3 = onSnapshot(query(collection(db, "servicios"), where("segundoChoferId", "==", chofer.id), where("estado", "in", ["Asignada", "En ruta"])),
+      s => { partes.b = s.docs.map(d => ({ id: d.id, ...d.data() })); juntar(); }, fallo);
     const u2 = onSnapshot(doc(db, "jornadas", `${chofer.id}_${fechaCDMX()}`), s => setJornada(s.exists() ? s.data() : null), () => setJornada(null));
-    return () => { u1(); u2(); };
+    return () => { u1(); u2(); u3(); };
   }, [db, chofer, vuelta]);
 
   const enRuta = (servicios || []).find(s => s.estado === "En ruta");
@@ -740,7 +748,16 @@ export default function ChoferWeb({ db, auth, app }){
 
   const Cargando = ({ texto }) => <div className="dm"><Estilos/><div className="dm-vacio" style={{ paddingTop: 120 }}><div>🚚</div><p className="dm-sub">{texto}</p></div></div>;
   if(usuario === undefined) return <Cargando texto="Cargando…"/>;
-  if(!usuario) return tokenActivar() ? <Activar auth={auth} app={app} token={tokenActivar()}/> : <Entrar auth={auth}/>;
+  const esCuentaChofer = /@choferes\.denmovimiento\.mx$/i.test(String(usuario?.email || ""));
+  /* Enlace de activación: funciona aunque en este navegador haya otra sesión abierta (p. ej. la de oficina). */
+  if(tokenActivar() && (!usuario || !esCuentaChofer)) return <Activar auth={auth} app={app} token={tokenActivar()}/>;
+  if(!usuario) return <Entrar auth={auth}/>;
+  if(!esCuentaChofer) return (
+    <div className="dm"><Estilos/><div className="dm-cuerpo" style={{ paddingTop: 60 }}>
+      <div className="dm-card"><h2 className="dm-titulo">Estás con la cuenta de oficina</h2>
+        <p className="dm-sub" style={{ fontSize: 16 }}>En este navegador está abierta la sesión de <b>{usuario.email || "oficina"}</b>. La app de choferes se usa con el celular y la contraseña del chofer.</p>
+        <p className="dm-sub" style={{ fontSize: 14 }}>Tip: para probar sin cerrar tu sesión de oficina, abre este link en una ventana de incógnito o en otro celular.</p>
+        <button onClick={() => signOut(auth)} className="dm-btn dm-naranja" style={{ marginTop: 14 }}>Entrar como chofer</button></div></div></div>);
   if(errorCuenta) return (
     <div className="dm"><Estilos/><div className="dm-cuerpo" style={{ paddingTop: 60 }}>
       <div className="dm-card"><h2 className="dm-titulo" style={{ color: ROJO }}>No se pudo entrar</h2><p className="dm-sub" style={{ color: AZUL, fontSize: 17 }}>{errorCuenta}</p>

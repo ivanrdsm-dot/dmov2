@@ -48,6 +48,13 @@ before(async () => {
   await db.doc("dmov_usuarios/admin1").set({ uid: "admin1", rol: "admin", activo: true, nombre: "Admin Prueba", email: "admin@example.invalid" });
   await db.doc("dmov_usuarios/ilse1").set({ uid: "ilse1", rol: "operaciones", activo: true, nombre: "Ilse Prueba", email: "ilse@example.invalid" });
   await db.doc("choferes/ch1").set({ nombre: "Chofer Prueba", tel: TEL, status: "Disponible" });
+  /* Segundo chofer de la ruta (hasta 2 por ruta) y un tercero ajeno a ella. */
+  for(const [id, tel] of [["ch2", "5512340002"], ["ch3", "5512340003"]]){
+    const u = await auth.createUser({ email: correoDeChofer(tel), password: "clave-" + id + "-123" });
+    await db.doc("choferes/" + id).set({ nombre: "Chofer " + id, tel, status: "Disponible", authUid: u.uid, activo: true });
+    await db.doc("choferes_auth/" + u.uid).set({ choferId: id, correo: correoDeChofer(tel) });
+    await auth.setCustomUserClaims(u.uid, { choferId: id });
+  }
   oficina = cliente("admin"); await signInWithEmailAndPassword(oficina.auth, "admin@example.invalid", "clave-admin-123");
   ilse = cliente("ilse"); await signInWithEmailAndPassword(ilse.auth, "ilse@example.invalid", "clave-ilse-123");
 });
@@ -99,13 +106,23 @@ test("3 · Ilse asigna la ruta con la hoja (mismo código): lugares, servicio, r
   const datos = datosServicio({ usuario, cliente: "Cliente Prueba", fecha: fechaCDMX(), paradas: conId, placa: "ABC1234", chofer: { nombre: "Chofer Prueba" }, indicaciones: "Pedir sello" });
   const { id, folio } = await crearServicioRuta(ilse.db, usuario, datos);
   assert.match(folio, /^SRV-20\d{2}-\d{4,}$/);
-  const p = { id, folio, datos, choferId: "ch1", ordenar: true };
+  await assert.rejects(terminarAsignacion(ilse.db, usuario, ilse.llamar, { id, folio, datos, choferId: "ch1", segundoChoferId: "ch1", ordenar: true }), /otra persona/);
+  const p = { id, folio, datos, choferId: "ch1", segundoChoferId: "ch2", ordenar: true };
   const r = await terminarAsignacion(ilse.db, usuario, ilse.llamar, p);
   assert.ok(r.faltantes.includes("Folio de cotización"));            // se anota, no se inventa
   await terminarAsignacion(ilse.db, usuario, ilse.llamar, p);          // "Reintentar" no rompe ni duplica
   servicioId = id;
   const s = (await admin.firestore().doc("servicios/" + id).get()).data();
   assert.equal(s.estado, "Asignada"); assert.equal(s.choferId, "ch1"); assert.equal(s.unidadPlaca, "ABC1234");
+  assert.equal(s.segundoChoferId, "ch2"); assert.equal(s.segundoChoferNombre, "Chofer ch2");
+  // El segundo chofer ve la ruta y sus paradas; un chofer ajeno no.
+  const c2 = cliente("chofer2"); await signInWithEmailAndPassword(c2.auth, correoDeChofer("5512340002"), "clave-ch2-123");
+  const q2 = await getDocs(query(collection(c2.db, "servicios"), where("segundoChoferId", "==", "ch2"), where("estado", "in", ["Asignada", "En ruta"])));
+  assert.equal(q2.size, 1);
+  assert.ok((await getDocs(collection(c2.db, "servicios", id, "paradas"))).size >= 3);
+  const c3 = cliente("chofer3"); await signInWithEmailAndPassword(c3.auth, correoDeChofer("5512340003"), "clave-ch3-123");
+  await assert.rejects(getDoc(doc(c3.db, "servicios", id)));
+  await assert.rejects(getDocs(collection(c3.db, "servicios", id, "paradas")));
   assert.equal((await admin.firestore().collection("servicios").get()).size, 1);
 });
 

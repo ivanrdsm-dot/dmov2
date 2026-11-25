@@ -45,7 +45,7 @@ export async function crearServicioRuta(db, usuario, datos){
 
 /** `llamar(nombre, datos)` invoca una callable. `p` = { id, datos, choferId, ordenar }. */
 export async function terminarAsignacion(db, usuario, llamar, p){
-  try { await llamar("oficinaPrepararRuta", { servicioId: p.id, choferId: p.choferId, ordenar: p.ordenar !== false }); }
+  try { await llamar("oficinaPrepararRuta", { servicioId: p.id, choferId: p.choferId, segundoChoferId: p.segundoChoferId || "", ordenar: p.ordenar !== false }); }
   catch(e){ if(e?.code !== "functions/already-exists") throw e; }   // ya estaba armada: se sigue
   const faltantes = requisitosEstado({ ...p.datos, estado: "Solicitud" }, "Asignada");
   await crearServiciosStore(db).cambiarEstado(usuario, { id: p.id, estado: "Solicitud" }, "Asignada",

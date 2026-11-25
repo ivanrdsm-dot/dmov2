@@ -11,7 +11,7 @@
 
 export interface ParadaD { tipo?: string; estado?: string; llegadaMs?: number | null; cerradaMs?: number | null; incidencia?: string;
   conFoto?: boolean; conFirmaOReceptor?: boolean; porExcepcion?: boolean; horaPactada?: string; }
-export interface RutaD { id: string; folio?: string; choferId: string; choferNombre?: string; fechaServicio?: string; estado?: string;
+export interface RutaD { id: string; folio?: string; choferId: string; segundoChoferId?: string; choferNombre?: string; fechaServicio?: string; estado?: string;
   salidaMs?: number | null; finMs?: number | null; estimadoManejoSeg?: number | null; km?: number | null; foraneo?: boolean; paradas: ParadaD[]; }
 export interface JornadaD { choferId: string; fecha?: string; llegoTarde?: boolean; tardeMin?: number; dudas?: string[]; kmRecorridos?: number | null; kmGps?: number | null; unidadPlaca?: string; }
 export interface GastoD { choferId?: string; tipo?: string; monto?: number; litros?: number | null; unidadPlaca?: string; dudas?: string[]; estado?: string; }
@@ -70,9 +70,9 @@ export type MedidaRuta = ReturnType<typeof medirRuta>;
 
 /** Tarjeta de cada operador en el periodo. */
 export function tarjetasOperadores(rutas: RutaD[], jornadas: JornadaD[] = [], alertas: AlertaD[] = [], nombres: Record<string, string> = {}, R = REGLAS_INCENTIVO){
-  const ids = [...new Set([...rutas.map(r => r.choferId), ...jornadas.map(j => j.choferId)].filter(Boolean))];
+  const ids = [...new Set([...rutas.flatMap(r => [r.choferId, r.segundoChoferId]), ...jornadas.map(j => j.choferId)].filter(Boolean) as string[])];
   return ids.map(id => {
-    const medidas = rutas.filter(r => r.choferId === id).map(medirRuta).filter(m => m.terminada);
+    const medidas = rutas.filter(r => r.choferId === id || r.segundoChoferId === id).map(medirRuta).filter(m => m.terminada);   // con 2 choferes, la ruta cuenta a los dos
     const js = jornadas.filter(j => j.choferId === id), al = alertas.filter(a => a.choferId === id);
     const conEf = medidas.filter(m => m.eficiencia !== null);
     /* Eficiencia ponderada por minutos estimados: una ruta larga pesa más que una corta. */
