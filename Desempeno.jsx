@@ -2,7 +2,8 @@
    alertas y si califica a incentivo. Los números salen de lo que registró el servidor (desempeno.ts);
    el monto del incentivo lo decide el dueño (PENDIENTE). */
 import { useEffect, useMemo, useState } from "react";
-import { collection, query, where, limit, getDocs, Timestamp } from "firebase/firestore";
+import { collection, query, where, limit, getDocs, Timestamp, doc, getDoc } from "firebase/firestore";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import { A, BLUE, GREEN, ROSE, AMBER, MUTED, TEXT, BORDER, DISP, MONO, boton, Chip } from "./uiBasico.jsx";
 import { tarjetasOperadores, volumenHistorico, costosOperador, resumenCamionetas, REGLAS_INCENTIVO } from "./desempeno.ts";
 
@@ -22,7 +23,29 @@ function Dato({ t, v, sub, color = TEXT }){
     {sub && <div style={{ fontSize: 12, color: MUTED }}>{sub}</div>}</div>;
 }
 
-export default function Desempeno({ db }){
+/* 🤖 Resumen del día que escribe la IA con los números del sistema (21:00 automático, o con el botón). */
+function ResumenIA({ db, app }){
+  const hoy = new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 10);
+  const [r, setR] = useState(null), [estado, setEstado] = useState("");
+  useEffect(() => { getDoc(doc(db, "resumenes_ia", hoy)).then(s => setR(s.exists() ? s.data() : null)).catch(() => {}); }, [db, hoy]);
+  const generar = async () => {
+    setEstado("Escribiendo el resumen…");
+    try { const { data } = await httpsCallable(getFunctions(app, "us-central1"), "oficinaResumenIA", { timeout: 120000 })({ fecha: hoy });
+      if(data.vacio){ setEstado("Hoy todavía no hay actividad registrada."); return; } setR(data); setEstado(""); }
+    catch(e){ setEstado("No se pudo: " + String(e?.message || "").replace(/^.*?:\s*/, "")); }
+  };
+  return <div style={{ ...tarjeta, borderColor: A + "66" }}>
+    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+      <b style={{ fontSize: 16, color: TEXT }}>🤖 Resumen del día (IA)</b>
+      <button onClick={generar} disabled={!!estado && estado.endsWith("…")} style={{ ...boton(A, false), marginLeft: "auto", padding: "5px 12px", minHeight: 32, fontSize: 13 }}>{r ? "Actualizar" : "Generar ahora"}</button>
+    </div>
+    {estado && <div style={{ fontSize: 13, color: estado.startsWith("No") ? ROSE : MUTED, marginTop: 6 }}>{estado}</div>}
+    {r?.texto ? <div style={{ whiteSpace: "pre-wrap", fontSize: 14, color: TEXT, lineHeight: 1.6, marginTop: 8 }}>{r.texto}</div>
+      : !estado && <div style={{ fontSize: 13, color: MUTED, marginTop: 6 }}>Se genera solo a las 9:00 p.m. y te llega al celular. Lo escribe la IA con los números del sistema; no inventa datos.</div>}
+  </div>;
+}
+
+export default function Desempeno({ db, app }){
   const [mes, setMes] = useState(mesCDMX()), [datos, setDatos] = useState(null), [abierto, setAbierto] = useState(""), [error, setError] = useState("");
   useEffect(() => {
     let vivo = true; setDatos(null); setError("");
@@ -66,6 +89,7 @@ export default function Desempeno({ db }){
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {meses.map(m => <button key={m} onClick={() => setMes(m)} style={{ ...boton(BLUE, mes === m), padding: "6px 14px", minHeight: 36, fontSize: 14 }}>{nombreMes(m)}</button>)}
         </div>
+        {app && <ResumenIA db={db} app={app}/>}
         {error && <div style={{ ...tarjeta, color: ROSE, fontWeight: 700 }}>{error}</div>}
         {!datos && !error && <div style={{ color: MUTED }}>Calculando…</div>}
 

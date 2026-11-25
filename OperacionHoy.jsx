@@ -137,7 +137,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const irA = v => ({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v] ? setPestana({ despacho: "mapa", choferes: "choferes", operacion: "ahora", historialRutas: "historial" }[v]) : onVer?.(v));
   const embebida = pestana === "asignar" ? <Suspense fallback={<Cargando/>}><AsignarRuta db={db} app={app} usuario={usuario} mapboxToken={mapboxToken} onVer={irA}/></Suspense>
     : pestana === "historial" ? <Suspense fallback={<Cargando/>}><HistorialRutas db={db}/></Suspense>
-    : pestana === "desempeno" && esAdmin ? <Suspense fallback={<Cargando/>}><Desempeno db={db}/></Suspense>
+    : pestana === "desempeno" && esAdmin ? <Suspense fallback={<Cargando/>}><Desempeno db={db} app={app}/></Suspense>
     : pestana === "mapa" ? (vistas.mapa || <Cargando/>)
     : pestana === "choferes" && esAdmin && verFichas === "choferes" ? (vistas.choferes || null)
     : pestana === "choferes" && esAdmin && verFichas === "unidades" ? (vistas.unidades || null)
@@ -272,7 +272,8 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
                 <td style={{ padding: "7px 10px" }}>{g.choferNombre}</td><td style={{ padding: "7px 10px" }}>{g.tipo}</td>
                 <td style={{ padding: "7px 10px", fontFamily: MONO }}>{dinero(g.monto)}</td>
                 <td style={{ padding: "7px 10px", color: MUTED, minWidth: 180 }}>{[g.litros && `${g.litros} L`, g.precioLitro && `${dinero(g.precioLitro)}/L`, g.rendimientoKmL && `${g.rendimientoKmL} km/L`, g.unidadPlaca, g.lugar, g.nota].filter(Boolean).join(" · ") || "—"}
-                  {(g.dudas || []).length > 0 && <div style={{ color: ROSE, fontWeight: 700 }}>⚠️ {g.dudas.join("; ")}</div>}</td>
+                  {(g.dudas || []).length > 0 && <div style={{ color: ROSE, fontWeight: 700 }}>⚠️ {g.dudas.join("; ")}</div>}
+                  {g.lecturaIA?.ok && <div style={{ color: (g.dudasIA || []).length ? ROSE : GREEN, fontWeight: 700 }}>🤖 Ticket: {g.lecturaIA.total != null ? dinero(g.lecturaIA.total) : "sin total"}{g.lecturaIA.litros ? ` · ${g.lecturaIA.litros} L` : ""}{g.lecturaIA.fecha ? ` · ${g.lecturaIA.fecha}` : ""}{(g.dudasIA || []).length ? ` · no cuadra: ${g.dudasIA.join("; ")}` : " · cuadra ✓"}</div>}</td>
                 <td style={{ padding: "7px 10px" }}>{g.ticketRuta ? <Miniatura ruta={g.ticketRuta} etiqueta={"Ticket · " + (g.choferNombre || "")}/> : g.ticketURL ? <a href={g.ticketURL} target="_blank" rel="noreferrer" style={{ color: BLUE }}>ver</a> : "—"}</td>
                 <td style={{ padding: "7px 10px" }}><Chip color={g.estado === "aprobado" ? GREEN : g.estado === "rechazado" ? ROSE : AMBER}>{g.estado || "pendiente"}</Chip></td></tr>)}</tbody></table>
           </div>

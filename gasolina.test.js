@@ -1,5 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { revisarCarga, rendimientoHistorico, resumenUnidad } from "./functions/lib/gasolina.js";
+import { revisarCarga, rendimientoHistorico, resumenUnidad, compararTicket } from "./functions/lib/gasolina.js";
+
+describe("ticket leído por la IA vs. lo que escribió el chofer", () => {
+  it("cuadra: sin dudas", () => {
+    expect(compararTicket({ monto: 1200, litros: 50 }, { esTicket: true, legible: true, total: 1200.5, litros: 50.1, fecha: "2026-11-25" }, "2026-11-25")).toEqual([]);
+  });
+  it("monto inflado, litros distintos y ticket viejo", () => {
+    const d = compararTicket({ monto: 1500, litros: 60 }, { esTicket: true, legible: true, total: 1200, litros: 50, fecha: "2026-11-02" }, "2026-11-25");
+    expect(d).toHaveLength(3); expect(d[0]).toContain("$1200"); expect(d[2]).toContain("2026-11-02");
+  });
+  it("foto que no es ticket o ilegible", () => {
+    expect(compararTicket({ monto: 100 }, { esTicket: false })).toEqual(["la foto no parece un ticket"]);
+    expect(compararTicket({ monto: 100 }, { esTicket: true, legible: false })).toEqual(["el ticket no se puede leer"]);
+  });
+});
 
 describe("revisión de una carga de gasolina", () => {
   it("carga normal: calcula precio y rendimiento sin dudas", () => {

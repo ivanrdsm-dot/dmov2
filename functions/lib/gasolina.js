@@ -46,3 +46,20 @@ export function resumenUnidad(cargas = [], kmRecorridos = 0){
   return { cargas: cargas.length, litros: Math.round(litros * 10) / 10, gasto: Math.round(gasto * 100) / 100, rendimiento: rend,
     costoPorKm: km > 0 && gasto > 0 ? Math.round((gasto / km) * 100) / 100 : null, km };
 }
+
+/** Compara lo que LEYÓ la IA en la foto del ticket contra lo que escribió el chofer. Regresa las dudas (texto).
+    Tolerancias: $1 o 2 % en el total, 0.5 L o 3 % en litros; ticket de otro día (más de 1 día de diferencia). */
+export function compararTicket(capturado = {}, leido = {}, hoy = ""){
+  const dudas = [];
+  if(leido.esTicket === false) return ["la foto no parece un ticket"];
+  if(leido.legible === false) return ["el ticket no se puede leer"];
+  const m = Number(capturado.monto), t = Number(leido.total);
+  if(m > 0 && t > 0 && Math.abs(m - t) > Math.max(1, 0.02 * t)) dudas.push(`el ticket dice $${t} y escribió $${m}`);
+  const l = Number(capturado.litros), lt = Number(leido.litros);
+  if(l > 0 && lt > 0 && Math.abs(l - lt) > Math.max(0.5, 0.03 * lt)) dudas.push(`el ticket dice ${lt} L y escribió ${l} L`);
+  if(/^\d{4}-\d{2}-\d{2}$/.test(String(leido.fecha || "")) && /^\d{4}-\d{2}-\d{2}$/.test(hoy)){
+    const dias = Math.abs(Date.parse(leido.fecha + "T12:00:00Z") - Date.parse(hoy + "T12:00:00Z")) / 86400000;
+    if(dias > 1) dudas.push(`el ticket es del ${leido.fecha} (no de hoy)`);
+  }
+  return dudas;
+}

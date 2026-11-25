@@ -134,3 +134,6 @@ export { permisosOficina, permisosChofer } from "./permisos.js";
 export { avisarClientePush } from "./avisosPush.js";
 export { oficinaAvisos, avisarOficinaPush } from "./avisosOficina.js";
 export { oficinaBuscarLugar, oficinaDetalleLugar, oficinaResolverEnlace } from "./lugares.js";
+
+/* IA (Claude): lee tickets de gastos y escribe el resumen del día. */
+export { leerTicketGasto, resumenDiarioIA, oficinaResumenIA } from "./ia.js";

@@ -8,7 +8,7 @@ export const ALERTAS_AL_CELULAR = {
 };
 /* Avisos que solo informan (no hay que atenderlos): llegan al celular aunque la alerta nazca cerrada. */
 export const AVISOS_INFORMATIVOS = {
-  checkin_registrado: "✅ Check-in", checkin_tarde: "⏰ Check-in TARDE", checkout_registrado: "🏁 Check-out",
+  checkin_registrado: "✅ Check-in", checkin_tarde: "⏰ Check-in TARDE", checkout_registrado: "🏁 Check-out", resumen_diario: "📋 Resumen del día",
 };
 export function avisoDeAlerta(a){
   const info = a?.informativa === true ? AVISOS_INFORMATIVOS[a?.type] : null;
