@@ -101,19 +101,17 @@ test('la bitácora solo se agrega, con autor real y hora del servidor', async ()
   await assertFails(setDoc(doc(collection(dbAdmin, COL, cot.id, 'eventos')), { tipo: 'x', actorUid: 'admin', ts: new Date() }));
 });
 
-test('un servicio hereda el precio de la cotización aceptada solo si coincide exacto', async () => {
-  const srv = crearServiciosStore(dbOps);
+test('el servicio que nace de una cotización aceptada guarda su precio aparte; operaciones no lo ve', async () => {
   const d = await leer(dbAdmin, cot.id);
-  const base = { canal: 'Correo', recibidaEn: '2026-01-05T10:00', empresa: 'Cliente Ejemplo', cotizacionId: cot.id, cotizacionFolio: d.folio, precioAprobadoPor: d.aprobadoPor };
-  await assertFails(srv.crear(OPS, { ...base, precio: 1 }));                                 // precio distinto al aprobado
-  await assertFails(srv.crear(OPS, { ...base, precio: 3900, precioAprobadoPor: 'ops' }));    // otro aprobador
-  const otra = await sAdmin.crear(ADMIN, datos);                                              // propuesta sin aprobar
-  await assertFails(srv.crear(OPS, { ...base, cotizacionId: otra.id, cotizacionFolio: otra.folio, precio: 3600 }));
-  await assertFails(srv.crear(OPS, { ...base, empresa: 'Otro cliente', precio: 3900 }));        // el precio de un cliente no pasa a otro
-  const s = await assertSucceeds(srv.crear(OPS, { ...base, precio: 3900 }));
-  assert.equal((await getDoc(doc(dbAdmin, 'servicios', s.id))).data().precio, 3900);
+  const base = { canal: 'Correo', recibidaEn: '2026-01-05T10:00', empresa: 'Cliente Ejemplo', cotizacionId: cot.id, cotizacionFolio: d.folio };
+  const deOps = await assertSucceeds(crearServiciosStore(dbOps).crear(OPS, { ...base, precio: 3900 }));   // operaciones: el monto no entra
+  assert.equal((await getDoc(doc(dbAdmin, 'servicios', deOps.id))).data().precio, undefined);
+  assert.equal((await getDoc(doc(dbAdmin, 'servicios_precios', deOps.id))).exists(), false);
+  const s = await assertSucceeds(crearServiciosStore(dbAdmin).crear(ADMIN, { ...base, precio: 3900 }));
+  assert.equal((await getDoc(doc(dbAdmin, 'servicios', s.id))).data().precio, undefined);
+  assert.equal((await getDoc(doc(dbAdmin, 'servicios_precios', s.id))).data().precio, 3900);
+  await assertFails(getDoc(doc(dbOps, 'servicios_precios', s.id)));
   await assertSucceeds(sAdmin.vincularServicio(ADMIN, d, s));
   assert.equal((await leer(dbAdmin, cot.id)).servicioFolio, s.folio);
   await assertFails(updateDoc(doc(dbAdmin, COL, cot.id), { servicioId: 'otro' }));             // se liga una sola vez
-  await assertFails(srv.crear(OPS, { ...base, precio: 3900 }));                               // ya ligada: no se crea un segundo servicio con su precio
 });

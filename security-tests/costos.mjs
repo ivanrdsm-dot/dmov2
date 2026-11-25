@@ -80,8 +80,12 @@ test('el link de seguimiento y la encuesta solo los escribe el servidor', async 
 });
 
 test('un servicio entregado pide su factura una sola vez y queda ligado', async () => {
-  await env.withSecurityRulesDisabled(async c => updateDoc(doc(c.firestore(), 'servicios', srv.id), { estado: 'Entregada', precio: 3500, precioAprobadoPor: 'admin' }));
-  const actual = { id: srv.id, ...(await getDoc(doc(dbAdmin, 'servicios', srv.id))).data() };
+  await env.withSecurityRulesDisabled(async c => {
+    const f = c.firestore();                          // una sola instancia por contexto
+    await updateDoc(doc(f, 'servicios', srv.id), { estado: 'Entregada' });
+    await setDoc(doc(f, 'servicios_precios', srv.id), { precio: 3500, precioAprobadoPor: 'admin' });
+  });
+  const actual = { id: srv.id, ...(await getDoc(doc(dbAdmin, 'servicios', srv.id))).data(), ...(await getDoc(doc(dbAdmin, 'servicios_precios', srv.id))).data() };
   await assert.rejects(sOps.pedirFactura(OPS, actual));                                    // operaciones no factura
   const r = await assertSucceeds(sAdm.pedirFactura(ADM, actual));
   const f = (await getDoc(doc(dbAdmin, 'facturas', 'servicio_' + srv.id))).data();

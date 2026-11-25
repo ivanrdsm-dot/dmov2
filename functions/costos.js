@@ -1,6 +1,6 @@
 /* COSTOS · cada vez que se captura o anula un costo de un servicio, el servidor
-   recalcula el total desde la subcolección (fuente de verdad) y lo deja en el
-   servicio. La oficina no puede escribir esos campos (lo impiden las reglas). */
+   recalcula el total desde la subcolección (fuente de verdad) y lo deja en servicios_precios/{id}
+   (solo el director lo lee). El servicio nunca lleva montos. */
 import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { logger } from "firebase-functions";
@@ -21,12 +21,12 @@ export function totalDesde(docs){
 
 export const recalcularCostos = onDocumentWritten({ document: "servicios/{sid}/costos/{cid}", region: "us-central1", memory: "256MiB", retry: false }, async ev => {
   const db = getFirestore();
-  const ref = db.collection("servicios").doc(ev.params.sid);
+  const ref = db.collection("servicios").doc(ev.params.sid), refP = db.collection("servicios_precios").doc(ev.params.sid);
   await db.runTransaction(async tx => {
     const [srv, costos] = await Promise.all([tx.get(ref), tx.get(ref.collection("costos"))]);
     if(!srv.exists) return;
     const r = totalDesde(costos.docs.map(d => d.data()));
-    tx.update(ref, { ...r, costosActualizadosEn: FieldValue.serverTimestamp() });
+    tx.set(refP, { ...r, servicioId: ev.params.sid, servicioFolio: srv.data().folio || "", costosActualizadosEn: FieldValue.serverTimestamp() }, { merge: true });
     logger.info("costos recalculados", { servicio: ev.params.sid, ...r });
   });
 });
