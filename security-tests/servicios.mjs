@@ -114,3 +114,23 @@ test('la bitácora solo se agrega: con autor real, hora del servidor y sin reesc
     await assertFails(deleteDoc(doc(c, uno.path)));
   }
 });
+
+test('la cotización ligada por el servidor no la cambia nadie a mano; sin cotización ligada el folio se puede anotar', async () => {
+  await env.withSecurityRulesDisabled(async c => {
+    const dbL = c.firestore();
+    await setDoc(doc(dbL, 'servicios', 'conCot'), { ...datos, folio: `SRV-${anio}-0900`, estado: 'Asignada', creadoPor: 'ops', creadoEn: new Date(),
+      cotizacionId: 'cot1', cotizacionFolio: `COT-${anio}-0001`, cotizacionEstado: 'Propuesta', cotizacionPendientes: 1 });
+    await setDoc(doc(dbL, 'servicios', 'sinCot'), { ...datos, folio: `SRV-${anio}-0901`, estado: 'Asignada', creadoPor: 'ops', creadoEn: new Date() });
+  });
+  const dbs = { ops: ctx('ops').firestore(), admin: ctx('admin').firestore() };
+  for(const uid of ['ops', 'admin']){
+    const db = dbs[uid];
+    await assertFails(updateDoc(doc(db, 'servicios', 'conCot'), { cotizacionEstado: 'Aceptada' }));
+    await assertFails(updateDoc(doc(db, 'servicios', 'conCot'), { cotizacionId: 'otra' }));
+    await assertFails(updateDoc(doc(db, 'servicios', 'conCot'), { cotizacionFolio: `COT-${anio}-0099` }));
+    await assertFails(updateDoc(doc(db, 'servicios', 'conCot'), { cotizacionPendientes: 0 }));
+    await assertFails(updateDoc(doc(db, 'servicios', 'sinCot'), { cotizacionId: 'cot1' }));
+    await assertSucceeds(updateDoc(doc(db, 'servicios', 'conCot'), { notas: 'cambio normal ' + uid }));
+  }
+  await assertSucceeds(updateDoc(doc(dbs.ops, 'servicios', 'sinCot'), { cotizacionFolio: `COT-${anio}-0007` }));
+});

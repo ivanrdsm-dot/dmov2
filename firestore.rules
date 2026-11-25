@@ -165,7 +165,13 @@ service cloud.firestore {
         && c.aprobadoPor == d.precioAprobadoPor;
     }
     /* Campos que solo escribe el servidor: totales de costos, link de seguimiento y encuesta del cliente. */
-    function camposDeCostoServidor() { return ['costoTotal','costosN','costosPorConcepto','costosActualizadosEn','seguimientoToken','seguimientoCreadoEn','encuestaRespondida','encuestaCalificacion','facturaEstado','facturaActualizadaEn']; }
+    function camposDeCostoServidor() { return ['costoTotal','costosN','costosPorConcepto','costosActualizadosEn','seguimientoToken','seguimientoCreadoEn','encuestaRespondida','encuestaCalificacion','facturaEstado','facturaActualizadaEn','cotizacionEstado','cotizacionEn','cotizacionPendientes']; }
+    /* La cotización ligada a un servicio solo la cambia el servidor (al asignar la ruta o al recalcular):
+       nadie liga otra a mano y, si ya hay una ligada, su folio no se cambia. */
+    function cambiaCotizacionLigada() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny(['cotizacionId'])
+        || ('cotizacionId' in resource.data && request.resource.data.diff(resource.data).affectedKeys().hasAny(['cotizacionFolio']));
+    }
     match /servicios/{id} {
       allow read: if esOficina() || (esChofer() && (resource.data.choferId == miChoferId() || resource.data.get('segundoChoferId', '') == miChoferId()));
       allow create: if esOficina()
@@ -182,6 +188,7 @@ service cloud.firestore {
         && request.resource.data.creadoPor == resource.data.creadoPor
         && request.resource.data.creadoEn == resource.data.creadoEn
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(camposDeCostoServidor())
+        && !cambiaCotizacionLigada()
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(camposDinero());
       allow delete: if false;
       /* Costos reales: la oficina los captura; nadie los edita ni borra. Uno mal

@@ -8,6 +8,7 @@ import { ESTADOS_COTIZACION, evaluarTransicion, kpisCotizaciones, precioCliente 
 const ETIQUETA = { Propuesta: "Por aprobar", Aprobada: "Aprobada · falta enviar", Enviada: "Esperando al cliente", Aceptada: "Aceptada", Rechazada: "Rechazada", Cancelada: "Cancelada" };
 const etiquetaEstado = e => ETIQUETA[e] || e;
 import { bloqueoPdf } from "./cotizacionCliente.ts";
+import { getFunctions, httpsCallable } from "firebase/functions";
 
 const COLOR = { Propuesta: AMBER, Aprobada: BLUE, Enviada: VIOLET, Aceptada: GREEN, Rechazada: ROSE, Cancelada: MUTED };
 const dato = (k, v) => <div key={k}><span style={etiqueta}>{k}</span><div style={{ fontSize: 14 }}>{v || <span style={{ color: MUTED }}>—</span>}</div></div>;
@@ -42,6 +43,7 @@ function Detalle({ c, store, usuario, onClose, onCrearServicio, avisar }){
         <Chip color={COLOR[c.estado] || MUTED}>{etiquetaEstado(c.estado)}</Chip>
         {c.solicitudFolio && <Chip color={BLUE}>Solicitud {c.solicitudFolio}</Chip>}
         {c.servicioFolio && <Chip color={GREEN}>Servicio {c.servicioFolio}</Chip>}
+        {c.origen === "ruta_asignada" && <Chip color={VIOLET}>Automática · al asignar la ruta</Chip>}
         {c.sustituyeA && <Chip color={MUTED}>Sustituye a {c.sustituyeA}</Chip>}
       </div>
       <Seccion titulo="Precio">
@@ -56,6 +58,10 @@ function Detalle({ c, store, usuario, onClose, onCrearServicio, avisar }){
           <button onClick={() => correr(() => store.aprobar(usuario, c, Number(String(precio).replace(/[$,\s]/g, "")), nota), "Precio aprobado")} disabled={ocupado} style={boton(GREEN)}>Aprobar precio</button></div>
           : <p style={{ fontSize: 13, color: AMBER, margin: "10px 0 0" }}>Falta que un administrador apruebe el precio. Hasta entonces no se envía al cliente.</p>)}
         {r.pendientes?.length > 0 && c.estado === "Propuesta" && <p style={{ fontSize: 13, color: AMBER, margin: "10px 0 0" }}>El cálculo se guardó con {r.pendientes.length} dato(s) por confirmar: {r.pendientes.join(" · ")}</p>}
+        {admin && c.estado === "Propuesta" && c.origen === "ruta_asignada" && <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+          <button onClick={() => correr(async () => { const x = await httpsCallable(getFunctions(undefined, "us-central1"), "directorRecotizarServicio")({ cotizacionId: c.id }); onClose(); return x; }, "Recalculada con el tarifario: se creó un folio nuevo")}
+            disabled={ocupado} style={boton(BLUE, false)}>Recalcular con el tarifario</button>
+          <span style={{ fontSize: 12, color: MUTED }}>Úsalo después de completar lo que falta (p. ej. el tipo de la unidad en Flota). Esta queda cancelada y se crea otra con folio nuevo.</span></div>}
       </Seccion>
       <Seccion titulo="Qué se cotizó">
         <div style={rejilla}>

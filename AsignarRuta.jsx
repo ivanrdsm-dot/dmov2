@@ -179,9 +179,9 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   /* Pasos 3 y 4 por separado: si fallan, "Reintentar" los repite sobre el MISMO servicio (no crea otro folio). */
   const terminar = async p => {
     setOcupado("Mandando la ruta al chofer…");
-    await terminarAsignacion(db, usuario, llamar, p);
+    const fin = await terminarAsignacion(db, usuario, llamar, p);
     setPendiente(null);
-    setListo({ folio: p.folio, chofer: p.choferNombre, id: p.id, tel: p.datos?.solicitanteContacto || "" });
+    setListo({ folio: p.folio, chofer: p.choferNombre, id: p.id, tel: p.datos?.solicitanteContacto || "", cotizacion: fin?.cotizacionFolio || "" });
     setParadas([]); setIndicaciones(""); setHora("");
   };
   const reintentar = async () => {
@@ -200,6 +200,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
           <button onClick={() => setCopiada("")} style={{ marginLeft: 8, background: "none", border: "none", color: MUTED, cursor: "pointer" }}>✕</button></div>}
         {listo && <div style={{ background: GREEN + "12", border: "1.5px solid " + GREEN, borderRadius: 14, padding: 14, marginBottom: 14, fontSize: 15 }}>
           ✓ Ruta <b style={{ fontFamily: MONO }}>{listo.folio}</b> mandada a <b>{listo.chofer}</b>. Ya la ve en su celular. Síguelo en <button onClick={() => onVer?.("despacho")} style={{ background: "none", border: "none", color: BLUE, fontWeight: 800, cursor: "pointer", fontSize: 15, padding: 0 }}>En vivo</button>.
+          {listo.cotizacion && <div style={{ marginTop: 8, fontSize: 14 }}>📄 Cotización <b style={{ fontFamily: MONO }}>{listo.cotizacion}</b> creada y ligada al servicio. El director aprueba el precio.</div>}
           <div style={{ marginTop: 10 }}><BotonSeguimiento servicio={{ id: listo.id, folio: listo.folio }} telefono={listo.tel} llamar={llamar}/></div></div>}
 
         <Paso n={1} titulo="¿Quién maneja y en qué camioneta?">

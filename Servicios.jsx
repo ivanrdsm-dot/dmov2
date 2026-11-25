@@ -11,6 +11,27 @@ import {
 import { recomendarUnidades } from "./dimensionamiento.ts";
 import { proveedorHabilitado, puntoListoParaRuta } from "./catalogos.ts";
 import { CONCEPTOS_COSTO, validarCosto, totalCostos, margenServicio } from "./costos.ts";
+import { etapasServicio, enQueVa } from "./seguimientoServicio.ts";
+
+/* Seguimiento de punta a punta: pedido → ruta → cotización → entrega → factura → cobro. Sin montos. */
+const COLOR_ETAPA = { hecho: GREEN, actual: AMBER, falta: BORDER, problema: ROSE };
+function Seguimiento({ s }){
+  const etapas = etapasServicio(s);
+  return <Seccion titulo="Seguimiento">
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      {etapas.map((e, k) => <div key={e.clave} style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 16 }}>
+          <span style={{ width: 14, height: 14, borderRadius: 14, background: e.estado === "falta" ? "#fff" : COLOR_ETAPA[e.estado], border: "2px solid " + (e.estado === "falta" ? BD2 : COLOR_ETAPA[e.estado]), flex: "none", marginTop: 3 }}/>
+          {k < etapas.length - 1 && <span style={{ width: 2, flex: 1, background: e.estado === "hecho" ? GREEN : BORDER, minHeight: 14 }}/>}
+        </div>
+        <div style={{ paddingBottom: 10 }}>
+          <div style={{ fontWeight: 800, fontSize: 14, color: e.estado === "falta" ? MUTED : TEXT }}>{e.titulo}{e.estado === "actual" ? <span style={{ color: AMBER }}> · ahora</span> : null}</div>
+          {e.detalle && <div style={{ fontSize: 12, color: e.estado === "problema" ? ROSE : MUTED }}>{e.detalle}</div>}
+        </div>
+      </div>)}
+    </div>
+  </Seccion>;
+}
 
 /* Costos reales del servicio. Los captura la oficina; el margen lo ve solo un admin.
    Un costo no se edita ni se borra: se anula con motivo. */
@@ -151,7 +172,8 @@ function Formulario({ inicial, clientes, choferes, unidades, puntos = [], provee
       </Seccion>
       <Seccion titulo={inicial?.id ? "Cotización y asignación" : "Cotización"}>
         <div style={rejilla}>
-          <Campo label="Folio de cotización" value={f.cotizacionFolio} onChange={s("cotizacionFolio")} placeholder="COT-2026-…"/>
+          {f.cotizacionId ? <Campo label="Folio de cotización (ligada)" value={f.cotizacionFolio} onChange={() => {}} disabled/>
+            : <Campo label="Folio de cotización" value={f.cotizacionFolio} onChange={s("cotizacionFolio")} placeholder="COT-2026-…"/>}
           <Campo label="Precio propuesto sin IVA" inputMode="decimal" value={f.precioPropuesto} onChange={s("precioPropuesto")}/>
           <Campo label="Quién confirmó por el cliente" value={f.confirmadoPor} onChange={s("confirmadoPor")}/>
           {/* Al registrar no se pide unidad ni chofer: eso se hace después en "Chofer y ruta" del servicio. */}
@@ -303,6 +325,7 @@ function Detalle({ s, store, usuario, unidades, choferesApp = [], despacho = nul
         <button onClick={onEditar} style={boton(BLUE, false)}>Editar datos</button>
       </div>
       {v.pendientes.length > 0 && <div style={{ background: AMBER + "10", border: "1px solid " + AMBER + "50", color: "#92400e", borderRadius: 12, padding: "10px 14px", fontSize: 13, marginBottom: 14 }}><b>PENDIENTE:</b> {v.pendientes.join(" · ")}</div>}
+      <Seguimiento s={s}/>
       <Seccion titulo="Solicitud">
         <div style={rejilla}>{dato("Solicita", s.solicitante)}{dato("Contacto", s.solicitanteContacto)}{dato("Plan o centro de costos", [s.plan, s.centroCostos].filter(Boolean).join(" · "))}
           {dato("Fecha del servicio", [s.fechaServicio, s.horaServicio].filter(Boolean).join(" · "))}{dato("Mercancía", s.mercancia)}
@@ -435,7 +458,8 @@ export default function Servicios({ store, usuario, clientes = [], choferes = []
                 <td style={{ padding: "10px 12px" }}>{s.fechaServicio || <span style={{ color: AMBER, fontWeight: 700 }}>PENDIENTE</span>}</td>
                 <td style={{ padding: "10px 12px" }}>{s.unidadPlaca || "—"}<div style={{ fontSize: 11, color: MUTED }}>{s.choferNombre || s.proveedor || ""}</div></td>
                 <td style={{ padding: "10px 12px", fontFamily: MONO }}>{s.precio ? dinero(s.precio) : <span style={{ color: MUTED }}>{s.precioPropuesto ? dinero(s.precioPropuesto) + " prop." : "—"}</span>}</td>
-                <td style={{ padding: "10px 12px" }}><Chip color={COLOR_ESTADO[s.estado] || MUTED}>{s.estado}</Chip>{pend > 0 && <div style={{ fontSize: 10, color: AMBER, fontWeight: 700, marginTop: 3 }}>{pend} pendiente(s)</div>}</td>
+                <td style={{ padding: "10px 12px" }}><Chip color={COLOR_ESTADO[s.estado] || MUTED}>{s.estado}</Chip>{pend > 0 && <div style={{ fontSize: 10, color: AMBER, fontWeight: 700, marginTop: 3 }}>{pend} pendiente(s)</div>}
+                  <div style={{ fontSize: 11, color: MUTED, marginTop: 3, maxWidth: 220 }}>{enQueVa(s)}</div></td>
                 <td style={{ padding: "10px 12px", textAlign: "right" }}><button onClick={e => { e.stopPropagation(); setDetalleId(s.id); }} style={{ ...boton(BLUE, false), padding: "6px 12px", minHeight: 34 }}>Abrir</button></td>
               </tr>); })}
             {!cargando && visibles.length === 0 && <tr><td colSpan={9} style={{ padding: 28, textAlign: "center", color: MUTED }}>{lista.length === 0 ? "Aún no hay servicios registrados. Registra el primero." : "Ningún servicio coincide con el filtro."}</td></tr>}
