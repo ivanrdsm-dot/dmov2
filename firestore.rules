@@ -63,6 +63,7 @@ service cloud.firestore {
     match /alertas/{id}              { allow read, create: if esOficina(); allow update: if esAdmin(); allow delete: if false; }
     match /avisos_oficina/{id}       { allow read, write: if false; }
     match /activaciones/{id}         { allow read, write: if false; }   // enlaces de alta del chofer: solo el servidor
+    match /resumenes_ia/{id}         { allow read: if esAdmin(); allow write: if false; }   // resumen diario de la IA: lo escribe el servidor
     match /alerts/{id} {                          // legacy migrada — congelada
       allow read: if esOficina();
       allow write: if false;
@@ -422,7 +423,7 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','avisos_oficina','activaciones','tarifario','cotizaciones_logistica',
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','avisos_oficina','activaciones','resumenes_ia','tarifario','cotizaciones_logistica',
         // Con papelera: el borrado lo controla su propia regla (copia obligatoria); la papelera no se edita.
         'papelera','rutas','choferes','pagosProveedores','presupuestos','cuentas','viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas','pagosAdjuntos',
         // Estas no se borran nunca (ni admin): son historia de la operación.
