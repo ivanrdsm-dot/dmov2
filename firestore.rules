@@ -145,7 +145,7 @@ service cloud.firestore {
     /* Campos que solo escribe el servidor: totales de costos, link de seguimiento y encuesta del cliente. */
     function camposDeCostoServidor() { return ['costoTotal','costosN','costosPorConcepto','costosActualizadosEn','seguimientoToken','seguimientoCreadoEn','encuestaRespondida','encuestaCalificacion','facturaEstado','facturaActualizadaEn']; }
     match /servicios/{id} {
-      allow read: if esOficina() || (esChofer() && resource.data.choferId == miChoferId());
+      allow read: if esOficina() || (esChofer() && (resource.data.choferId == miChoferId() || resource.data.get('segundoChoferId', '') == miChoferId()));
       allow create: if esOficina()
         && request.resource.data.creadoPor == request.auth.uid
         && request.resource.data.creadoEn == request.time
@@ -191,7 +191,8 @@ service cloud.firestore {
       /* Ruta del servicio: paradas y posiciones las escribe SOLO el servidor. */
       match /paradas/{paradaId} {
         allow read: if esOficina()
-          || (esChofer() && get(/databases/$(database)/documents/servicios/$(id)).data.choferId == miChoferId());
+          || (esChofer() && (get(/databases/$(database)/documents/servicios/$(id)).data.choferId == miChoferId()
+            || get(/databases/$(database)/documents/servicios/$(id)).data.get('segundoChoferId', '') == miChoferId()));
         allow write: if false;
       }
       match /posiciones/{loteId} {

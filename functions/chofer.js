@@ -79,10 +79,8 @@ const textoLugar = (lugar, pos) => lugar || `${pos.lat.toFixed(5)}, ${pos.lng.to
 /** Paradas de sus rutas activas y de los últimos 4 días: lo que "explica" que esté lejos. */
 async function paradasRecientes(choferId){
   const hoy = fechaCDMX(), dias = [0, 1, 2, 3].map(n => fechaMasDias(hoy, -n));
-  const [act, rec] = await Promise.all([
-    db().collection("servicios").where("choferId", "==", choferId).where("estado", "in", ["Asignada", "En ruta"]).limit(10).get(),
-    db().collection("servicios").where("choferId", "==", choferId).where("fechaServicio", "in", dias).limit(20).get()]);
-  const docs = [...new Map([...act.docs, ...rec.docs].map(d => [d.id, d])).values()].slice(0, 12);
+  const [act, rec] = await Promise.all([serviciosDe(choferId, q => q.where("estado", "in", ["Asignada", "En ruta"]), 10), serviciosDe(choferId, q => q.where("fechaServicio", "in", dias))]);
+  const docs = [...new Map([...act, ...rec].map(d => [d.id, d])).values()].slice(0, 12);
   const out = [];
   for(const d of docs) (await d.ref.collection("paradas").get()).forEach(p => { const x = p.data(); if(coordenadaValida({ lat: Number(x.lat), lng: Number(x.lng) })) out.push({ lat: Number(x.lat), lng: Number(x.lng) }); });
   return out;
@@ -156,11 +154,19 @@ async function trazarRuta(servicioId, desde = null){
   return { puntos: linea.length, fuente, duracionSeg, ps };
 }
 
+/** Servicios de un chofer como principal O como segundo chofer (hasta 2 por ruta). `filtro` agrega una condición. */
+async function serviciosDe(choferId, filtro = q => q, lim = 20){
+  const [a, b] = await Promise.all([filtro(db().collection("servicios").where("choferId", "==", choferId)).limit(lim).get(),
+    filtro(db().collection("servicios").where("segundoChoferId", "==", choferId)).limit(lim).get()]);
+  return [...new Map([...a.docs, ...b.docs].map(d => [d.id, d])).values()];
+}
+const esDeLaRuta = (s, choferId) => s.choferId === choferId || s.segundoChoferId === choferId;
+
 async function servicioDelChofer(servicioId, chofer){
   const id = txt(servicioId, 80);
   if(!id) throw falla("invalid-argument", "Falta el servicio");
   const ref = db().doc("servicios/" + id), snap = await ref.get();
-  if(!snap.exists || snap.data().choferId !== chofer.id) throw falla("permission-denied", "Este servicio no está asignado a ti");
+  if(!snap.exists || !esDeLaRuta(snap.data(), chofer.id)) throw falla("permission-denied", "Este servicio no está asignado a ti");
   return { ref, servicio: { id: snap.id, ...snap.data() } };
 }
 async function jornadaDeHoy(chofer, ms = Date.now()){
@@ -201,14 +207,14 @@ export const choferCheckIn = onCall(OPC_LUGAR, async req => {
     ...(d.simulada === true ? ["ubicación simulada"] : [])];
   /* Hora de llegada: 7:00 (tolerancia 10 min); en ruta foránea, 9:00. Queda registrada si llegó tarde. */
   const [enRutaHoy, rutasHoy, lugar] = await Promise.all([
-    db().collection("servicios").where("choferId", "==", chofer.id).where("estado", "==", "En ruta").limit(1).get(),
-    db().collection("servicios").where("choferId", "==", chofer.id).where("fechaServicio", "==", fecha).limit(5).get(),
+    serviciosDe(chofer.id, q => q.where("estado", "==", "En ruta"), 1),
+    serviciosDe(chofer.id, q => q.where("fechaServicio", "==", fecha), 5),
     dondeEsta(pos)]);
-  const foraneo = !enRutaHoy.empty && enRutaHoy.docs[0].data().foraneo === true;
+  const foraneo = enRutaHoy.length > 0 && enRutaHoy[0].data().foraneo === true;
   const ll = llegada(Date.now(), foraneo ? UMBRALES_CHOFER.horaCheckInForaneo : UMBRALES_CHOFER.horaCheckIn, UMBRALES_CHOFER.toleranciaEntradaMin);
   /* La camioneta debe coincidir con la de su ruta de hoy. */
   const placa = txt(d.unidadPlaca, 20).toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const placaRuta = rutasHoy.docs.map(x => String(x.data().unidadPlaca || "").toUpperCase().replace(/[^A-Z0-9]/g, "")).find(Boolean) || "";
+  const placaRuta = rutasHoy.map(x => String(x.data().unidadPlaca || "").toUpperCase().replace(/[^A-Z0-9]/g, "")).find(Boolean) || "";
   const otraUnidad = !!(placa && placaRuta && placa !== placaRuta);
   const creada = await db().runTransaction(async tx => {
     if((await tx.get(ref)).exists) return false;
@@ -405,7 +411,7 @@ export const choferTerminarJornada = onCall(OPC_LUGAR, async req => {
   const abiertas = await db().collection("jornadas").where("choferId", "==", chofer.id).where("estado", "==", "Abierta").limit(10).get();
   if(abiertas.empty) throw falla("failed-precondition", "No tienes una jornada abierta");
   const ref = abiertas.docs.map(d => d.ref).sort((a, b) => b.id.localeCompare(a.id))[0];
-  const enRuta = await db().collection("servicios").where("choferId", "==", chofer.id).where("estado", "==", "En ruta").limit(1).get();
+  const enRuta = { docs: await serviciosDe(chofer.id, q => q.where("estado", "==", "En ruta"), 1) }; enRuta.empty = enRuta.docs.length === 0;
   /* Ruta local: primero se termina la ruta. Foránea: cierra su día para descansar y mañana hace check-in otra vez. */
   const foranea = !enRuta.empty && enRuta.docs[0].data().foraneo === true;
   if(!enRuta.empty && !foranea) throw falla("failed-precondition", "Primero termina tu ruta: aún tienes paradas pendientes");
@@ -430,8 +436,8 @@ export const choferTerminarJornada = onCall(OPC_LUGAR, async req => {
     let kmGps = null, puntosGps = 0;
     try {
       const lotes = [...(await ref.collection("posiciones").get()).docs];
-      const srvs = await db().collection("servicios").where("choferId", "==", chofer.id).where("fechaServicio", "==", r.fecha || fechaCDMX()).limit(5).get();
-      for(const sv of srvs.docs) lotes.push(...(await sv.ref.collection("posiciones").get()).docs);
+      const srvs = await serviciosDe(chofer.id, q => q.where("fechaServicio", "==", r.fecha || fechaCDMX()), 5);
+      for(const sv of srvs) lotes.push(...(await sv.ref.collection("posiciones").get()).docs);
       const puntos = lotes.flatMap(l => l.data().puntos || []).filter(p => !r.desdeMs || p.tMs >= r.desdeMs);
       puntosGps = puntos.length; kmGps = kmDePuntos(puntos);
     } catch(e){ console.warn("km gps", e?.message); }
@@ -556,7 +562,7 @@ export const choferActivar = onCall(OPC, async req => {
   const ref = db().doc("activaciones/" + huella(token)), snap = await ref.get();
   if(!snap.exists) return { estado: "invalida" };
   const a = snap.data(), c = (await db().doc("choferes/" + a.choferId).get()).data() || {};
-  const pila = String(c.nombre || "").trim().replace(/^jos[eé]\s+/i, "").split(/\s+/)[0] || "";
+  const pila = String(c.nombre || "").trim().replace(/^jos[eé]\s+/i, "").split(/[\s·()]+/).find(w => /\p{L}/u.test(w) && !/^prueba$/i.test(w)) || "";
   const info = { nombre: pila ? pila[0].toUpperCase() + pila.slice(1).toLowerCase() : "", tel: String(c.tel || "").replace(/\D/g, "").slice(-10) };
   if(c.baja || c.activo === false || c.authUid !== a.uid) return { estado: "invalida" };
   if(a.usadoMs) return { estado: "usada", ...info };
@@ -601,6 +607,15 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
   if(!s.exists) throw falla("not-found", "Servicio no encontrado");
   const c = await db().doc("choferes/" + choferId).get();
   if(!c.exists || !c.data().authUid) throw falla("failed-precondition", "El chofer no tiene cuenta de la app. Vincúlalo primero.");
+  /* Hasta 2 choferes por ruta: el segundo es opcional, distinto del primero y con la app activa. */
+  const segundoId = txt(req.data?.segundoChoferId, 80);
+  let segundo = null;
+  if(segundoId){
+    if(segundoId === choferId) throw falla("invalid-argument", "El segundo chofer debe ser otra persona");
+    const c2 = await db().doc("choferes/" + segundoId).get();
+    if(!c2.exists || !c2.data().authUid || c2.data().baja || c2.data().activo === false) throw falla("failed-precondition", "El segundo chofer no tiene la app activa");
+    segundo = { id: segundoId, nombre: c2.data().nombre || "" };
+  }
   const servicio = s.data();
   /* Un lugar del catálogo cuenta aunque no traiga dirección escrita: su coordenada verificada manda. */
   const lista = [...(servicio.origenes || []).map(p => ({ ...p, tipo: "carga" })), ...(servicio.destinos || []).map(p => ({ ...p, tipo: "entrega" }))].filter(p => txt(p.direccion) || txt(p.puntoId));
@@ -620,8 +635,9 @@ export const oficinaPrepararRuta = onCall(OPC, async req => {
   if(!existentes.empty) throw falla("already-exists", "La ruta de este servicio ya está armada");
   const lote = db().batch();
   for(const p of paradas) lote.set(db().collection(`servicios/${servicioId}/paradas`).doc("p" + String(p.orden).padStart(2, "0")), { ...p, creadaEn: ahora() });
-  lote.update(refS, { choferId, choferNombre: c.data().nombre || servicio.choferNombre || "", rutaArmadaEn: ahora(), actualizadoEn: ahora() });
-  lote.set(db().collection(`servicios/${servicioId}/eventos`).doc(), { tipo: "ruta_armada", paradas: paradas.length, choferId, ordenadaPorCercania: ordenar,
+  lote.update(refS, { choferId, choferNombre: c.data().nombre || servicio.choferNombre || "", segundoChoferId: segundo?.id || "", segundoChoferNombre: segundo?.nombre || "",
+    rutaArmadaEn: ahora(), actualizadoEn: ahora() });
+  lote.set(db().collection(`servicios/${servicioId}/eventos`).doc(), { tipo: "ruta_armada", paradas: paradas.length, choferId, segundoChoferId: segundo?.id || "", ordenadaPorCercania: ordenar,
     kmLineaRectaAntes: o.kmAntes, kmLineaRectaDespues: o.kmDespues, ...actorOficina(of), ts: ahora() });
   await lote.commit();
   /* Local o foránea, y cuántos días fuera (estimado; la oficina lo puede corregir). */

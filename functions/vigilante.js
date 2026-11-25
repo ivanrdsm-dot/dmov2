@@ -46,7 +46,8 @@ export const vigilante = onSchedule({ schedule: "every 5 minutes", timeZone: "Am
   }));
   const ubicaciones = Object.fromEntries(ubiQ.docs.map(d => [d.id, d.data()]));
   const jornadas = [...new Map([...jorAbQ.docs, ...jorHoyQ.docs].map(d => [d.id, { id: d.id, ...d.data(), checkInMs: ms(d.data().checkInEn) }])).values()];
-  const conRutaHoy = hoyQ.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => ["Asignada", "En ruta"].includes(x.estado) && !x.historico);
+  const conRutaHoy = hoyQ.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => ["Asignada", "En ruta"].includes(x.estado) && !x.historico)
+    .flatMap(x => x.segundoChoferId ? [x, { ...x, choferId: x.segundoChoferId, choferNombre: x.segundoChoferNombre || "" }] : [x]);   // hasta 2 choferes por ruta
   const deChoferes = alertasChoferes({ ubicaciones, enRuta, conRutaHoy, jornadas }, ahora);
   const conectores = {};
   for(const [k, v] of Object.entries(con.exists ? con.data() : {})) conectores[k] = { ...v, ultimoLatido: ms(v?.ultimoLatido) };

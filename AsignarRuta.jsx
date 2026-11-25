@@ -93,6 +93,7 @@ function AccesoChofer({ chofer, llamar, esAdmin, enlace, setEnlace }){
 export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   const [choferes, setChoferes] = useState([]), [unidades, setUnidades] = useState([]), [cuentas, setCuentas] = useState([]), [lugares, setLugares] = useState([]);
   const [fecha, setFecha] = useState(hoyCDMX()), [hora, setHora] = useState(""), [choferId, setChoferId] = useState(""), [placa, setPlaca] = useState("");
+  const [segundoId, setSegundoId] = useState("");   // segundo chofer (opcional): hasta 2 por ruta
   const [cliente, setCliente] = useState(""), [telCliente, setTelCliente] = useState(""), [indicaciones, setIndicaciones] = useState(""), [paradas, setParadas] = useState([]), [ordenar, setOrdenar] = useState(true);
   const [ocupado, setOcupado] = useState(""), [error, setError] = useState(""), [listo, setListo] = useState(null), [delDia, setDelDia] = useState([]);
   const [diaLista, setDiaLista] = useState(hoyCDMX()), [lista, setLista] = useState([]), [editando, setEditando] = useState(""), [copiada, setCopiada] = useState("");
@@ -126,6 +127,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
         puntoId: p.puntoId || "", confirmada: !!(l && l.pinConfirmado === true), contacto: p.contacto || "", telefono: p.telefono || "", horaPactada: p.horaPactada || "", clave: Date.now() + Math.random() }; }));
     setCliente(s.empresa || ""); setTelCliente(s.solicitanteContacto || ""); setIndicaciones(s.indicaciones || "");
     if(activos.some(c => c.id === s.choferId)) setChoferId(s.choferId);
+    setSegundoId(activos.some(c => c.id === s.segundoChoferId) ? s.segundoChoferId : "");
     if(s.unidadPlaca) setPlaca(String(s.unidadPlaca).toUpperCase());
     setOrdenar(false); setFecha(hoyCDMX()); setCopiada(s.folio || "la ruta");
     window.scrollTo?.({ top: 0, behavior: "smooth" }); document.querySelector("[data-asignar-ruta]")?.scrollTo?.({ top: 0, behavior: "smooth" });
@@ -135,11 +137,12 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
   const camionetas = unidades.filter(u => u.status !== "Baja").map(u => String(u.placa || u.placas || u.id).toUpperCase()).sort();
   const nombresClientes = [...new Set(cuentas.map(c => String(c.nombre || "").trim()).filter(Boolean))].sort();
   const chofer = activos.find(c => c.id === choferId);
-  const ocupadoHoy = id => delDia.find(s => s.choferId === id && ["Asignada", "En ruta"].includes(s.estado));
+  const ocupadoHoy = id => delDia.find(s => (s.choferId === id || s.segundoChoferId === id) && ["Asignada", "En ruta"].includes(s.estado));
+  const segundo = activos.find(c => c.id === segundoId && c.id !== choferId);
 
   /* Al elegir chofer, se pone sola la camioneta que usó en su ruta más reciente (se puede cambiar). */
   const elegirChofer = async id => {
-    setChoferId(id);
+    setChoferId(id); if(id === segundoId) setSegundoId("");
     try {
       const s = await getDocs(query(collection(db, "servicios"), where("choferId", "==", id), limit(30)));
       const ult = s.docs.map(d => d.data()).filter(x => x.unidadPlaca).sort((a, b) => String(b.fechaServicio || "").localeCompare(String(a.fechaServicio || "")))[0];
@@ -157,6 +160,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
     if(pendiente) return reintentar();   // hay un servicio creado a medias: se termina ese, no se crea otro
     if(faltan.length){ setError("Falta: " + faltan.join(", ") + "."); return; }
     if(!chofer?.authUid){ setError(`${chofer?.nombre || "El chofer"} todavía no tiene la app. Dale acceso primero (arriba).`); return; }
+    if(segundo && !segundo.authUid){ setError(`${segundo.nombre} (segundo chofer) todavía no tiene la app.`); return; }
     const malos = sinUbicacion(paradas);
     if(malos.length){ setError("Estos lugares no tienen ubicación en el mapa: " + malos.map(p => p.nombre || p.direccion).join(", ") + ". Quítalos y búscalos otra vez."); return; }
     setError(""); setListo(null);
@@ -166,7 +170,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
       setOcupado("Creando el servicio…");
       const datos = datosServicio({ usuario, cliente, fecha, hora, paradas: conId, placa, chofer, indicaciones, contactoCliente: telCliente });
       const { id, folio } = await crearServicioRuta(db, usuario, datos);
-      const p = { id, folio, datos, choferId, choferNombre: chofer.nombre, ordenar };
+      const p = { id, folio, datos, choferId, choferNombre: chofer.nombre + (segundo ? " y " + segundo.nombre : ""), segundoChoferId: segundo?.id || "", ordenar };
       setPendiente(p); setCopiada("");
       await terminar(p);
     } catch(e){ setError(mensajeError(e)); }
@@ -209,6 +213,12 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
                     {nombreCorto(c.nombre)}{!c.authUid && <small style={{ display: "block", fontSize: 11, opacity: .8 }}>sin app</small>}
                     {ocup && <small style={{ display: "block", fontSize: 11, opacity: .8 }}>ya tiene ruta</small>}</button>; })}
               </div></div>
+            {choferId && <div style={{ gridColumn: "1 / -1" }}><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Segundo chofer (opcional)</span>
+              <div role="radiogroup" aria-label="Segundo chofer" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                <button type="button" role="radio" aria-checked={!segundoId} onClick={() => setSegundoId("")} style={{ ...boton(MUTED, !segundoId), padding: "8px 12px", minHeight: 40, fontSize: 14 }}>Solo uno</button>
+                {activos.filter(c => c.id !== choferId).map(c => <button key={c.id} type="button" role="radio" aria-checked={c.id === segundoId} onClick={() => setSegundoId(c.id)}
+                  style={{ ...boton(BLUE, c.id === segundoId), padding: "8px 12px", minHeight: 40, fontSize: 14 }}>{nombreCorto(c.nombre)}{!c.authUid ? " · sin app" : ""}</button>)}
+              </div></div>}
             <label><span style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>Camioneta (placas)</span>
               <select style={caja} value={placa} onChange={e => setPlaca(e.target.value)}>
                 <option value="">— Elige la camioneta —</option>
@@ -267,7 +277,7 @@ export default function AsignarRuta({ db, app, usuario, mapboxToken, onVer }){
             : lista.map(s => { const editable = ["Asignada", "En ruta"].includes(s.estado);
               return <div key={s.id} style={{ background: "#fff", border: "1px solid " + BORDER, borderRadius: 12, padding: "10px 14px", marginBottom: 8 }}>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                  <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
+                  <b style={{ fontFamily: MONO }}>{s.folio}</b><span>{s.choferNombre}{s.segundoChoferNombre ? " + " + s.segundoChoferNombre : ""}</span><span style={{ color: MUTED }}>· {s.unidadPlaca} · {s.empresa}</span>
                   {s.foraneo != null && <DiasFuera s={s} llamar={llamar} editable={editable}/>}
                   <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     {editable && <button onClick={() => setEditando(editando === s.id ? "" : s.id)} style={{ ...boton(A, false), padding: "5px 10px", minHeight: 30, fontSize: 12 }}>✏️ {editando === s.id ? "Cerrar" : "Editar paradas"}</button>}
