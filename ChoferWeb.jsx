@@ -5,6 +5,7 @@
    (equipo, check-in, geocerca, evidencia). Límite honesto: el navegador solo manda la
    ubicación mientras esta pantalla está abierta; por eso se pide mantenerla encendida. */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { collection, doc, onSnapshot, query, where, orderBy } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
@@ -79,10 +80,10 @@ async function conSello(file, lineas, maximo = 1600){
     g.fillStyle = "#fff"; g.font = `700 ${t}px system-ui, sans-serif`; g.textBaseline = "top";
     lineas.forEach((l, i) => g.fillText(l, Math.round(t * 0.6), c.height - alto + Math.round(t * 0.4) + i * Math.round(t * 1.45), c.width - t));
     const b = await new Promise(r => c.toBlob(r, "image/jpeg", 0.82));
-    if(b){ b.selloImpreso = true; return b; }
+    if(b){ b.selloImpreso = true; b.enVivo = file?.enVivo === true; return b; }
   } catch {}
   const sin = await comprimir(file);
-  try { sin.selloImpreso = false; } catch {}
+  try { sin.selloImpreso = false; sin.enVivo = file?.enVivo === true; } catch {}
   return sin;
 }
 /* Dirección donde está el chofer (Google, desde el servidor). Si tarda más de 4 s, sigue sin ella (las coordenadas siempre van). */
@@ -92,7 +93,7 @@ async function lugarDe(llamar, p){
 }
 const lineasSello = (titulo, tomadaMs, lugar, p) => [titulo, horaLocal(tomadaMs), ...(lugar ? ["📍 " + lugar] : []),
   `${p.coords.latitude.toFixed(5)}, ${p.coords.longitude.toFixed(5)} ±${Math.round(p.coords.accuracy || 0)} m`];
-const metaSello = (lineas, tomadaMs, foto) => ({ sello: lineas.join(" | "), tomadaMs: String(tomadaMs), selloImpreso: foto?.selloImpreso ? "si" : "no" });
+const metaSello = (lineas, tomadaMs, foto) => ({ sello: lineas.join(" | "), tomadaMs: String(tomadaMs), selloImpreso: foto?.selloImpreso ? "si" : "no", enVivo: foto?.enVivo ? "si" : "no" });
 
 /* Borradores en el celular: si Android recarga la página al abrir la cámara, no se pierde lo capturado. */
 const BORR_DIA = "dm_borrador_dia", BORR_ENTREGA = "dm_borrador_entrega";
@@ -139,6 +140,7 @@ html,body{margin:0;padding:0;background:#eef2f9;overscroll-behavior-y:none}
 .dm-fotos{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .dm-foto{position:relative;aspect-ratio:1/1;border-radius:18px;border:2px dashed #c9d4e4;background:#f6f8fc;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;overflow:hidden;transition:transform .12s}
 .dm-foto:active{transform:scale(.96)}
+button.dm-foto{padding:0;font:inherit;color:inherit;width:100%;-webkit-appearance:none;appearance:none}
 .dm-foto span{font-size:30px}.dm-foto small{font-size:12px;font-weight:800;color:${GRIS};text-align:center;padding:0 4px;line-height:1.15}
 .dm-foto img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .dm-foto.lista{border:3px solid ${VERDE}}
@@ -182,19 +184,75 @@ const Estilos = () => <style>{CSS}</style>;
 const Falla = ({ children }) => children ? <div style={{ background: "#fef2f2", color: ROJO, borderRadius: 12, padding: "10px 12px", fontWeight: 700, marginTop: 12, fontSize: 15 }}>{children}</div> : null;
 const hoyTexto = () => new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
 
+/* ── Cámara EN VIVO dentro de la app ──────────────────────────────────────
+   Todas las fotos del chofer (check-in, check-out, tickets y entregas) se toman aquí, del video de la
+   cámara en este momento. No existe forma de elegir una foto de la galería. La foto sale marcada
+   (foto.enVivo = true) y el servidor revisa esa marca. */
+function CamaraEnVivo({ frente = false, titulo, onFoto, onCerrar }){
+  const video = useRef(null), flujo = useRef(null);
+  const [usarFrente, setUsarFrente] = useState(frente), [error, setError] = useState(""), [lista, setLista] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      setLista(false); setError("");
+      try {
+        flujo.current?.getTracks().forEach(t => t.stop());
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: usarFrente ? "user" : { ideal: "environment" }, width: { ideal: 1600 }, height: { ideal: 1200 } }, audio: false });
+        if(!vivo){ s.getTracks().forEach(t => t.stop()); return; }
+        flujo.current = s;
+        if(video.current){ video.current.srcObject = s; await video.current.play().catch(() => {}); setLista(true); }
+      } catch(e){
+        setError(e?.name === "NotAllowedError" ? "Permite la cámara: toca el candado junto a la dirección → Cámara → Permitir, y vuelve a intentar."
+          : "No se pudo abrir la cámara. Cierra otras apps que la usen y vuelve a intentar.");
+      }
+    })();
+    return () => { vivo = false; };
+  }, [usarFrente]);
+  useEffect(() => () => flujo.current?.getTracks().forEach(t => t.stop()), []);
+  const tomar = async () => {
+    const v = video.current;
+    if(!v || !v.videoWidth) return;
+    const c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight;
+    const g = c.getContext("2d");
+    if(usarFrente){ g.translate(c.width, 0); g.scale(-1, 1); }   // la selfie se ve como en un espejo
+    g.drawImage(v, 0, 0, c.width, c.height);
+    const b = await new Promise(r => c.toBlob(r, "image/jpeg", 0.9));
+    if(!b) return;
+    const f = new File([b], "foto.jpg", { type: "image/jpeg", lastModified: Date.now() });
+    try { f.enVivo = true; } catch {}
+    flujo.current?.getTracks().forEach(t => t.stop());
+    onFoto(f);
+  };
+  /* Encima de toda la pantalla (fuera de las tarjetas animadas, que atraparían el "fixed"). */
+  return createPortal(<div role="dialog" aria-label={titulo} style={{ position: "fixed", inset: 0, zIndex: 95, background: "#000", display: "flex", flexDirection: "column", fontFamily: LETRA }}>
+    <div style={{ color: "#fff", fontWeight: 900, fontSize: 17, padding: "calc(12px + env(safe-area-inset-top)) 16px 10px", display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ flex: 1 }}>📷 {titulo}</span>
+      <button onClick={() => { flujo.current?.getTracks().forEach(t => t.stop()); onCerrar(); }} style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: 0, borderRadius: 999, padding: "8px 14px", fontWeight: 800, fontSize: 15 }}>Cancelar</button>
+    </div>
+    <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+      <video ref={video} playsInline muted autoPlay style={{ width: "100%", height: "100%", objectFit: "cover", transform: usarFrente ? "scaleX(-1)" : "none" }}/>
+      {!lista && !error && <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700 }}>Abriendo la cámara…</div>}
+      {error && <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", padding: 24 }}><div style={{ background: "#fff", color: ROJO, borderRadius: 16, padding: 16, fontWeight: 800, fontSize: 16, textAlign: "center" }}>{error}</div></div>}
+    </div>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-around", padding: "16px 16px calc(20px + env(safe-area-inset-bottom))" }}>
+      <button onClick={() => setUsarFrente(x => !x)} aria-label="Cambiar de cámara" style={{ width: 54, height: 54, borderRadius: 999, border: 0, background: "rgba(255,255,255,.18)", color: "#fff", fontSize: 22 }}>🔄</button>
+      <button onClick={tomar} disabled={!lista} aria-label="Tomar foto" style={{ width: 78, height: 78, borderRadius: 999, border: "5px solid #fff", background: lista ? NARANJA : "#555" }}/>
+      <span style={{ width: 54 }}/>
+    </div>
+  </div>, document.body);
+}
+
 function Foto({ titulo, icono, archivo, onCambio, camara = "", onError }){
   const url = archivo ? URL.createObjectURL(archivo) : "";
   useEffect(() => () => url && URL.revokeObjectURL(url), [url]);
-  return (
-    <label className={"dm-foto" + (archivo ? " lista" : "")}>
+  const [abierta, setAbierta] = useState(false);
+  return (<>
+    <button type="button" className={"dm-foto" + (archivo ? " lista" : "")} onClick={() => setAbierta(true)} aria-label={`Tomar foto: ${titulo}`}>
       {archivo ? <><img src={url} alt=""/><i className="ok">✓</i></> : <><span>{icono}</span><small>{titulo}</small></>}
-      {/* Entregas: cámara o galería. Check-in/out (camara="user"/"environment"): SOLO cámara y foto de este momento. */}
-      <input type="file" accept="image/*" capture={camara || undefined} style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; e.target.value = "";
-        if(!f) return;
-        if(camara && Date.now() - (f.lastModified || 0) > 3 * 60000){ onError?.("Esa foto no es de este momento. Tómala ahora con la cámara."); return; }
-        onCambio(f); }}/>
-    </label>
-  );
+    </button>
+    {abierta && <CamaraEnVivo frente={camara === "user"} titulo={titulo} onCerrar={() => setAbierta(false)}
+      onFoto={f => { setAbierta(false); onError?.(""); onCambio(f); }}/>}
+  </>);
 }
 
 /* ── Entrar ───────────────────────────────────────────────────────────────── */

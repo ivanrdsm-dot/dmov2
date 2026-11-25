@@ -74,6 +74,10 @@ describe("fotos de check-in revisadas por el servidor", () => {
   it("acepta una foto de este momento y guarda su huella", () => {
     expect(revisarFotoJornada(meta(), T0 + 2 * MIN)).toMatchObject({ ok: true, md5: "abc==", aviso: "" });
   });
+  it("si la foto no se tomó con la cámara en vivo de la app, queda como duda", () => {
+    expect(revisarFotoJornada(meta({ metadata: { sello: "DMOV", tomadaMs: String(T0), enVivo: "no", selloImpreso: "si" } }), T0 + MIN).aviso).toContain("en vivo");
+    expect(revisarFotoJornada(meta({ metadata: { sello: "DMOV", tomadaMs: String(T0), enVivo: "si", selloImpreso: "si" } }), T0 + MIN).aviso).toBe("");
+  });
   it("si la foto no lleva impresos el lugar y la hora, queda como duda", () => {
     expect(revisarFotoJornada(meta({ metadata: { sello: "DMOV", tomadaMs: String(T0), selloImpreso: "no" } }), T0 + MIN).aviso).toContain("lugar");
     expect(revisarFotoJornada(meta({ metadata: { sello: "DMOV", tomadaMs: String(T0), selloImpreso: "si" } }), T0 + MIN).aviso).toBe("");
