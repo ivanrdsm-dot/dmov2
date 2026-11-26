@@ -22,7 +22,18 @@ const INCIDENCIAS = ["Cliente ausente", "Entrega rechazada", "Entrega parcial", 
    En el navegador todo sigue igual. */
 const NATIVO = typeof window !== "undefined" && !!window.Capacitor?.isNativePlatform?.();
 const plugin = nombre => { try { return NATIVO ? window.Capacitor.registerPlugin(nombre) : null; } catch { return null; } };
-const GPS_FONDO = plugin("BackgroundGeolocation"), HTTP_NATIVO = plugin("CapacitorHttp");
+const GPS_FONDO = plugin("BackgroundGeolocation"), HTTP_NATIVO = plugin("CapacitorHttp"), AVISOS_NATIVOS = plugin("LocalNotifications");
+/* Versión de la app nativa (la pone la app en el user agent: "DMovApp/1.0.0 android"). */
+export const VERSION_APP = (() => { const m = typeof navigator !== "undefined" && /DMovApp\/([\d.]+)/.exec(navigator.userAgent || ""); return m ? m[1] : ""; })();
+/* Con el GPS nativo llega una lectura por segundo: se guarda una cada 10 s, o antes si se movió 15 m.
+   Así, aunque esté parado (cargando en bodega), la oficina sigue viendo que la app está viva. */
+export function guardarLectura(ultima, nueva, cadaMs = 10000, metros = 15){
+  if(!ultima) return true;
+  if(nueva.tMs - ultima.tMs >= cadaMs) return true;
+  const R = 6371000, r = x => x * Math.PI / 180, dLat = r(nueva.lat - ultima.lat), dLng = r(nueva.lng - ultima.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(ultima.lat)) * Math.cos(r(nueva.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h)) >= metros;
+}
 export const puntoNativo = (l, bateria) => ({ lat: l.latitude, lng: l.longitude, tMs: Math.round(l.time || Date.now()), precisionM: l.accuracy,
   velocidadMs: l.speed ?? null, bateria, simulada: l.simulated === true });
 const ENVIO_MS = 15000;   // cada 15 s: el cliente ve la camioneta casi en tiempo real
@@ -35,7 +46,7 @@ const mensaje = e => String(e?.message || "No se pudo. Intenta otra vez.").repla
   .replace(/.*storage\/unauthorized.*/i, "No se pudo subir la foto: tu cuenta no tiene permiso. Avisa a la oficina.")
   .replace(/.*storage\/(retry-limit-exceeded|canceled|unknown).*/i, "No se pudo subir la foto por la señal. Intenta otra vez.")
   .replace(/^Error\s+/, "")
-  .replace(/ligada a otro equipo\. Avisa a operaciones\./, "ligada a otro equipo. Si acabas de poner la app en tu pantalla de inicio, pide a la oficina: En vivo → Cambió de teléfono.");
+  .replace(/ligada a otro equipo\. Avisa a operaciones\./, "ligada a otro celular. Pide a la oficina que autorice este (Operación → En vivo → Cambió de teléfono). Ya les llegó el aviso.");
 function dispositivoId(){
   try {
     let d = localStorage.getItem("dmov_disp");
@@ -381,7 +392,7 @@ function EmpezarDia({ chofer, placaSugerida, llamar, subir, onListo }){
         const foto = await conSello(archivo, lineas); return subir(base + nombre, foto, metaSello(lineas, tm, foto)); };
       const [s, pl, od] = await Promise.all([con("selfie", "selfie.jpg", selfie), con("placas", "placas.jpg", placas), con("tablero", "odometro.jpg", tablero)]);
       setPaso("Registrando…");
-      await llamar("choferCheckIn", { selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: placa.trim().toUpperCase(),
+      await llamar("choferCheckIn", { appVersion: VERSION_APP, selfieRuta: s, fotoPlacasRuta: pl, fotoOdometroRuta: od, unidadPlaca: placa.trim().toUpperCase(),
         odometroKm: Number(km), combustiblePct: Number(gas), lat: p.coords.latitude, lng: p.coords.longitude, precisionM: p.coords.accuracy, posTMs: Math.round(p.timestamp || Date.now()), simulada: false });
       guardarBorrador(BORR_DIA, null);
       onListo();
@@ -729,7 +740,7 @@ export default function ChoferWeb({ db, auth, app }){
   useEffect(() => {
     if(!usuario) return;
     if(usuario.isAnonymous || !usuario.email){ setErrorCuenta("Esta sesión no es de chofer."); return; }
-    llamar("choferRegistrarDispositivo", { modelo: navigator.userAgent.slice(0, 80) })
+    llamar("choferRegistrarDispositivo", { modelo: navigator.userAgent.slice(0, 80), nativo: NATIVO, appVersion: VERSION_APP })
       /* Token nuevo: trae el permiso de subir sus fotos (choferId dentro de la cuenta). */
       .then(async r => { await usuario.getIdToken(true).catch(() => {}); setChofer({ id: r.choferId, nombre: r.nombre }); })
       .catch(e => setErrorCuenta(mensaje(e)));
@@ -755,21 +766,39 @@ export default function ChoferWeb({ db, auth, app }){
 
   /* Ubicación: TODA la jornada (del check-in al check-out), con la pantalla abierta.
      En ruta cada 15 s (el cliente la ve); sin ruta, cada minuto (la oficina la ve). */
+  /* Sesión para los envíos de la app nativa. Con la pantalla apagada más de 1 h, la página puede no renovarla a tiempo:
+     entonces se renueva por la vía nativa con el mismo servicio de Google que usa Firebase. */
+  const tokenCache = useRef({ t: "", exp: 0 });
+  const tokenNativo = useCallback(async () => {
+    if(tokenCache.current.t && tokenCache.current.exp - Date.now() > 5 * 60000) return tokenCache.current.t;
+    try {
+      const r = await Promise.race([usuario.getIdTokenResult(), new Promise((_, no) => setTimeout(() => no(new Error("lento")), 8000))]);
+      tokenCache.current = { t: r.token, exp: Date.parse(r.expirationTime) || Date.now() + 50 * 60000 };
+    } catch {
+      const r = await HTTP_NATIVO.post({ url: `https://securetoken.googleapis.com/v1/token?key=${app.options.apiKey}`,
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Referer: window.location.origin + "/" },
+        data: "grant_type=refresh_token&refresh_token=" + encodeURIComponent(usuario.refreshToken) });
+      const d = typeof r.data === "string" ? JSON.parse(r.data) : r.data;
+      if(!d?.id_token) throw new Error("No se pudo renovar la sesión");
+      tokenCache.current = { t: d.id_token, exp: Date.now() + (Number(d.expires_in) || 3600) * 1000 };
+    }
+    return tokenCache.current.t;
+  }, [usuario, app]);
   const enviar = useCallback(async (servicioId) => {
-    const lote = buffer.current.splice(0, buffer.current.length);
+    const lote = buffer.current.splice(0, 400);   // el servidor acepta hasta 500 por envío
     if(!lote.length) return;
     try {
       if(NATIVO && HTTP_NATIVO && usuario){
         /* Misma función del servidor (choferSubirPosiciones), llamada por la vía nativa del celular. */
-        const token = await usuario.getIdToken();
+        const token = await tokenNativo();
         const r = await HTTP_NATIVO.post({ url: `https://us-central1-${app.options.projectId}.cloudfunctions.net/choferSubirPosiciones`,
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, data: { data: { dispositivoId: disp.current, servicioId, posiciones: lote } } });
         if(!(r.status >= 200 && r.status < 300)) throw new Error("envío " + r.status);
       } else await llamar("choferSubirPosiciones", { servicioId, posiciones: lote });
       setUltimoEnvio(Date.now()); ultimoEnvioMs.current = Date.now();
     }
-    catch(e){ buffer.current.unshift(...lote.slice(-200)); throw e; }
-  }, [llamar, usuario, app]);
+    catch(e){ buffer.current.unshift(...(NATIVO ? lote : lote.slice(-200))); throw e; }   // sin señal: en la app se guarda todo para mandarlo después
+  }, [llamar, usuario, app, tokenNativo]);
   const mandarAhora = useCallback(async (servicioId) => {
     const p = await posicionAhora();
     buffer.current.push(aPunto(p, bateria.current));
@@ -781,11 +810,16 @@ export default function ChoferWeb({ db, auth, app }){
     if(!rastrear || !GPS_FONDO) return;
     let id = null, vivo = true;
     const intervalo = idRastreo ? ENVIO_MS : 60000;
-    GPS_FONDO.addWatcher({ backgroundTitle: "D Movimiento · ruta en curso", backgroundMessage: "Tu ubicación se registra solo durante tu jornada.", requestPermissions: true, stale: false, distanceFilter: 15 },
+    let ultima = null;
+    AVISOS_NATIVOS?.requestPermissions?.().catch(() => {});   // Android 13+: para mostrar el aviso fijo "ruta en curso"
+    GPS_FONDO.addWatcher({ backgroundTitle: "D Movimiento · ruta en curso", backgroundMessage: "Tu ubicación se registra solo durante tu jornada.", requestPermissions: true, stale: false, distanceFilter: 0 },
       (l, e) => {
         if(e){ setErrorGps(e.code === "NOT_AUTHORIZED" ? "Permite la ubicación «Todo el tiempo» en los ajustes del celular para esta app." : "Buscando señal de GPS…"); return; }
         if(!l) return;
-        setErrorGps(""); buffer.current.push(puntoNativo(l, bateria.current)); if(buffer.current.length > 300) buffer.current.splice(0, 100);
+        const p = puntoNativo(l, bateria.current);
+        if(!guardarLectura(ultima, p)) return;
+        ultima = p;
+        setErrorGps(""); buffer.current.push(p); if(buffer.current.length > 3000) buffer.current.splice(0, 500);   // ~8 h sin señal
         /* El envío sale desde aquí: con la pantalla apagada los relojes de la página se detienen, pero el GPS sigue avisando. */
         if(Date.now() - ultimoEnvioMs.current >= intervalo) enviar(idRastreo).catch(() => {});
       }).then(x => { if(vivo) id = x; else GPS_FONDO.removeWatcher({ id: x }).catch(() => {}); }).catch(() => setErrorGps("No se pudo encender el GPS de la app."));

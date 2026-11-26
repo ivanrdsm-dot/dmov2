@@ -1,59 +1,99 @@
 {
-  "name": "DMvimiento Logistics OS",
-  "short_name": "DMvimiento",
-  "description": "Sistema de gestión logística con tracking GPS, rutas optimizadas, facturación, mensajería chofer y control de gastos.",
+  "name": "D Movimiento · Sistema",
+  "short_name": "D Movimiento",
+  "description": "Operación de D Movimiento: rutas, choferes, asistencia y reportes en vivo.",
   "start_url": "/",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "portrait",
-  "background_color": "#0a1628",
-  "theme_color": "#f97316",
+  "background_color": "#042552",
+  "theme_color": "#042552",
   "scope": "/",
   "lang": "es",
   "dir": "ltr",
-  "categories": ["business", "productivity", "utilities", "navigation"],
+  "categories": [
+    "business",
+    "productivity",
+    "utilities",
+    "navigation"
+  ],
   "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
     {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
-    },
-    {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
     }
   ],
   "shortcuts": [
     {
-      "name": "Panel Admin",
-      "short_name": "Admin",
-      "description": "Dashboard, facturación y alertas",
-      "url": "/",
-      "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
+      "name": "Tablero en vivo",
+      "short_name": "Tablero",
+      "url": "/?v=operacion&t=tablero",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
     },
     {
-      "name": "App Chofer",
-      "short_name": "Chofer",
-      "description": "Rutas, entregas y GPS",
-      "url": "/chofer",
-      "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
+      "name": "Asignar ruta",
+      "short_name": "Asignar",
+      "url": "/?v=operacion&t=asignar",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
     },
     {
-      "name": "Centro de Alertas",
+      "name": "Reporte del día",
+      "short_name": "Reporte",
+      "url": "/?v=operacion&t=reporte",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Alertas",
       "short_name": "Alertas",
-      "description": "SOS y eventos críticos",
-      "url": "/?v=alertas",
-      "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
-    },
-    {
-      "name": "Live Tracking",
-      "short_name": "Tracking",
-      "description": "Ubicación en vivo de choferes",
-      "url": "/?v=tracking",
-      "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"}]
+      "url": "/?v=operacion&t=alertas",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
     }
   ],
   "prefer_related_applications": false

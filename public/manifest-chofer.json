@@ -1,5 +1,5 @@
 {
-  "name": "DMovimiento Choferes",
+  "name": "D Movimiento Choferes",
   "short_name": "DMov Chofer",
   "description": "Mis rutas, entregas y ubicación para la oficina.",
   "start_url": "/chofer",
@@ -10,7 +10,29 @@
   "theme_color": "#042552",
   "lang": "es",
   "icons": [
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
-    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
   ]
 }

@@ -8,14 +8,14 @@ export const ALERTAS_AL_CELULAR = {
 };
 /* Avisos que solo informan (no hay que atenderlos): llegan al celular aunque la alerta nazca cerrada. */
 export const AVISOS_INFORMATIVOS = {
-  checkin_registrado: "✅ Check-in", checkin_tarde: "⏰ Check-in TARDE", checkout_registrado: "🏁 Check-out", checkin_oficina: "🏢 Entrada (oficina)", checkin_oficina_tarde: "⏰ Entrada TARDE (oficina)", checkout_oficina: "🏢 Salida (oficina)", resumen_diario: "📋 Resumen del día", ruta_asignada: "🚚 Ruta asignada", cotizacion_por_aprobar: "📄 Cotización por aprobar",
+  checkin_registrado: "✅ Check-in", checkin_tarde: "⏰ Check-in TARDE", checkout_registrado: "🏁 Check-out", checkin_oficina: "🏢 Entrada (oficina)", checkin_oficina_tarde: "⏰ Entrada TARDE (oficina)", checkout_oficina: "🏢 Salida (oficina)", resumen_diario: "📋 Resumen del día", cambio_a_app: "📱 Ya usa la app", ruta_asignada: "🚚 Ruta asignada", cotizacion_por_aprobar: "📄 Cotización por aprobar",
 };
 /* Avisos que puede recibir operaciones (Ilse): solo lo necesario para atender la operación, sin direcciones.
    TODO lo demás (check-in/out con dirección y mapa, posibles trampas, gastos, resumen) llega SOLO al director. */
 export const AVISOS_PARA_OPERACIONES = ["sos", "detenido", "fuera_de_ruta", "sin_ubicacion", "sin_checkin", "sin_checkout", "incidencia", "cierre_fuera_de_punto", "ruta_excedida", "cambio_sin_enterado", "chofer_sin_ruta", "salida_con_ruta_pendiente"];
 /* Alertas de auditoría (check-ins con dirección, posibles engaños, dinero): se guardan en alertas_director,
    que solo el director puede leer (ni operaciones ni nadie más, ni desde fuera de la app). */
-export const ALERTAS_DEL_DIRECTOR = ["checkin_registrado", "checkin_tarde", "checkout_registrado", "checkin_oficina", "checkin_oficina_tarde", "checkout_oficina", "resumen_diario", "ruta_asignada", "cotizacion_por_aprobar", "gasto_dudoso",
+export const ALERTAS_DEL_DIRECTOR = ["checkin_registrado", "checkin_tarde", "checkout_registrado", "checkin_oficina", "checkin_oficina_tarde", "checkout_oficina", "resumen_diario", "ruta_asignada", "cambio_a_app", "cotizacion_por_aprobar", "gasto_dudoso",
   "km_no_coinciden", "km_sin_explicar", "unidad_no_coincide", "fuera_de_cdmx", "movimiento_sin_ruta", "ubicacion_simulada",
   "velocidad_imposible", "reloj_adelantado", "dispositivo_no_autorizado", "checkin_dudoso"];
 export const coleccionDeAlerta = type => ALERTAS_DEL_DIRECTOR.includes(type) ? "alertas_director" : "alertas";

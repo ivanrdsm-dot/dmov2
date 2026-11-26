@@ -75,3 +75,12 @@ describe("retardo y tiempo extra", () => {
     expect(textoReporte(dia, x)).toContain("+1 h 20 min extra");
   });
 });
+
+describe("app nativa o página", () => {
+  it("avisa quién todavía hace check-in desde la página", () => {
+    const x = reporteDia({ dia, ahoraMs: Date.parse(`${dia}T10:00:00-06:00`), choferes: choferes.slice(0, 2), oficina: [], usuariosOficina: [], servicios: [], alertas: [],
+      jornadas: [{ choferId: "elias", checkInEn: t("07:00"), appVersion: "1.1.0" }, { choferId: "israel", checkInEn: t("07:00") }] });
+    expect(x.filas.find(f => f.id === "elias")?.app).toBe("1.1.0");
+    expect(x.hallazgos.find(h => h.titulo === "1 chofer sin la app")?.detalle).toContain("Israel A");
+  });
+});

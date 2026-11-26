@@ -14,5 +14,6 @@
   "ios": {
     "contentInset": "never",
     "limitsNavigationsToAppBoundDomains": false
-  }
+  },
+  "appendUserAgent": "DMovApp/1.1.0"
 }
