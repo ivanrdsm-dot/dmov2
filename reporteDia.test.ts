@@ -84,3 +84,13 @@ describe("app nativa o página", () => {
     expect(x.hallazgos.find(h => h.titulo === "1 chofer sin la app")?.detalle).toContain("Israel A");
   });
 });
+
+describe("ubicación de la oficina durante la jornada", () => {
+  it("avisa si se alejó más de 1 km de su entrada; si no hubo lecturas, lo dice", () => {
+    const base = { dia, ahoraMs: Date.parse(`${dia}T12:00:00-06:00`), choferes: [], jornadas: [], servicios: [], alertas: [], usuariosOficina: [{ id: "ilse", nombre: "Ilse", rol: "operaciones" }] };
+    const lejos = reporteDia({ ...base, oficina: [{ uid: "ilse", checkInEn: t("06:50"), puntosGps: 20, maxDistEntradaM: 3400 }] });
+    expect(lejos.hallazgos.find(h => h.quien === "Ilse")).toMatchObject({ nivel: "revisar", titulo: "Se alejó de donde marcó su entrada", detalle: "hasta 3.4 km durante su jornada" });
+    const sin = reporteDia({ ...base, oficina: [{ uid: "ilse", checkInEn: t("06:50") }] });
+    expect(sin.hallazgos.find(h => h.quien === "Ilse")?.titulo).toBe("Sin lecturas de ubicación en el día");
+  });
+});

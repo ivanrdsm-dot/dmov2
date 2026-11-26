@@ -176,3 +176,12 @@ test('plan del día: la oficina lee por qué un chofer no sale; nadie lo escribe
   await assertFails(deleteDoc(doc(dbA, 'dia_sin_ruta', 'ch1_2026-11-26')));
   for(const c of [env.unauthenticatedContext(), ctx('inactive'), ctx('stranger')]) await assertFails(getDoc(doc(c.firestore(), 'dia_sin_ruta', 'ch1_2026-11-26')));
 });
+
+test('ubicaciones de la oficina en su jornada: solo el director las lee; nadie las escribe directo', async () => {
+  await env.withSecurityRulesDisabled(async c => { await setDoc(doc(c.firestore(), 'asistencia_oficina', 'ops_2026-11-26', 'posiciones', 'p1'), { lat: 19.4, lng: -99.1, tMs: 1 }); });
+  const dbO = ctx('ops').firestore(), dbA = ctx('admin').firestore();
+  await assertFails(getDoc(doc(dbO, 'asistencia_oficina', 'ops_2026-11-26', 'posiciones', 'p1')));
+  await assertFails(setDoc(doc(dbO, 'asistencia_oficina', 'ops_2026-11-26', 'posiciones', 'p2'), { lat: 1, lng: 1, tMs: 1 }));
+  await assertSucceeds(getDoc(doc(dbA, 'asistencia_oficina', 'ops_2026-11-26', 'posiciones', 'p1')));
+  await assertFails(setDoc(doc(dbA, 'asistencia_oficina', 'ops_2026-11-26', 'posiciones', 'p3'), { lat: 1, lng: 1, tMs: 1 }));
+});

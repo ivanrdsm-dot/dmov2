@@ -16,7 +16,7 @@ import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCD
 import { defineSecret } from "firebase-functions/params";
 import { TIPOS_GASTO, revisarCarga, rendimientoHistorico } from "./lib/gasolina.js";
 import { coleccionDeAlerta } from "./lib/avisosOficina.js";
-import { VERSION_AVISO } from "./lib/avisoPrivacidad.js";
+import { VERSION_AVISO, versionAviso } from "./lib/avisoPrivacidad.js";
 import { revisarFotoJornada, lineaDeTexto, lineaATexto } from "./lib/evidencia.js";
 import { generarCotizacionRuta } from "./cotizarRuta.js";
 
@@ -591,13 +591,14 @@ export const aceptarAvisoPrivacidad = onCall(OPC, async req => {
   const auth = req.auth;
   if(!auth || auth.token?.firebase?.sign_in_provider === "anonymous") throw falla("unauthenticated", "Inicia sesión para continuar");
   const version = txt(req.data?.version, 20);
-  if(version !== VERSION_AVISO) throw falla("failed-precondition", "El aviso cambió: vuelve a abrir la app.");
   const acepto = req.data?.acepto === true;
   const [liga, perfil] = await Promise.all([db().doc("choferes_auth/" + auth.uid).get(), db().doc("dmov_usuarios/" + auth.uid).get()]);
   let quien;
   if(liga.exists){ const c = await db().doc("choferes/" + liga.data().choferId).get(); quien = { tipo: "chofer", choferId: liga.data().choferId, nombre: c.data()?.nombre || "" }; }
   else if(perfil.exists && perfil.data().activo === true) quien = { tipo: "oficina", rol: perfil.data().rol || "", nombre: perfil.data().nombre || perfil.data().email || "" };
   else throw falla("permission-denied", "Cuenta sin acceso");
+  /* Cada quien autoriza la versión vigente de SU aviso (choferes y oficina tienen el suyo). */
+  if(version !== versionAviso(quien.tipo)) throw falla("failed-precondition", "El aviso cambió: vuelve a abrir la app.");
   const ref = db().doc(`consentimientos/${auth.uid}_${version}`);
   const prev = await ref.get();
   if(prev.exists && prev.data().acepto === true && acepto) return { ok: true, yaEstaba: true };
@@ -667,6 +668,32 @@ export const oficinaCheckOut = onCall(OPC_LUGAR, async req => {
   if(!r.yaEstaba) await alerta({ type: "checkout_oficina", informativa: true, atendida: true, oficinaUid: of.uid, choferNombre: of.nombre,
     msg: `${of.nombre} (oficina) · ${horaCDMX(Date.now())} · ${r.horas} h · ${textoLugar(lugar, pos)}`, lat: pos.lat, lng: pos.lng });
   return { ok: true, ...r };
+});
+
+/** Ubicación de la oficina durante su jornada (de su entrada a su salida), cada pocos minutos mientras tenga el sistema abierto.
+ *  Solo la ve el director. Si se aleja más de 1 km de donde marcó su entrada, le llega un aviso (uno por hora). */
+export const OFICINA_LEJOS_M = 1000;
+export const oficinaUbicacion = onCall(OPC_LUGAR, async req => {
+  const of = await oficinaDe(req);
+  if(of.rol === "admin") return { ok: true, omitida: true };
+  const pos = { lat: Number(req.data?.lat), lng: Number(req.data?.lng) }, precisionM = Number(req.data?.precisionM), tMs = Number(req.data?.tMs);
+  if(!coordenadaValida(pos)) throw falla("invalid-argument", "Ubicación no válida");
+  const fecha = fechaCDMX(), ref = db().doc(`asistencia_oficina/${of.uid}_${fecha}`), a = await ref.get();
+  if(!a.exists || a.data().estado !== "Abierta") return { ok: true, fueraDeJornada: true };   // fuera de su jornada no se guarda nada
+  const t = Number.isFinite(tMs) && tMs <= Date.now() + 60000 && tMs > Date.now() - 3600000 ? tMs : Date.now();
+  const distM = coordenadaValida(a.data().ubicacion) ? Math.round(distanciaM(a.data().ubicacion, pos)) : null;
+  const confiable = !(precisionM > 200);
+  const lote = db().batch();
+  lote.set(ref.collection("posiciones").doc(), { lat: pos.lat, lng: pos.lng, precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, tMs: t, distEntradaM: distM, enServidor: ahora() });
+  lote.update(ref, { ultimaUbicacion: { lat: pos.lat, lng: pos.lng, tMs: t, precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, distEntradaM: distM },
+    puntosGps: FieldValue.increment(1), ...(confiable && distM !== null && distM > Number(a.data().maxDistEntradaM || 0) ? { maxDistEntradaM: distM } : {}) });
+  await lote.commit();
+  if(confiable && distM !== null && distM > OFICINA_LEJOS_M){
+    const hora = new Date(t - 6 * 3600000).getUTCHours(), lugar = await dondeEsta(pos).catch(() => null);
+    await alertaUnica({ id: `ofi-lejos-${of.uid}-${fecha}-${hora}`, type: "oficina_lejos", choferNombre: of.nombre, lat: pos.lat, lng: pos.lng,
+      message: `${of.nombre} (oficina) está a ${(distM / 1000).toFixed(1)} km de donde marcó su entrada · ${horaCDMX(t)} · ${textoLugar(lugar, pos)}` });
+  }
+  return { ok: true };
 });
 
 /** Plan del día: la oficina registra por qué un chofer NO sale a ruta hoy (con su motivo). Queda el rastro de cada cambio.
