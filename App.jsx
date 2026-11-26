@@ -29,6 +29,7 @@ import AvisoPrivacidad, { useAvisoAutorizado } from "./AvisoPrivacidad.jsx";
 import { useAsistenciaOficina } from "./asistenciaOficina.js";
 const CheckOficinaVista = lazy(() => import("./CheckOficina.jsx"));
 const DiaCerradoVista = lazy(() => import("./CheckOficina.jsx").then(m => ({ default: m.DiaCerrado })));
+const PlanDelDiaVista = lazy(() => import("./PlanDelDia.jsx"));
 import { faltantesCapacidad } from "./dimensionamiento.ts";
 import { crearSolicitudesStore } from "./solicitudesStore.js";
 const SolicitudesVista = lazy(()=>import("./Solicitudes.jsx"));
@@ -15115,6 +15116,8 @@ export default function App(){
   const debeAsistencia=!!userProfile&&userProfile.rol!=="admin"&&avisoOk===true;
   const asistenciaHoy=useAsistenciaOficina(db,authUser?.uid,debeAsistencia);
   const [saliendoDia,setSaliendoDia]=useState(false);
+  /* Operaciones: después de su entrada registra el plan del día (ruta o motivo de cada chofer) antes de usar el sistema. */
+  const [planListo,setPlanListo]=useState(false);
 
   /* ── Auth checks DESPUÉS de todos los hooks ── */
   // Loading inicial (esperando Firebase anónimo)
@@ -15162,6 +15165,8 @@ export default function App(){
   if(debeAsistencia&&asistenciaHoy===undefined) return <><style>{CSS}</style><VerificandoPerfil/></>;
   if(debeAsistencia&&asistenciaHoy===null) return <Suspense fallback={<VerificandoPerfil/>}><CheckOficinaVista app={fbApp} usuario={{uid:authUser.uid,nombre:userProfile.nombre||""}} modo="entrada" onSalir={salirDelSistema}/></Suspense>;
   if(debeAsistencia&&asistenciaHoy?.estado==="Cerrada") return <Suspense fallback={<VerificandoPerfil/>}><DiaCerradoVista asistencia={asistenciaHoy} onSalir={salirDelSistema}/></Suspense>;
+  if(debeAsistencia&&userProfile.rol==="operaciones"&&asistenciaHoy?.estado==="Abierta"&&!planListo) return <Suspense fallback={<VerificandoPerfil/>}><PlanDelDiaVista db={db} app={fbApp}
+    usuario={usuarioDe(authUser,userProfile)} mapboxToken={MAPBOX_TOKEN} onListo={()=>setPlanListo(true)} onSalir={salirDelSistema}/></Suspense>;
 
   const rol=userProfile?.rol||"admin";
   const isAdmin=rol==="admin";

@@ -4,7 +4,7 @@ export const ALERTAS_AL_CELULAR = {
   sin_checkin: "⏰ Falta check-in", sin_checkout: "🌙 Jornada sin cerrar", checkin_dudoso: "⚠️ Check-in con dudas",
   ubicacion_simulada: "🛑 Ubicación falsa", velocidad_imposible: "🛑 Salto imposible de ubicación", reloj_adelantado: "🛑 Reloj manipulado",
   dispositivo_no_autorizado: "🔒 Celular no autorizado", incidencia: "⚠️ Incidencia en entrega", cierre_fuera_de_punto: "📍 Cierre fuera del punto", ruta_excedida: "🛣️ Ruta foránea pasada de días", cambio_sin_enterado: "🔔 Chofer sin confirmar cambio de ruta",
-  fuera_de_cdmx: "🗺️ Fuera de CDMX sin ruta", km_no_coinciden: "🛑 Kilómetros no coinciden", unidad_no_coincide: "🚚 Otra camioneta", gasto_dudoso: "⛽ Gasto que no cuadra", movimiento_sin_ruta: "🕵️ Se movió sin ruta asignada", km_sin_explicar: "🕵️ Kilómetros sin explicar",
+  fuera_de_cdmx: "🗺️ Fuera de CDMX sin ruta", km_no_coinciden: "🛑 Kilómetros no coinciden", unidad_no_coincide: "🚚 Otra camioneta", gasto_dudoso: "⛽ Gasto que no cuadra", movimiento_sin_ruta: "🕵️ Se movió sin ruta asignada", km_sin_explicar: "🕵️ Kilómetros sin explicar", chofer_sin_ruta: "🚚 Chofer sin ruta: regístrala",
 };
 /* Avisos que solo informan (no hay que atenderlos): llegan al celular aunque la alerta nazca cerrada. */
 export const AVISOS_INFORMATIVOS = {
@@ -12,7 +12,7 @@ export const AVISOS_INFORMATIVOS = {
 };
 /* Avisos que puede recibir operaciones (Ilse): solo lo necesario para atender la operación, sin direcciones.
    TODO lo demás (check-in/out con dirección y mapa, posibles trampas, gastos, resumen) llega SOLO al director. */
-export const AVISOS_PARA_OPERACIONES = ["sos", "detenido", "fuera_de_ruta", "sin_ubicacion", "sin_checkin", "sin_checkout", "incidencia", "cierre_fuera_de_punto", "ruta_excedida", "cambio_sin_enterado"];
+export const AVISOS_PARA_OPERACIONES = ["sos", "detenido", "fuera_de_ruta", "sin_ubicacion", "sin_checkin", "sin_checkout", "incidencia", "cierre_fuera_de_punto", "ruta_excedida", "cambio_sin_enterado", "chofer_sin_ruta"];
 /* Alertas de auditoría (check-ins con dirección, posibles engaños, dinero): se guardan en alertas_director,
    que solo el director puede leer (ni operaciones ni nadie más, ni desde fuera de la app). */
 export const ALERTAS_DEL_DIRECTOR = ["checkin_registrado", "checkin_tarde", "checkout_registrado", "checkin_oficina", "checkin_oficina_tarde", "checkout_oficina", "resumen_diario", "ruta_asignada", "cotizacion_por_aprobar", "gasto_dudoso",

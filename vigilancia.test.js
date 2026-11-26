@@ -62,10 +62,11 @@ describe("sin ubicación y asistencia", () => {
   });
   it("jornada sin ubicación (sin ruta) y jornada sin check-out", () => {
     const j = { id: "c1_2026-11-24", choferId: "c1", choferNombre: "Elías", fecha: "2026-11-24", estado: "Abierta", checkInMs: T0 };
-    expect(alertasChoferes({ jornadas: [j], ubicaciones: { c1: { tMs: T0 + 20 * MIN } } }, T0 + 40 * MIN)).toHaveLength(0);
+    const sinRutaFuera = xs => xs.filter(a => a.type !== "chofer_sin_ruta");   // esa regla se prueba en planDia.test.ts
+    expect(sinRutaFuera(alertasChoferes({ jornadas: [j], ubicaciones: { c1: { tMs: T0 + 20 * MIN } } }, T0 + 40 * MIN))).toHaveLength(0);
     expect(alertasChoferes({ jornadas: [j], ubicaciones: { c1: { tMs: T0 + 5 * MIN } } }, T0 + 40 * MIN)[0].type).toBe("sin_ubicacion");
     const tarde = alertasChoferes({ jornadas: [j], ubicaciones: { c1: { tMs: T0 + 17 * 3600000 } } }, T0 + 17 * 3600000);
-    expect(tarde.map(a => a.type)).toEqual(["sin_checkout"]);
+    expect(sinRutaFuera(tarde).map(a => a.type)).toEqual(["sin_checkout"]);
   });
 });
 
@@ -130,8 +131,8 @@ describe("horario local y rutas foráneas", () => {
   const j = (estado = "Abierta") => ({ id: "c1_" + hoy, choferId: "c1", choferNombre: "Elías", fecha: hoy, estado, checkInMs: H("07:00") });
   it("local: a las 17:30 sin check-out avisa, salvo que siga en ruta", () => {
     const u = { c1: { tMs: H("17:35"), servicioId: "s1" } };
-    expect(alertasChoferes({ jornadas: [j()], ubicaciones: u }, H("17:20"))).toHaveLength(0);
-    expect(alertasChoferes({ jornadas: [j()], ubicaciones: u }, H("17:35"))[0]).toMatchObject({ type: "sin_checkout" });
+    expect(alertasChoferes({ jornadas: [j()], ubicaciones: u }, H("17:20")).filter(a => a.type !== "chofer_sin_ruta")).toHaveLength(0);
+    expect(alertasChoferes({ jornadas: [j()], ubicaciones: u }, H("17:35")).find(a => a.type === "sin_checkout")).toMatchObject({ type: "sin_checkout" });
     const enRuta = [{ id: "s1", folio: "SRV-1", choferId: "c1", paradas: [], enRutaMs: H("08:00") }];
     expect(alertasChoferes({ jornadas: [j()], ubicaciones: u, enRuta }, H("17:35")).filter(a => a.type === "sin_checkout")).toHaveLength(0);
   });

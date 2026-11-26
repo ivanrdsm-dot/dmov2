@@ -165,3 +165,14 @@ test('asistencia de la oficina: cada quien lee la suya, el director todas; nadie
   for(const c of [env.unauthenticatedContext(), ctx('inactive'), ctx('stranger')])
     await assertFails(getDoc(doc(c.firestore(), 'asistencia_oficina', 'ops_2026-11-25')));
 });
+
+test('plan del día: la oficina lee por qué un chofer no sale; nadie lo escribe directo (solo el servidor)', async () => {
+  await env.withSecurityRulesDisabled(async c => { await setDoc(doc(c.firestore(), 'dia_sin_ruta', 'ch1_2026-11-26'), { choferId: 'ch1', fecha: '2026-11-26', motivo: 'taller' }); });
+  const dbO = ctx('ops').firestore(), dbA = ctx('admin').firestore();
+  await assertSucceeds(getDoc(doc(dbO, 'dia_sin_ruta', 'ch1_2026-11-26')));
+  await assertSucceeds(getDocs(query(collection(dbO, 'dia_sin_ruta'), where('fecha', '==', '2026-11-26'))));
+  await assertFails(setDoc(doc(dbO, 'dia_sin_ruta', 'ch2_2026-11-26'), { choferId: 'ch2', fecha: '2026-11-26', motivo: 'taller' }));
+  await assertFails(updateDoc(doc(dbA, 'dia_sin_ruta', 'ch1_2026-11-26'), { motivo: 'descanso' }));
+  await assertFails(deleteDoc(doc(dbA, 'dia_sin_ruta', 'ch1_2026-11-26')));
+  for(const c of [env.unauthenticatedContext(), ctx('inactive'), ctx('stranger')]) await assertFails(getDoc(doc(c.firestore(), 'dia_sin_ruta', 'ch1_2026-11-26')));
+});

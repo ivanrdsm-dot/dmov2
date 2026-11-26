@@ -10,7 +10,7 @@
     "allowImportingTsExtensions": true
   },
   "include": [
-    "catalogos.ts", "seguimientoServicio.ts", "cronograma.ts", "reporteDia.ts", "lugares.ts", "historialRutas.ts", "desempeno.ts", "auditoria.ts", "operacion.ts", "colaChofer.ts", "finanzas.ts",
+    "catalogos.ts", "seguimientoServicio.ts", "cronograma.ts", "reporteDia.ts", "planDia.ts", "lugares.ts", "historialRutas.ts", "desempeno.ts", "auditoria.ts", "operacion.ts", "colaChofer.ts", "finanzas.ts",
     "cobranza.ts", "costos.ts", "cotizacionAuto.ts", "cotizaciones.ts", "cotizacionCliente.ts", "reportes.ts",
     "despacho.ts",
     "deudas.ts", "distribucion.ts", "dimensionamiento.ts",
