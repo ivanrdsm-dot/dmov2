@@ -74,13 +74,16 @@ export default function ReporteDia({ db, dia, setDia, hoy, choferes = [], jornad
       <div style={{ ...tarjeta, padding: 0, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860, fontSize: 13 }}>
           <thead><tr style={{ background: "#f8fafc", textAlign: "left", color: MUTED, fontSize: 11 }}>
-            {["Persona", "Entrada", "Desde dónde", "Salida", "Horas", "Camioneta", "Km tablero / GPS", "Alertas"].map(h => <th key={h} style={{ padding: "9px 10px" }}>{h}</th>)}</tr></thead>
+            {["Persona", "Entrada", "Desde dónde", "Salida", "Horas / extra", "Camioneta", "Km tablero / GPS", "Alertas"].map(h => <th key={h} style={{ padding: "9px 10px" }}>{h}</th>)}</tr></thead>
           <tbody>{r.filas.map(f => <tr key={f.tipo + f.id} style={{ borderTop: "1px solid " + BORDER, verticalAlign: "top" }}>
             <td style={{ padding: "9px 10px" }}><b>{f.nombre}</b><div style={{ fontSize: 11, color: MUTED }}>{f.tipo === "oficina" ? "Oficina" : "Chofer"}</div></td>
             <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>{f.falto ? <b style={{ color: ROSE }}>❌ Sin check-in</b> : <>{hhmm(f.entradaMs)}{f.tardeMin ? <div style={{ color: ROSE, fontSize: 12, fontWeight: 700 }}>⏰ {dur(f.tardeMin)} tarde</div> : <div style={{ color: GREEN, fontSize: 12, fontWeight: 700 }}>✓ a tiempo</div>}</>}</td>
             <td style={{ padding: "9px 10px", maxWidth: 220 }}>{f.lugarEntrada || "—"}</td>
             <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>{f.falto ? "—" : f.salidaMs ? <>{hhmm(f.salidaMs)}<div style={{ fontSize: 11, color: MUTED, maxWidth: 180, whiteSpace: "normal" }}>{f.lugarSalida}</div></> : <span style={{ color: AMBER, fontWeight: 700 }}>⏳ sin salida</span>}</td>
-            <td style={{ padding: "9px 10px", fontFamily: MONO }}>{f.horas !== null ? f.horas + " h" : "—"}</td>
+            <td style={{ padding: "9px 10px", fontFamily: MONO, whiteSpace: "nowrap" }}>{f.horas !== null ? f.horas + " h" : "—"}
+              {f.extraMin > 0 && <div style={{ color: BLUE, fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>+{dur(f.extraMin)} extra</div>}
+              {f.salioAntesMin > 0 && <div style={{ color: AMBER, fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>salió {dur(f.salioAntesMin)} antes</div>}
+              {f.sinSalidaRegistrada && <div style={{ color: AMBER, fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>sin salida registrada</div>}</td>
             <td style={{ padding: "9px 10px", fontFamily: MONO, fontSize: 12 }}>{f.placa || "—"}{f.odometroKm !== null && f.tipo === "chofer" ? <div style={{ color: MUTED }}>{f.odometroKm.toLocaleString("es-MX")} km</div> : null}</td>
             <td style={{ padding: "9px 10px", fontFamily: MONO, fontSize: 12 }}>{f.kmTablero !== null ? `${f.kmTablero} / ${f.kmGps ?? 0}` : "—"}</td>
             <td style={{ padding: "9px 10px", fontSize: 12 }}>{Object.entries(f.alertas).filter(([k]) => NOMBRE_ALERTA[k]).map(([k, n]) => <span key={k} style={{ display: "inline-block", marginRight: 6, color: TEXT }}>{NOMBRE_ALERTA[k]}{n > 1 ? ` ×${n}` : ""}</span>)}

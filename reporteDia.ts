@@ -10,7 +10,9 @@ export interface FilaPersona {
   id: string; nombre: string; tipo: "chofer" | "oficina";
   entradaMs: number | null; tardeMin: number; lugarEntrada: string; salidaMs: number | null; lugarSalida: string; horas: number | null;
   placa: string; odometroKm: number | null; kmTablero: number | null; kmGps: number | null; alertas: Record<string, number>; falto: boolean;
+  extraMin: number; salioAntesMin: number; sinSalidaRegistrada: boolean;
 }
+const tiempo = (x: any) => ({ extraMin: Number(x?.extraMin) || 0, salioAntesMin: Number(x?.salioAntesMin) || 0, sinSalidaRegistrada: x?.sinSalidaRegistrada === true });
 
 const ms = (v: unknown): number | null => { const x = v && typeof (v as any).toMillis === "function" ? (v as any).toMillis() : Number(v); return Number.isFinite(x) && x > 0 ? x : null; };
 const txtLugar = (l: unknown) => typeof l === "string" ? l : String((l as any)?.texto || (l as any)?.direccion || "");
@@ -31,13 +33,13 @@ export function reporteDia({ dia, ahoraMs, choferes = [], jornadas = [], oficina
       horas: ms(j?.checkInEn) && ms(j?.checkOutEn) ? Math.round((ms(j.checkOutEn)! - ms(j.checkInEn)!) / 360000) / 10 : null,
       placa: String(j?.unidadPlaca || ""), odometroKm: Number.isFinite(Number(j?.odometroKm)) && j ? Number(j.odometroKm) : null,
       kmTablero: Number.isFinite(Number(j?.kmRecorridos)) && j?.kmRecorridos !== undefined ? Number(j.kmRecorridos) : null, kmGps: Number.isFinite(Number(j?.kmGps)) && j?.kmGps !== undefined ? Number(j.kmGps) : null,
-      alertas: alertasDe(c.id), falto: !j });
+      alertas: alertasDe(c.id), falto: !j, ...tiempo(j) });
   }
   for(const u of usuariosOficina.filter(u => u.rol !== "admin" && u.activo !== false && !u.prueba)){
     const a = oficina.find(x => x.uid === u.id);
     filas.push({ id: u.id, nombre: String(u.nombre || u.id), tipo: "oficina", entradaMs: ms(a?.checkInEn), tardeMin: a?.llegoTarde ? Number(a.tardeMin) || 0 : 0,
       lugarEntrada: txtLugar(a?.lugarEntrada), salidaMs: ms(a?.checkOutEn), lugarSalida: txtLugar(a?.lugarSalida), horas: a?.horasTrabajadas ?? null,
-      placa: "", odometroKm: null, kmTablero: null, kmGps: null, alertas: alertasDe(u.id), falto: !a });
+      placa: "", odometroKm: null, kmTablero: null, kmGps: null, alertas: alertasDe(u.id), falto: !a, ...tiempo(a) });
   }
 
   const H: Hallazgo[] = [];
@@ -49,8 +51,13 @@ export function reporteDia({ dia, ahoraMs, choferes = [], jornadas = [], oficina
   if(tarde.length) add(tarde.length === vinieron.length ? "grave" : "revisar", `${tarde.length} de ${vinieron.length} llegaron tarde`,
     `promedio ${dur(Math.round(tarde.reduce((s, f) => s + f.tardeMin, 0) / tarde.length))} tarde · ` + tarde.map(f => `${f.nombre.split(" ")[0]} ${hhmm(f.entradaMs)}`).join(", "));
   const limiteSalida = Date.parse(`${dia}T${horaSalida}:00-06:00`) + 30 * 60000;
-  const sinSalida = vinieron.filter(f => !f.salidaMs && ahoraMs > limiteSalida);
-  if(sinSalida.length) add("revisar", `${sinSalida.length} sin registrar su salida`, sinSalida.map(f => f.nombre).join(", "));
+  const sinSalida = vinieron.filter(f => !f.salidaMs && (ahoraMs > limiteSalida || f.sinSalidaRegistrada));
+  if(sinSalida.length) add("revisar", `${sinSalida.length} sin registrar su salida`, sinSalida.map(f => f.nombre).join(", ") + " · ese día no cuenta horas ni tiempo extra");
+  /* Tiempo extra (llegó antes de su hora + se quedó después de su salida) y salidas antes de hora: se miden, no se bloquean. */
+  const extra = vinieron.filter(f => f.extraMin > 0);
+  if(extra.length) add("info", `Tiempo extra: ${dur(extra.reduce((s, f) => s + f.extraMin, 0))} en total`, extra.map(f => `${f.nombre.split(" ")[0]} ${dur(f.extraMin)}`).join(", "));
+  const antes = vinieron.filter(f => f.salioAntesMin > 0);
+  if(antes.length) add("revisar", `${antes.length === 1 ? "1 salió" : antes.length + " salieron"} antes de su hora`, antes.map(f => `${f.nombre.split(" ")[0]} ${dur(f.salioAntesMin)} antes`).join(", "));
 
   /* GPS: la app dejó de mandar ubicación, o el tablero marca kilómetros que el GPS no vio. */
   const sinGps = vinieron.filter(f => (f.alertas.sin_ubicacion ?? 0) > 0);
@@ -100,7 +107,7 @@ export function reporteDia({ dia, ahoraMs, choferes = [], jornadas = [], oficina
 /** Texto corto para mandar por WhatsApp. */
 export function textoReporte(dia: string, r: ReturnType<typeof reporteDia>): string {
   const l = [`Reporte D Movimiento · ${dia}`, `Asistencia: ${r.resumen.vinieron}/${r.resumen.personas} · tarde: ${r.resumen.tarde} · sin salida: ${r.resumen.sinSalida}`, ""];
-  for(const f of r.filas) l.push(`${f.falto ? "❌" : f.tardeMin ? "⏰" : "✅"} ${f.nombre}: ${f.falto ? "sin check-in" : `${hhmm(f.entradaMs)}${f.tardeMin ? ` (${dur(f.tardeMin)} tarde)` : ""} → ${f.salidaMs ? hhmm(f.salidaMs) : "sin salida"}`}`);
+  for(const f of r.filas) l.push(`${f.falto ? "❌" : f.tardeMin ? "⏰" : "✅"} ${f.nombre}: ${f.falto ? "sin check-in" : `${hhmm(f.entradaMs)}${f.tardeMin ? ` (${dur(f.tardeMin)} tarde)` : ""} → ${f.salidaMs ? hhmm(f.salidaMs) : "sin salida"}${f.extraMin ? ` · +${dur(f.extraMin)} extra` : ""}${f.salioAntesMin ? ` · salió ${dur(f.salioAntesMin)} antes` : ""}`}`);
   if(r.hallazgos.length){ l.push("", "Qué faltó:"); for(const h of r.hallazgos.filter(h => h.nivel !== "info")) l.push(`• ${h.quien ? h.quien + ": " : ""}${h.titulo} — ${h.detalle}`); }
   return l.join("\n");
 }

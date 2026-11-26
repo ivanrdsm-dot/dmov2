@@ -937,8 +937,10 @@ export default function ChoferWeb({ db, auth, app }){
             enCola={cola.map(x => x.id)} onEnCola={() => setCola(leerCola(almacenLocal()))}
             onPaso={(id, v) => setAvance(x => ({ ...x, [id]: v }))}/>)}
           {jornadaAbierta && <button onClick={() => setGastando(true)} className="dm-btn dm-linea" style={{ margin: "4px 0 12px" }}>⛽ Gasolina o gasto</button>}
-          {jornadaAbierta && !enRuta && !(servicios || []).some(s => s.estado === "Asignada") && <div className="dm-pie"><div>
-            <button onClick={terminar} className="dm-btn dm-azul">🏁 Terminar mi día</button></div></div>}
+          {/* Siempre puede registrar su salida (se miden retardo y tiempo extra). Con una ruta local sin terminar, la oficina recibe aviso. */}
+          {jornadaAbierta && !enRuta?.foraneo && <div className="dm-pie"><div>
+            {enRuta && <p className="dm-sub" style={{ margin: "0 0 8px", textAlign: "center" }}>Tu ruta {enRuta.folio} sigue en curso. Si cierras tu día ahora, la oficina recibe aviso.</p>}
+            <button onClick={terminar} className={"dm-btn " + (enRuta ? "dm-linea" : "dm-azul")}>🏁 Terminar mi día</button></div></div>}
           {jornadaAbierta && enRuta?.foraneo && <div className="dm-card" style={{ textAlign: "center" }}>
             <p className="dm-sub" style={{ marginTop: 0 }}>Ruta foránea{enRuta.regresoEstimado ? ` · regreso estimado ${enRuta.regresoEstimado}` : ""}. Al terminar de manejar hoy, cierra tu día; mañana haces check-in otra vez.</p>
             <button onClick={terminar} className="dm-btn dm-linea">🌙 Terminar mi día (sigo mañana)</button></div>}

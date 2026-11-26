@@ -68,3 +68,20 @@ describe("llegada a la parada por GPS", () => {
   it("si nunca entró, no hay llegada", () => { expect(llegadaPorGps([lejos(0), lejos(5)], P)).toBe(null); });
   it("ignora puntos después del cierre", () => { expect(llegadaPorGps([lejos(0), cerca(10), cerca(50)], P, { hastaMs: t + 20 * M })).toBe(t + 10 * M); });
 });
+
+import { tiempoJornada } from "./functions/lib/jornadaReglas.js";
+describe("tiempo de la jornada contra su horario (7:00–17:00)", () => {
+  const d = "2026-11-26", t = h => Date.parse(`${d}T${h}:00-06:00`);
+  it("llegó antes y se quedó después: todo cuenta como extra", () => {
+    expect(tiempoJornada({ checkInMs: t("05:58"), checkOutMs: t("18:30") })).toEqual({ tardeMin: 0, antesDeEntradaMin: 62, salioAntesMin: 0, despuesDeSalidaMin: 90, extraMin: 152, horasTrabajadas: 12.5 });
+  });
+  it("llegó tarde y salió antes", () => {
+    expect(tiempoJornada({ checkInMs: t("08:48"), checkOutMs: t("16:00") })).toMatchObject({ tardeMin: 108, antesDeEntradaMin: 0, salioAntesMin: 60, extraMin: 0, horasTrabajadas: 7.2 });
+  });
+  it("dentro de la tolerancia no es retardo; sin salida no hay horas", () => {
+    expect(tiempoJornada({ checkInMs: t("07:09") })).toMatchObject({ tardeMin: 0, horasTrabajadas: null, extraMin: 0 });
+  });
+  it("si entró después de su hora de salida, el extra cuenta desde que entró", () => {
+    expect(tiempoJornada({ checkInMs: t("18:00"), checkOutMs: t("20:00") })).toMatchObject({ despuesDeSalidaMin: 120, extraMin: 120 });
+  });
+});
