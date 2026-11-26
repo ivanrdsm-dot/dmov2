@@ -26,7 +26,8 @@ import { KM_DIA, COMIDA, HOTEL, ADIC, AYUD, diasRuta, calcViaticos, calcFlota, g
 import CfdiArchive from "./CfdiArchive.jsx";
 import { crearServiciosStore } from "./serviciosStore.js";
 import AvisoPrivacidad, { useAvisoAutorizado } from "./AvisoPrivacidad.jsx";
-import { useAsistenciaOficina } from "./asistenciaOficina.js";
+import { VERSION_AVISO_OFICINA } from "./functions/lib/avisoPrivacidad.js";
+import { useAsistenciaOficina, useUbicacionJornada } from "./asistenciaOficina.js";
 const CheckOficinaVista = lazy(() => import("./CheckOficina.jsx"));
 const DiaCerradoVista = lazy(() => import("./CheckOficina.jsx").then(m => ({ default: m.DiaCerrado })));
 const PlanDelDiaVista = lazy(() => import("./PlanDelDia.jsx"));
@@ -14969,7 +14970,7 @@ export default function App(){
 
   // 1. Auth anónima — firebase auth para Firestore, no requiere Google login
   const [authUser,setAuthUser]=useState(undefined);
-  const [avisoOk,setAvisoOk]=useAvisoAutorizado(db,authUser&&!authUser.isAnonymous?authUser.uid:null); // aviso de privacidad (versión vigente)
+  const [avisoOk,setAvisoOk]=useAvisoAutorizado(db,authUser&&!authUser.isAnonymous?authUser.uid:null,VERSION_AVISO_OFICINA); // aviso de privacidad de la oficina (versión vigente)
   useEffect(()=>{
     const unsub=onAuthStateChanged(auth,u=>{
       // RBAC: el panel de oficina YA NO cae a sesión anónima — exige Google.
@@ -15115,6 +15116,8 @@ export default function App(){
   /* Asistencia de la oficina (quien no es director): entrada obligatoria con selfie en vivo y ubicación. */
   const debeAsistencia=!!userProfile&&userProfile.rol!=="admin"&&avisoOk===true;
   const asistenciaHoy=useAsistenciaOficina(db,authUser?.uid,debeAsistencia);
+  /* Ubicación de la oficina durante su jornada (cada 5 min con el sistema abierto). Solo la ve el director. */
+  useUbicacionJornada(fbApp,debeAsistencia&&asistenciaHoy?.estado==="Abierta");
   const [saliendoDia,setSaliendoDia]=useState(false);
   /* Operaciones: después de su entrada registra el plan del día (ruta o motivo de cada chofer) antes de usar el sistema. */
   const [planListo,setPlanListo]=useState(false);

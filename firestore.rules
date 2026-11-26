@@ -74,6 +74,11 @@ service cloud.firestore {
       allow get: if esOficina() && id.matches(request.auth.uid + '_.*');
       allow read: if esAdmin();
       allow write: if false;
+      /* Ubicaciones durante la jornada: solo el director las ve; solo el servidor las escribe. */
+      match /posiciones/{p} {
+        allow read: if esAdmin();
+        allow write: if false;
+      }
     }
     match /consentimientos/{id} {
       allow get: if request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous' && id.matches(request.auth.uid + '_.*');

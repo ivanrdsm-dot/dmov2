@@ -100,3 +100,16 @@ describe("aviso del resumen diario", () => {
     expect(avisoDeAlerta({ id: "r", type: "resumen_diario", informativa: true, msg: "Hoy…", url: "/?v=operacion&t=reporte&x=https://malo" }).url).toBe("/?v=operacion");
   });
 });
+
+import { textoAviso, versionAviso, VERSION_AVISO, VERSION_AVISO_OFICINA } from "./functions/lib/avisoPrivacidad.js";
+describe("aviso de privacidad de la oficina", () => {
+  it("tiene su propia versión (los choferes no vuelven a autorizar) y dice que se registra selfie y ubicación en la jornada", () => {
+    expect(versionAviso("chofer")).toBe(VERSION_AVISO);
+    expect(versionAviso("oficina")).toBe(VERSION_AVISO_OFICINA);
+    expect(VERSION_AVISO_OFICINA).not.toBe(VERSION_AVISO);
+    const t = textoAviso("oficina").map(s => s.titulo + " " + s.texto).join(" ");
+    expect(t).toMatch(/fotografía de tu rostro/);
+    expect(t).toMatch(/Tu ubicación/);
+    expect(t).toMatch(/Fuera de tu jornada no se registra/);
+  });
+});

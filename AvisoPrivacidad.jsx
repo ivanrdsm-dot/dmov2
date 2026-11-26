@@ -4,25 +4,26 @@
 import { useEffect, useState } from "react";
 import { doc, getDoc } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
-import { VERSION_AVISO, textoAviso, RESPONSABLE } from "./functions/lib/avisoPrivacidad.js";
+import { VERSION_AVISO, versionAviso, textoAviso, RESPONSABLE } from "./functions/lib/avisoPrivacidad.js";
 
 const AZUL = "#042552", NARANJA = "#F27B13", ROJO = "#b91c1c", GRIS = "#56637a";
 
 /** Hook: ¿esta cuenta ya autorizó la versión vigente? undefined = revisando; true / false. */
-export function useAvisoAutorizado(db, uid){
+export function useAvisoAutorizado(db, uid, version = VERSION_AVISO){
   const [ok, setOk] = useState(undefined);
   useEffect(() => {
     if(!uid){ setOk(undefined); return; }
     let vivo = true;
-    getDoc(doc(db, "consentimientos", `${uid}_${VERSION_AVISO}`)).then(s => vivo && setOk(s.exists() && s.data().acepto === true)).catch(() => vivo && setOk(false));
+    getDoc(doc(db, "consentimientos", `${uid}_${version}`)).then(s => vivo && setOk(s.exists() && s.data().acepto === true)).catch(() => vivo && setOk(false));
     return () => { vivo = false; };
-  }, [db, uid]);
+  }, [db, uid, version]);
   return [ok, setOk];
 }
 
 export default function AvisoPrivacidad({ app, tipo = "chofer", nombre = "", onAutorizado, onSalir }){
   const [leido, setLeido] = useState(false), [ocupado, setOcupado] = useState(false), [error, setError] = useState(""), [rechazando, setRechazando] = useState(false);
-  const llamar = d => httpsCallable(getFunctions(app, "us-central1"), "aceptarAvisoPrivacidad")({ version: VERSION_AVISO, ...d });
+  const version = versionAviso(tipo);
+  const llamar = d => httpsCallable(getFunctions(app, "us-central1"), "aceptarAvisoPrivacidad")({ version, ...d });
   const autorizar = async () => {
     if(!leido){ setError("Marca la casilla para confirmar que lo leíste."); return; }
     setOcupado(true); setError("");
@@ -37,7 +38,7 @@ export default function AvisoPrivacidad({ app, tipo = "chofer", nombre = "", onA
       <div style={{ maxWidth: 620, margin: "0 auto" }}>
         <div style={{ fontWeight: 800, fontSize: 12, letterSpacing: ".12em", textTransform: "uppercase", color: NARANJA }}>{RESPONSABLE.nombre}</div>
         <h1 style={{ fontSize: 26, margin: "4px 0 6px", fontWeight: 900 }}>Aviso de privacidad</h1>
-        <p style={{ color: GRIS, fontSize: 16, margin: "0 0 14px" }}>{pila ? `Hola, ${pila}. ` : ""}Antes de continuar, lee cómo usamos tus datos y autoriza su uso. Versión {VERSION_AVISO}.</p>
+        <p style={{ color: GRIS, fontSize: 16, margin: "0 0 14px" }}>{pila ? `Hola, ${pila}. ` : ""}Antes de continuar, lee cómo usamos tus datos y autoriza su uso. Versión {version}.</p>
         <div style={{ background: "#fff", borderRadius: 18, padding: "6px 18px", boxShadow: "0 1px 3px rgba(4,37,82,.08)" }}>
           {textoAviso(tipo).map(s => <div key={s.titulo} style={{ padding: "12px 0", borderBottom: "1px solid #e3e8f1" }}>
             <div style={{ fontWeight: 800, fontSize: 16 }}>{s.titulo}</div>

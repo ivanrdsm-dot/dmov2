@@ -10,7 +10,7 @@ export interface FilaPersona {
   id: string; nombre: string; tipo: "chofer" | "oficina";
   entradaMs: number | null; tardeMin: number; lugarEntrada: string; salidaMs: number | null; lugarSalida: string; horas: number | null;
   placa: string; odometroKm: number | null; kmTablero: number | null; kmGps: number | null; alertas: Record<string, number>; falto: boolean;
-  extraMin: number; salioAntesMin: number; sinSalidaRegistrada: boolean; app: string;
+  extraMin: number; salioAntesMin: number; sinSalidaRegistrada: boolean; app: string; lecturas: number; maxDistM: number;
 }
 const tiempo = (x: any) => ({ extraMin: Number(x?.extraMin) || 0, salioAntesMin: Number(x?.salioAntesMin) || 0, sinSalidaRegistrada: x?.sinSalidaRegistrada === true });
 
@@ -33,13 +33,14 @@ export function reporteDia({ dia, ahoraMs, choferes = [], jornadas = [], oficina
       horas: ms(j?.checkInEn) && ms(j?.checkOutEn) ? Math.round((ms(j.checkOutEn)! - ms(j.checkInEn)!) / 360000) / 10 : null,
       placa: String(j?.unidadPlaca || ""), odometroKm: Number.isFinite(Number(j?.odometroKm)) && j ? Number(j.odometroKm) : null,
       kmTablero: Number.isFinite(Number(j?.kmRecorridos)) && j?.kmRecorridos !== undefined ? Number(j.kmRecorridos) : null, kmGps: Number.isFinite(Number(j?.kmGps)) && j?.kmGps !== undefined ? Number(j.kmGps) : null,
-      alertas: alertasDe(c.id), falto: !j, ...tiempo(j), app: String(j?.appVersion || "") });
+      alertas: alertasDe(c.id), falto: !j, ...tiempo(j), app: String(j?.appVersion || ""), lecturas: 0, maxDistM: 0 });
   }
   for(const u of usuariosOficina.filter(u => u.rol !== "admin" && u.activo !== false && !u.prueba)){
     const a = oficina.find(x => x.uid === u.id);
     filas.push({ id: u.id, nombre: String(u.nombre || u.id), tipo: "oficina", entradaMs: ms(a?.checkInEn), tardeMin: a?.llegoTarde ? Number(a.tardeMin) || 0 : 0,
       lugarEntrada: txtLugar(a?.lugarEntrada), salidaMs: ms(a?.checkOutEn), lugarSalida: txtLugar(a?.lugarSalida), horas: a?.horasTrabajadas ?? null,
-      placa: "", odometroKm: null, kmTablero: null, kmGps: null, alertas: alertasDe(u.id), falto: !a, ...tiempo(a), app: "" });
+      placa: "", odometroKm: null, kmTablero: null, kmGps: null, alertas: alertasDe(u.id), falto: !a, ...tiempo(a), app: "",
+      lecturas: Number(a?.puntosGps) || 0, maxDistM: Number(a?.maxDistEntradaM) || 0 });
   }
 
   const H: Hallazgo[] = [];
@@ -59,6 +60,11 @@ export function reporteDia({ dia, ahoraMs, choferes = [], jornadas = [], oficina
   const antes = vinieron.filter(f => f.salioAntesMin > 0);
   if(antes.length) add("revisar", `${antes.length === 1 ? "1 salió" : antes.length + " salieron"} antes de su hora`, antes.map(f => `${f.nombre.split(" ")[0]} ${dur(f.salioAntesMin)} antes`).join(", "));
 
+  /* Oficina: dónde estuvo durante su jornada (con el sistema abierto). */
+  for(const f of vinieron.filter(f => f.tipo === "oficina")){
+    if(f.maxDistM > 1000) add("revisar", "Se alejó de donde marcó su entrada", `hasta ${(f.maxDistM / 1000).toFixed(1)} km durante su jornada`, f.nombre);
+    else if(!f.lecturas) add("info", "Sin lecturas de ubicación en el día", "solo se registran con el sistema abierto en su celular", f.nombre);
+  }
   /* Choferes que todavía entran por la página: sin la app nativa, su ubicación se corta al bloquear el celular. */
   const enPagina = vinieron.filter(f => f.tipo === "chofer" && !f.app);
   if(enPagina.length) add("revisar", `${enPagina.length} chofer${enPagina.length > 1 ? "es" : ""} sin la app`, `${enPagina.map(f => f.nombre).join(", ")} hicieron check-in desde la página: su ubicación se corta al bloquear el celular. Que instalen la app.`);

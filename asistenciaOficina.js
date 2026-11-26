@@ -12,3 +12,28 @@ export function useAsistenciaOficina(db, uid, activo){
   }, [db, uid, activo]);
   return a;
 }
+
+/** Durante la jornada (de su entrada a su salida), manda su ubicación cada 5 min y al volver a abrir el sistema.
+ *  Solo mientras el sistema está abierto en su celular (el navegador no permite más). Fuera de la jornada no se manda nada. */
+export const CADA_MS_UBICACION_OFICINA = 5 * 60000;
+export function useUbicacionJornada(app, activo){
+  useEffect(() => {
+    if(!activo || !app || typeof navigator === "undefined" || !navigator.geolocation) return;
+    let vivo = true, ultima = 0;
+    const mandar = async () => {
+      if(!vivo || document.visibilityState === "hidden" || Date.now() - ultima < 60000) return;
+      ultima = Date.now();
+      navigator.geolocation.getCurrentPosition(async p => {
+        try {
+          const { getFunctions, httpsCallable } = await import("firebase/functions");
+          await httpsCallable(getFunctions(app, "us-central1"), "oficinaUbicacion")({ lat: p.coords.latitude, lng: p.coords.longitude, precisionM: p.coords.accuracy, tMs: Math.round(p.timestamp || Date.now()) });
+        } catch { /* sin señal: se intenta en la siguiente vuelta */ }
+      }, () => {}, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+    };
+    mandar();
+    const t = setInterval(mandar, CADA_MS_UBICACION_OFICINA);
+    const alVolver = () => { if(document.visibilityState === "visible") mandar(); };
+    document.addEventListener("visibilitychange", alVolver);
+    return () => { vivo = false; clearInterval(t); document.removeEventListener("visibilitychange", alVolver); };
+  }, [app, activo]);
+}

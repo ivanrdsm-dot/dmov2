@@ -237,11 +237,13 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
             </div>
             <div style={{ fontSize: 13, color: MUTED, marginTop: 4, lineHeight: 1.6 }}>
               Entrada: <b style={{ color: TEXT }}>{hora(o.checkInEn)}</b>{o.horaEntradaEsperada ? ` (entrada ${o.horaEntradaEsperada})` : ""} · {o.lugarEntrada || "—"}
+              <br/>Ubicación en el día: {o.ultimaUbicacion ? <><b style={{ color: TEXT }}>{hace(Math.round((Date.now() - o.ultimaUbicacion.tMs) / 60000))}</b>{o.ultimaUbicacion.distEntradaM !== null && o.ultimaUbicacion.distEntradaM !== undefined ? ` · a ${o.ultimaUbicacion.distEntradaM < 1000 ? o.ultimaUbicacion.distEntradaM + " m" : (o.ultimaUbicacion.distEntradaM / 1000).toFixed(1) + " km"} de su entrada` : ""} · {o.puntosGps || 0} lecturas{o.maxDistEntradaM > 1000 ? <b style={{ color: ROSE }}> · se alejó hasta {(o.maxDistEntradaM / 1000).toFixed(1)} km</b> : ""}</> : <span style={{ color: MUTED }}>sin lecturas (solo se registra con el sistema abierto en su celular)</span>}
               <br/>Salida: {o.checkOutEn ? <><b style={{ color: TEXT }}>{hora(o.checkOutEn)}</b> · {o.lugarSalida || "—"}{o.horasTrabajadas != null ? ` · ${o.horasTrabajadas} h` : ""}</> : <span style={{ color: AMBER }}>todavía no registra su salida</span>}
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 8, overflowX: "auto" }}>
               {o.ubicacion && <MapaPunto token={mapboxToken} punto={o.ubicacion} titulo="Entrada" lugar={o.lugarEntrada} hora={hora(o.checkInEn)}/>}
               {o.fotos?.selfie?.ruta && <Miniatura ruta={o.fotos.selfie.ruta} etiqueta={"Entrada · " + o.nombre}/>}
+              {o.ultimaUbicacion && <MapaPunto token={mapboxToken} punto={o.ultimaUbicacion} titulo="Última ubicación" lugar={o.ultimaUbicacion.distEntradaM !== null ? `a ${o.ultimaUbicacion.distEntradaM} m de su entrada` : ""} hora={hora(o.ultimaUbicacion.tMs)}/>}
               {o.ubicacionSalida && <MapaPunto token={mapboxToken} punto={o.ubicacionSalida} titulo="Salida" lugar={o.lugarSalida} hora={hora(o.checkOutEn)}/>}
               {o.fotosSalida?.selfieSalida?.ruta && <Miniatura ruta={o.fotosSalida.selfieSalida.ruta} etiqueta={"Salida · " + o.nombre}/>}
             </div>
