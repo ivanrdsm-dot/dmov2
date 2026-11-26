@@ -36,6 +36,7 @@ export const TIPOS_ALERTA_CHOFER = {
   km_no_coinciden: "Los kilómetros del tablero no coinciden con el GPS",
   unidad_no_coincide: "El chofer usa otra camioneta",
   chofer_sin_ruta: "Chofer trabajando sin ruta",
+  salida_con_ruta_pendiente: "Cerró su día con la ruta sin terminar",
 };
 /* Por qué un chofer no sale a ruta hoy (lo registra la oficina en el plan del día). "Espera pedido" vale 2 horas. */
 export const MOTIVOS_SIN_RUTA = { espera_pedido: "Espera pedido (se asigna más tarde)", taller: "Taller o mantenimiento", descanso: "Descanso o permiso", bodega: "Apoyo en bodega u oficina", otro: "Otro" };

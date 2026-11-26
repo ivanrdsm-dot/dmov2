@@ -32,6 +32,22 @@ export function llegada(checkInMs, horaEntrada = "07:00", toleranciaMin = 10){
   return { minutosDespues: despues, tarde: despues > toleranciaMin, tardeMin: despues > toleranciaMin ? despues : 0 };
 }
 
+/** Tiempo de una jornada contra su horario: retardo, llegada antes, salida antes y tiempo extra (todo en minutos).
+ *  Siempre se puede registrar entrada y salida; esto solo MIDE. `extraMin` = llegó antes + se quedó después. */
+export function tiempoJornada({ checkInMs, checkOutMs, entrada = "07:00", salida = "17:00", toleranciaMin = 10 }){
+  const ent = minutosDelDiaCDMX(checkInMs), e = aMin(entrada), s = aMin(salida);
+  const out = Number.isFinite(checkOutMs) && checkOutMs > checkInMs ? ent + Math.round((checkOutMs - checkInMs) / 60000) : null;   // minutos desde la medianoche del día de entrada
+  const despues = ent - e;
+  return {
+    tardeMin: despues > toleranciaMin ? despues : 0,
+    antesDeEntradaMin: despues < 0 ? -despues : 0,
+    salioAntesMin: out !== null && out < s ? s - out : 0,
+    despuesDeSalidaMin: out !== null && out > s ? out - Math.max(s, ent) : 0,
+    extraMin: (despues < 0 ? -despues : 0) + (out !== null && out > s ? out - Math.max(s, ent) : 0),
+    horasTrabajadas: out !== null ? Math.round((out - ent) / 6) / 10 : null,
+  };
+}
+
 /** Kilómetros del tablero vs los que marcó el GPS en el día. Regresa el texto de la duda o "". */
 export function dudaKilometros(kmTablero, kmGps){
   const t = Number(kmTablero), g = Number(kmGps);

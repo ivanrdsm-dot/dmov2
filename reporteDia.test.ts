@@ -59,3 +59,19 @@ describe("reporte del día", () => {
     expect(tx).not.toMatch(/\$/);
   });
 });
+
+describe("retardo y tiempo extra", () => {
+  it("se mide quién llegó antes y quién se quedó; quién salió antes; y quien no registró salida no cuenta horas", () => {
+    const x = reporteDia({ dia, ahoraMs: Date.parse(`${dia}T20:00:00-06:00`), choferes: choferes.slice(0, 3), oficina: [], usuariosOficina: [], servicios: [], alertas: [],
+      jornadas: [
+        { choferId: "elias", checkInEn: t("06:40"), checkOutEn: t("18:00"), extraMin: 80 },
+        { choferId: "israel", checkInEn: t("07:05"), checkOutEn: t("16:30"), salioAntesMin: 30 },
+        { choferId: "enrique", checkInEn: t("07:00"), sinSalidaRegistrada: true },
+      ] });
+    const tt = x.hallazgos.map(h => h.titulo);
+    expect(tt).toContain("Tiempo extra: 1 h 20 min en total");
+    expect(tt).toContain("1 salió antes de su hora");
+    expect(x.hallazgos.find(h => h.titulo === "1 sin registrar su salida")?.detalle).toContain("no cuenta horas");
+    expect(textoReporte(dia, x)).toContain("+1 h 20 min extra");
+  });
+});

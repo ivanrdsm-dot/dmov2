@@ -12,7 +12,7 @@ import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { ordenarParadas, clasificarRuta, fechaMasDias } from "./lib/rutas.js";
 import { fusionarClaims } from "./permisos.js";
 import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER, TITULO_ALERTA, MOTIVOS_SIN_RUTA } from "./lib/vigilancia.js";
-import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCDMX, kmDesdeZocalo, llegadaPorGps } from "./lib/jornadaReglas.js";
+import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCDMX, kmDesdeZocalo, llegadaPorGps, tiempoJornada } from "./lib/jornadaReglas.js";
 import { defineSecret } from "firebase-functions/params";
 import { TIPOS_GASTO, revisarCarga, rendimientoHistorico } from "./lib/gasolina.js";
 import { coleccionDeAlerta } from "./lib/avisosOficina.js";
@@ -191,6 +191,19 @@ async function servicioDelChofer(servicioId, chofer){
   if(!snap.exists || !esDeLaRuta(snap.data(), chofer.id)) throw falla("permission-denied", "Este servicio no está asignado a ti");
   return { ref, servicio: { id: snap.id, ...snap.data() } };
 }
+/** Días anteriores que quedaron abiertos (no registró su salida): se cierran al hacer el check-in del día nuevo,
+ *  marcados "sin salida registrada" y sin contar horas. No se borra nada. */
+async function cerrarSinSalida(consulta, fechaHoy){
+  const abiertas = await consulta.where("estado", "==", "Abierta").limit(20).get();
+  const viejas = abiertas.docs.filter(d => String(d.data().fecha || "") < fechaHoy);
+  if(!viejas.length) return 0;
+  const lote = db().batch();
+  for(const d of viejas) lote.update(d.ref, { estado: "Cerrada", sinSalidaRegistrada: true, cerradaAutomaticamenteEn: ahora(),
+    motivoCierre: "No registró su salida; se cerró al hacer su check-in del día siguiente (no se cuentan horas ni tiempo extra)." });
+  await lote.commit();
+  return viejas.length;
+}
+
 async function jornadaDeHoy(chofer, ms = Date.now()){
   const snap = await db().doc(`jornadas/${chofer.id}_${fechaCDMX(ms)}`).get();
   if(!snap.exists) throw falla("failed-precondition", "Primero haz tu check-in de hoy");
@@ -259,6 +272,7 @@ export const choferCheckIn = onCall(OPC_LUGAR, async req => {
     return true;
   });
   if(creada){
+    await cerrarSinSalida(db().collection("jornadas").where("choferId", "==", chofer.id), fecha);
     await db().doc("ubicaciones/" + chofer.id).set({ choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: "", servicioFolio: "", lat: pos.lat, lng: pos.lng,
       tMs: Number.isFinite(posTMs) && posTMs <= Date.now() + 60000 ? posTMs : Date.now(), precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, confiable: d.simulada !== true, origen: "check-in", actualizadoEn: ahora() });
     if(dudas.length) await alerta({ type: d.simulada === true ? "ubicacion_simulada" : "checkin_dudoso", choferId: chofer.id, choferNombre: chofer.nombre || "",
@@ -450,12 +464,14 @@ export const choferTerminarJornada = onCall(OPC_LUGAR, async req => {
   const enRuta = { docs: await serviciosDe(chofer.id, q => q.where("estado", "==", "En ruta"), 1) }; enRuta.empty = enRuta.docs.length === 0;
   /* Ruta local: primero se termina la ruta. Foránea: cierra su día para descansar y mañana hace check-in otra vez. */
   const foranea = !enRuta.empty && enRuta.docs[0].data().foraneo === true;
-  if(!enRuta.empty && !foranea) throw falla("failed-precondition", "Primero termina tu ruta: aún tienes paradas pendientes");
+  /* Siempre puede registrar su salida. Si deja una ruta local sin terminar, queda anotado y se avisa a la oficina. */
+  const rutaPendiente = !enRuta.empty && !foranea ? enRuta.docs[0] : null;
   const pos = { lat: Number(req.data?.lat), lng: Number(req.data?.lng) }, km = Number(req.data?.odometroKm), precisionM = Number(req.data?.precisionM);
   if(!coordenadaValida(pos)) throw falla("failed-precondition", "No llegó tu ubicación. Prende el GPS y permite la ubicación para cerrar tu día.");
   if(!(km > 0 && km < 2000000)) throw falla("invalid-argument", "Escribe los kilómetros que marca el tablero");
   const { fotos, problemas } = await sellarFotos({ odometroSalida: req.data?.fotoOdometroRuta }, `jornadas/${chofer.id}/`);
-  const dudas = [...problemas, ...(Number.isFinite(precisionM) && precisionM > 150 ? [`GPS impreciso (±${Math.round(precisionM)} m)`] : [])];
+  const dudas = [...problemas, ...(Number.isFinite(precisionM) && precisionM > 150 ? [`GPS impreciso (±${Math.round(precisionM)} m)`] : []),
+    ...(rutaPendiente ? [`cerró su día con la ruta ${rutaPendiente.data().folio || ""} sin terminar`] : [])];
   const r = await db().runTransaction(async tx => {
     const j = await tx.get(ref);
     if(!j.exists) throw falla("failed-precondition", "No tienes una jornada abierta");
@@ -464,10 +480,18 @@ export const choferTerminarJornada = onCall(OPC_LUGAR, async req => {
     if(Number.isFinite(kmIni) && km < kmIni) throw falla("invalid-argument", `Los kilómetros (${km}) son menos que los de la mañana (${kmIni}). Revisa el tablero.`);
     tx.update(ref, { estado: "Cerrada", checkOutEn: ahora(), ubicacionSalida: pos, precisionSalidaM: Number.isFinite(precisionM) ? Math.round(precisionM) : null,
       odometroFinalKm: km, kmRecorridos: Number.isFinite(kmIni) ? km - kmIni : null, fotosSalida: fotos, dudasSalida: dudas,
-      ...(foranea ? { descansoEnRuta: true, servicioForaneoId: enRuta.docs[0].id } : {}) });
+      ...(foranea ? { descansoEnRuta: true, servicioForaneoId: enRuta.docs[0].id } : {}),
+      ...(rutaPendiente ? { salioConRutaPendiente: rutaPendiente.id } : {}),
+      /* Retardo y tiempo extra contra su horario (se mide; no se bloquea nada). */
+      ...(() => { const t = tiempoJornada({ checkInMs: j.data().checkInEn?.toMillis?.() || Date.now(), checkOutMs: Date.now(), entrada: j.data().horaEntradaEsperada || UMBRALES_CHOFER.horaCheckIn,
+        salida: UMBRALES_CHOFER.horaSalida, toleranciaMin: UMBRALES_CHOFER.toleranciaEntradaMin });
+        return { horaSalidaEsperada: UMBRALES_CHOFER.horaSalida, horasTrabajadas: t.horasTrabajadas, extraMin: t.extraMin, antesDeEntradaMin: t.antesDeEntradaMin,
+          despuesDeSalidaMin: t.despuesDeSalidaMin, salioAntesMin: t.salioAntesMin }; })() });
     return { yaEstaba: false, kmIni, kmRec: Number.isFinite(kmIni) ? km - kmIni : null, desdeMs: j.data().checkInEn?.toMillis?.() || 0, fecha: j.data().fecha };
   });
   if(!r.yaEstaba){
+    if(rutaPendiente) await alerta({ type: "salida_con_ruta_pendiente", choferId: chofer.id, choferNombre: chofer.nombre || "", servicioId: rutaPendiente.id, folio: rutaPendiente.data().folio || "",
+      msg: `${chofer.nombre || "Chofer"} cerró su día con la ruta ${rutaPendiente.data().folio || ""} (${rutaPendiente.data().empresa || ""}) sin terminar. Revisa qué pasó con las entregas pendientes.`, lat: pos.lat, lng: pos.lng });
     /* Kilómetros del tablero contra los que registró el GPS durante el día: si no cuadran, alguien miente. */
     let kmGps = null, puntosGps = 0;
     try {
@@ -579,7 +603,9 @@ export const aceptarAvisoPrivacidad = onCall(OPC, async req => {
    Horario: el de los choferes (entrada 7:00, tolerancia 10 min) mientras el director no indique otro. */
 async function horarioOficina(){
   const e = (await db().doc("sistema/empresa").get()).data() || {};
-  return { entrada: /^\d{2}:\d{2}$/.test(e.horaEntradaOficina || "") ? e.horaEntradaOficina : UMBRALES_CHOFER.horaCheckIn, tolerancia: UMBRALES_CHOFER.toleranciaEntradaMin };
+  const hhmm = v => /^\d{2}:\d{2}$/.test(v || "");
+  return { entrada: hhmm(e.horaEntradaOficina) ? e.horaEntradaOficina : UMBRALES_CHOFER.horaCheckIn, tolerancia: UMBRALES_CHOFER.toleranciaEntradaMin,
+    salida: hhmm(e.horaSalidaOficina) ? e.horaSalidaOficina : UMBRALES_CHOFER.horaSalida };   // salida: la de los choferes (17:00) mientras no se indique otra
 }
 function datosFotoOficina(d){
   const pos = { lat: Number(d.lat), lng: Number(d.lng) }, precisionM = Number(d.precisionM), posTMs = Number(d.posTMs);
@@ -603,6 +629,7 @@ export const oficinaCheckIn = onCall(OPC_LUGAR, async req => {
       horaEntradaEsperada: h.entrada, llegoTarde: ll.tarde, tardeMin: ll.tardeMin, equipo: txt(req.rawRequest?.headers?.["user-agent"], 300) });
     return true;
   });
+  if(creada) await cerrarSinSalida(db().collection("asistencia_oficina").where("uid", "==", of.uid), fecha).catch(e => console.warn("cerrar días anteriores", e?.message));
   if(creada) await alerta({ type: ll.tarde ? "checkin_oficina_tarde" : "checkin_oficina", informativa: true, atendida: true, oficinaUid: of.uid, choferNombre: of.nombre,
     msg: `${of.nombre} (oficina) · ${horaCDMX(Date.now())}${ll.tarde ? ` · ${ll.tardeMin} min tarde` : ""} · ${textoLugar(lugar, pos)}${dudas.length ? " · ⚠️ " + dudas.join(", ") : ""}`, lat: pos.lat, lng: pos.lng });
   return { ok: true, yaExistia: !creada, llegoTarde: ll.tarde, tardeMin: ll.tardeMin };
@@ -614,14 +641,16 @@ export const oficinaCheckOut = onCall(OPC_LUGAR, async req => {
   if(ab.empty) throw falla("failed-precondition", "No tienes una entrada abierta");
   const ref = ab.docs.map(x => x.ref).sort((a, b) => b.id.localeCompare(a.id))[0];
   const { fotos, problemas } = await sellarFotos({ selfieSalida: d.selfieRuta }, `asistencia_oficina/${of.uid}/`);
-  const lugar = await dondeEsta(pos);
+  const [lugar, h] = await Promise.all([dondeEsta(pos), horarioOficina()]);
   const r = await db().runTransaction(async tx => {
     const j = await tx.get(ref);
     if(j.data().estado === "Cerrada") return { yaEstaba: true };
     const desde = j.data().checkInEn?.toMillis?.() || Date.now();
+    const t = tiempoJornada({ checkInMs: desde, checkOutMs: Date.now(), entrada: j.data().horaEntradaEsperada || h.entrada, salida: h.salida, toleranciaMin: h.tolerancia });
     tx.update(ref, { estado: "Cerrada", checkOutEn: ahora(), ubicacionSalida: pos, precisionSalidaM: Number.isFinite(precisionM) ? Math.round(precisionM) : null,
-      lugarSalida: lugar, fotosSalida: fotos, dudasSalida: problemas, horasTrabajadas: Math.round((Date.now() - desde) / 360000) / 10 });
-    return { yaEstaba: false, horas: Math.round((Date.now() - desde) / 360000) / 10 };
+      lugarSalida: lugar, fotosSalida: fotos, dudasSalida: problemas, horasTrabajadas: Math.round((Date.now() - desde) / 360000) / 10,
+      horaSalidaEsperada: h.salida, extraMin: t.extraMin, antesDeEntradaMin: t.antesDeEntradaMin, despuesDeSalidaMin: t.despuesDeSalidaMin, salioAntesMin: t.salioAntesMin });
+    return { yaEstaba: false, horas: Math.round((Date.now() - desde) / 360000) / 10, extraMin: t.extraMin };
   });
   if(!r.yaEstaba) await alerta({ type: "checkout_oficina", informativa: true, atendida: true, oficinaUid: of.uid, choferNombre: of.nombre,
     msg: `${of.nombre} (oficina) · ${horaCDMX(Date.now())} · ${r.horas} h · ${textoLugar(lugar, pos)}`, lat: pos.lat, lng: pos.lng });
