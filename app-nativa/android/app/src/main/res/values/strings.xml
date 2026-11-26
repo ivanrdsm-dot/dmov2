@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">D Movimiento Choferes</string>
+    <string name="title_activity_main">D Movimiento Choferes</string>
+    <string name="package_name">mx.denmovimiento.choferes</string>
+    <string name="custom_url_scheme">mx.denmovimiento.choferes</string>
+    <string name="capacitor_background_geolocation_notification_channel_name">Ruta en curso</string>
+    <string name="capacitor_background_geolocation_notification_color">#F27B13</string>
+</resources>

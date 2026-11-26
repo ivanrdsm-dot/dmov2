@@ -18,6 +18,13 @@ import AvisoPrivacidad, { useAvisoAutorizado } from "./AvisoPrivacidad.jsx";
 const LETRA = "system-ui,-apple-system,Segoe UI,Roboto,sans-serif";
 const AZUL = "#042552", NARANJA = "#F27B13", VERDE = "#059669", ROJO = "#dc2626", GRIS = "#5b6b80", FONDO = "#f1f4fb";
 const INCIDENCIAS = ["Cliente ausente", "Entrega rechazada", "Entrega parcial", "Faltantes", "Daños", "Devolución al origen"];
+/* App nativa (Android / iPhone, carpeta app-nativa): abre esta misma página y agrega el GPS en segundo plano.
+   En el navegador todo sigue igual. */
+const NATIVO = typeof window !== "undefined" && !!window.Capacitor?.isNativePlatform?.();
+const plugin = nombre => { try { return NATIVO ? window.Capacitor.registerPlugin(nombre) : null; } catch { return null; } };
+const GPS_FONDO = plugin("BackgroundGeolocation"), HTTP_NATIVO = plugin("CapacitorHttp");
+export const puntoNativo = (l, bateria) => ({ lat: l.latitude, lng: l.longitude, tMs: Math.round(l.time || Date.now()), precisionM: l.accuracy,
+  velocidadMs: l.speed ?? null, bateria, simulada: l.simulated === true });
 const ENVIO_MS = 15000;   // cada 15 s: el cliente ve la camioneta casi en tiempo real
 
 const fechaCDMX = (ms = Date.now()) => new Date(ms - 6 * 3600000).toISOString().slice(0, 10);
@@ -699,7 +706,7 @@ export default function ChoferWeb({ db, auth, app }){
   const [aviso, setAviso] = useState(null), [ultimoEnvio, setUltimoEnvio] = useState(0), [errorGps, setErrorGps] = useState("");
   const [vuelta, setVuelta] = useState(0), [errorRutas, setErrorRutas] = useState(""), [avance, setAvance] = useState({});
   const [, setReloj] = useState(0);
-  const disp = useRef(dispositivoId()), buffer = useRef([]), bateria = useRef(null);
+  const disp = useRef(dispositivoId()), buffer = useRef([]), bateria = useRef(null), ultimoEnvioMs = useRef(0);
   const fns = useRef(getFunctions(app, "us-central1")), almacen = useRef(getStorage(app));
 
   useEffect(() => {
@@ -751,17 +758,42 @@ export default function ChoferWeb({ db, auth, app }){
   const enviar = useCallback(async (servicioId) => {
     const lote = buffer.current.splice(0, buffer.current.length);
     if(!lote.length) return;
-    try { await llamar("choferSubirPosiciones", { servicioId, posiciones: lote }); setUltimoEnvio(Date.now()); }
+    try {
+      if(NATIVO && HTTP_NATIVO && usuario){
+        /* Misma función del servidor (choferSubirPosiciones), llamada por la vía nativa del celular. */
+        const token = await usuario.getIdToken();
+        const r = await HTTP_NATIVO.post({ url: `https://us-central1-${app.options.projectId}.cloudfunctions.net/choferSubirPosiciones`,
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, data: { data: { dispositivoId: disp.current, servicioId, posiciones: lote } } });
+        if(!(r.status >= 200 && r.status < 300)) throw new Error("envío " + r.status);
+      } else await llamar("choferSubirPosiciones", { servicioId, posiciones: lote });
+      setUltimoEnvio(Date.now()); ultimoEnvioMs.current = Date.now();
+    }
     catch(e){ buffer.current.unshift(...lote.slice(-200)); throw e; }
-  }, [llamar]);
+  }, [llamar, usuario, app]);
   const mandarAhora = useCallback(async (servicioId) => {
     const p = await posicionAhora();
     buffer.current.push(aPunto(p, bateria.current));
     await enviar(servicioId || enRuta?.id);
   }, [enviar, enRuta]);
   const rastrear = !!enRuta || jornadaAbierta, idRastreo = enRuta?.id || "";
+  /* App nativa: GPS en segundo plano (sigue con la pantalla apagada). Solo durante la jornada; se apaga al cerrar el día. */
   useEffect(() => {
-    if(!rastrear || !navigator.geolocation) return;
+    if(!rastrear || !GPS_FONDO) return;
+    let id = null, vivo = true;
+    const intervalo = idRastreo ? ENVIO_MS : 60000;
+    GPS_FONDO.addWatcher({ backgroundTitle: "D Movimiento · ruta en curso", backgroundMessage: "Tu ubicación se registra solo durante tu jornada.", requestPermissions: true, stale: false, distanceFilter: 15 },
+      (l, e) => {
+        if(e){ setErrorGps(e.code === "NOT_AUTHORIZED" ? "Permite la ubicación «Todo el tiempo» en los ajustes del celular para esta app." : "Buscando señal de GPS…"); return; }
+        if(!l) return;
+        setErrorGps(""); buffer.current.push(puntoNativo(l, bateria.current)); if(buffer.current.length > 300) buffer.current.splice(0, 100);
+        /* El envío sale desde aquí: con la pantalla apagada los relojes de la página se detienen, pero el GPS sigue avisando. */
+        if(Date.now() - ultimoEnvioMs.current >= intervalo) enviar(idRastreo).catch(() => {});
+      }).then(x => { if(vivo) id = x; else GPS_FONDO.removeWatcher({ id: x }).catch(() => {}); }).catch(() => setErrorGps("No se pudo encender el GPS de la app."));
+    const t = setInterval(() => enviar(idRastreo).catch(() => {}), intervalo);
+    return () => { vivo = false; clearInterval(t); if(id) GPS_FONDO.removeWatcher({ id }).catch(() => {}); };
+  }, [rastrear, idRastreo, enviar]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if(!rastrear || GPS_FONDO || !navigator.geolocation) return;
     const w = navigator.geolocation.watchPosition(p => { setErrorGps(""); buffer.current.push(aPunto(p, bateria.current)); if(buffer.current.length > 300) buffer.current.splice(0, 100); },
       e => setErrorGps(e.code === 1 ? "Permite la ubicación: toca el candado junto a la dirección → Ubicación → Permitir." : "Buscando señal de GPS…"),
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 });

@@ -1,0 +1,18 @@
+{
+  "appId": "mx.denmovimiento.choferes",
+  "appName": "D Movimiento Choferes",
+  "webDir": "www",
+  "server": {
+    "url": "https://salesflow-crm-13c4a.web.app/chofer",
+    "cleartext": false,
+    "errorPath": "sin-conexion.html"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "useLegacyBridge": true
+  },
+  "ios": {
+    "contentInset": "never",
+    "limitsNavigationsToAppBoundDomains": false
+  }
+}
