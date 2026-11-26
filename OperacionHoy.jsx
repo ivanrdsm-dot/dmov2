@@ -18,9 +18,10 @@ const HistorialRutas = lazy(() => import("./HistorialRutas.jsx"));
 const Desempeno = lazy(() => import("./Desempeno.jsx"));
 const Auditoria = lazy(() => import("./Auditoria.jsx"));
 const TableroVivo = lazy(() => import("./TableroVivo.jsx"));
+const ReporteDia = lazy(() => import("./ReporteDia.jsx"));
 /* Alertas que traen montos ($): solo las ve el director. */
 const ALERTAS_CON_MONTOS = ["gasto_dudoso", "cotizacion_por_aprobar", "resumen_diario"];
-const PESTANAS = ["tablero", "ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno", "auditoria"];
+const PESTANAS = ["tablero", "reporte", "ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno", "auditoria"];
 const Cargando = () => <div style={{ padding: 40, color: MUTED }}>Cargando…</div>;
 
 /* 📲 Acceso del chofer a su app (solo director): crea/renueva su cuenta y abre WhatsApp con su enlace. */
@@ -165,7 +166,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
   const r = resumenOperacion({ choferes: activos, jornadas, servicios: servicios.filter(x => x.choferId), ubicaciones: ubic, alertas, dia, ahoraMs: Date.now() });
   const gastosSemana = gastos.filter(g => Date.now() - ms(g.fechaTs || g.createdAt) < 7 * 86400000);
 
-  const P = [["tablero", "📺 Tablero"], ["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
+  const P = [["tablero", "📺 Tablero"], ...(esAdmin ? [["reporte", "📋 Reporte del día"]] : []), ["ahora", "👀 Ahora"], ["asignar", "🚚 Asignar ruta"], ["rutas", "🗺️ Rutas y paradas"], ["mapa", "📍 Mapa en vivo"], ["asistencia", "🕘 Asistencia"],
     ["alertas", `🚨 Alertas${alertas.length ? " (" + alertas.length + ")" : ""}`], ["choferes", "👤 Choferes"], ...(esAdmin ? [["gastos", "💵 Gastos"]] : []), ["historial", "📚 Historial"],
     ...(esAdmin ? [["desempeno", "🏆 Desempeño"], ["auditoria", "🔎 Auditoría"]] : [])];   // incentivos y auditoría: solo el director
   /* Al ir de una pestaña a otra desde dentro de un módulo (p. ej. Asignar ruta → "En vivo"). */
@@ -204,6 +205,7 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
 
         {pestana === "tablero" && <Suspense fallback={<Cargando/>}><TableroVivo db={db} dia={dia} setDia={setDia} hoy={hoyCDMX()} servicios={servicios} jornadas={jornadas} proximas={proximas}
           alertasAbiertas={alertas.length} onVerAlertas={() => setPestana("alertas")} onVerRutas={() => setPestana("rutas")}/></Suspense>}
+        {pestana === "reporte" && esAdmin && <Suspense fallback={<Cargando/>}><ReporteDia db={db} dia={dia} setDia={setDia} hoy={hoyCDMX()} choferes={choferes} jornadas={jornadas} servicios={servicios} oficina={oficinaAsis}/></Suspense>}
         {pestana === "ahora" && <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
             {[["Trabajando", r.trabajando, GREEN], ["En ruta", r.enRuta, BLUE], ["Faltan (con ruta)", r.faltan, r.faltan ? ROSE : TEXT], ["Sin señal", r.sinSenal, r.sinSenal ? AMBER : TEXT], ["Alertas abiertas", alertas.length, alertas.length ? ROSE : GREEN]].map(([t, v, c]) =>

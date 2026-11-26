@@ -28,6 +28,6 @@ export function avisoDeAlerta(a){
   const quien = String(a.choferNombre || "").trim();
   const texto = String(a.message || a.msg || "").trim() || (quien ? quien : "Revisa el sistema");
   const mapa = Number.isFinite(a.lat) && Number.isFinite(a.lng) ? `https://www.google.com/maps?q=${a.lat},${a.lng}` : "";
-  return { title: titulo + (quien && !texto.includes(quien) ? " · " + quien : ""), body: texto.slice(0, 220), tag: "alerta-" + a.id, url: /^\/\?v=[a-zA-Z]+$/.test(String(a.url || "")) ? a.url : info && mapa ? mapa : "/?v=operacion",
+  return { title: titulo + (quien && !texto.includes(quien) ? " · " + quien : ""), body: texto.slice(0, 220), tag: "alerta-" + a.id, url: /^\/\?v=[a-zA-Z]+(&t=[a-z]+)?$/.test(String(a.url || "")) ? a.url : info && mapa ? mapa : "/?v=operacion",
     soloDirector: soloDirector(a) };
 }

@@ -49,6 +49,7 @@ before(async () => {
   await db.doc("dmov_usuarios/admin1").set({ uid: "admin1", rol: "admin", activo: true, nombre: "Admin Prueba", email: "admin@example.invalid" });
   await db.doc("dmov_usuarios/ilse1").set({ uid: "ilse1", rol: "operaciones", activo: true, nombre: "Ilse Prueba", email: "ilse@example.invalid" });
   await db.doc("choferes/ch1").set({ nombre: "Chofer Prueba", tel: TEL, status: "Disponible" });
+  await db.doc("unidades/ABC1234").set({ placa: "ABC1234", tipo: "VW Transporter", status: "Activa" });   // la camioneta de la prueba existe en Flota
   /* Segundo chofer de la ruta (hasta 2 por ruta) y un tercero ajeno a ella. */
   for(const [id, tel] of [["ch2", "5512340002"], ["ch3", "5512340003"]]){
     const u = await auth.createUser({ email: correoDeChofer(tel), password: "clave-" + id + "-123" });
@@ -129,7 +130,7 @@ test("3 · Ilse asigna la ruta con la hoja (mismo código): lugares, servicio, r
   assert.equal(s.cotizacionFolio, r.cotizacionFolio); assert.equal(s.cotizacionEstado, "Propuesta");
   const cots = (await admin.firestore().collection("cotizaciones_logistica").where("servicioId", "==", id).get()).docs.map(d => d.data());
   assert.equal(cots.length, 1); assert.equal(cots[0].estado, "Propuesta"); assert.equal(cots[0].origen, "ruta_asignada");
-  assert.ok(cots[0].resultado.pendientes.some(t => /ABC1234/.test(t)), "la placa sin Flota queda pendiente: no se inventa precio");
+  assert.equal(cots[0].resultado.precio, null); assert.ok(cots[0].resultado.pendientes.length > 0, "sin tarifario no hay precio: queda pendiente, no se inventa");
   await assert.rejects(getDocs(collection(ilse.db, "cotizaciones_logistica")));                       // Ilse no ve montos
   assert.ok((await admin.firestore().collection("alertas_director").where("servicioId", "==", id).get()).docs.some(d => d.data().type === "cotizacion_por_aprobar"));
   // El segundo chofer ve la ruta y sus paradas; un chofer ajeno no.
@@ -208,7 +209,7 @@ test("5 · empieza su día con 3 fotos; sin check-in no puede salir", async () =
   assert.equal(j.data().estado, "Abierta");
   assert.ok(j.data().fotos.selfie.md5, "huella de la foto");
   assert.ok(j.data().fotos.selfie.subidaEnMs > Date.now() - 5 * MIN, "hora real de subida (la pone Google)");
-  assert.deepEqual(j.data().dudas, []);
+  assert.deepEqual(j.data().dudas, []);                                                           // placa en Flota y odómetro coherente: sin dudas
   // Se registra si llegó tarde (contra las 7:00) y dónde estaba; al director le llega el aviso con la ubicación.
   assert.equal(typeof j.data().llegoTarde, "boolean"); assert.equal(j.data().fueraDeCdmxEntrada, false); assert.equal(j.data().placaRuta, "ABC1234");
   // Los check-ins (con dirección) se guardan en alertas_director: solo el director los ve; Ilse no puede leerlos.
