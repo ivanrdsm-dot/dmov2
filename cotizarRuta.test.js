@@ -93,3 +93,10 @@ describe("misma tabla que el resto del sistema", () => {
     expect(avisoDeAlerta({ id: "y", type: "cotizacion_por_aprobar", informativa: true, url: "https://malo.example" }).url).toBe("/?v=operacion");
   });
 });
+
+describe("aviso del resumen diario", () => {
+  it("al tocarlo abre el Reporte del día; un enlace raro no pasa", () => {
+    expect(avisoDeAlerta({ id: "r", type: "resumen_diario", informativa: true, atendida: true, msg: "Hoy…", url: "/?v=operacion&t=reporte" }).url).toBe("/?v=operacion&t=reporte");
+    expect(avisoDeAlerta({ id: "r", type: "resumen_diario", informativa: true, msg: "Hoy…", url: "/?v=operacion&t=reporte&x=https://malo" }).url).toBe("/?v=operacion");
+  });
+});

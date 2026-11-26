@@ -238,6 +238,15 @@ export const choferCheckIn = onCall(OPC_LUGAR, async req => {
   const placa = txt(d.unidadPlaca, 20).toUpperCase().replace(/[^A-Z0-9]/g, "");
   const placaRuta = rutasHoy.map(x => String(x.data().unidadPlaca || "").toUpperCase().replace(/[^A-Z0-9]/g, "")).find(Boolean) || "";
   const otraUnidad = !!(placa && placaRuta && placa !== placaRuta);
+  /* La placa debe existir en Flota y el odómetro no puede ser menor que la última lectura de esa camioneta. */
+  if(placa){
+    const [u, previas] = await Promise.all([db().doc("unidades/" + placa).get(), db().collection("jornadas").where("unidadPlaca", "==", txt(d.unidadPlaca, 20).toUpperCase()).limit(60).get()]);
+    if(!u.exists) dudas.push(`la placa ${placa} no está en Flota`);
+    const ult = previas.docs.map(x => x.data()).filter(x => x.choferId !== chofer.id || x.fecha !== fecha)
+      .map(x => ({ km: Math.max(Number(x.odometroFinalKm) || 0, Number(x.odometroKm) || 0), quien: x.choferNombre || "", fecha: x.fecha })).sort((a, b) => b.km - a.km)[0];
+    const km = Number(d.odometroKm);
+    if(ult && ult.km > 0 && Number.isFinite(km) && km < ult.km - 5) dudas.push(`odómetro ${km.toLocaleString("es-MX")} km, menor al último de ${placa} (${ult.km.toLocaleString("es-MX")} km, ${ult.quien} ${ult.fecha})`);
+  }
   const creada = await db().runTransaction(async tx => {
     if((await tx.get(ref)).exists) return false;
     tx.set(ref, { choferId: chofer.id, choferNombre: chofer.nombre || "", fecha, estado: "Abierta", checkInEn: ahora(), dispositivoId: chofer.dispositivoId,
@@ -271,6 +280,9 @@ export const choferIniciarRuta = onCall(OPC, async req => {
   await jornadaDeHoy(chofer);
   if(servicio.estado === "En ruta") return { ok: true, estado: "En ruta" };
   if(servicio.estado !== "Asignada") throw falla("failed-precondition", `El servicio está en "${servicio.estado}" y no se puede iniciar`);
+  /* Una ruta de otro día no se inicia antes: si se adelantó, la oficina le cambia la fecha (queda el rastro). */
+  if(servicio.fechaServicio && servicio.fechaServicio > fechaCDMX())
+    throw falla("failed-precondition", `Esta ruta es para el ${servicio.fechaServicio}. Si se adelantó, pide a la oficina que le cambie la fecha.`);
   await db().runTransaction(async tx => {
     tx.update(ref, { estado: "En ruta", "estadoTs.En ruta": ahora(), actualizadoEn: ahora() });
     eventoServicio(tx, servicio.id, { tipo: "estado", de: "Asignada", a: "En ruta", ...actorChofer(chofer) });

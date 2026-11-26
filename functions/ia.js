@@ -84,16 +84,21 @@ const hora = v => ms(v) ? new Date(ms(v)).toLocaleTimeString("es-MX", { timeZone
 /** Junta los números del día (calculados aquí, no por la IA). */
 export async function datosDelDia(fecha){
   const ini = Date.parse(fecha + "T00:00:00-06:00"), fin = ini + 86400000;
-  const [jor, srv, gas, ale1, ale2] = await Promise.all([
+  const [jor, srvDia, srvEnRuta, gas, ale1, ale2] = await Promise.all([
     db().collection("jornadas").where("fecha", "==", fecha).get(),
     db().collection("servicios").where("fechaServicio", "==", fecha).limit(200).get(),
+    db().collection("servicios").where("estado", "==", "En ruta").limit(200).get(),
     db().collection("gastosChofer").where("fechaTs", ">=", Timestamp.fromMillis(ini)).where("fechaTs", "<", Timestamp.fromMillis(fin)).limit(500).get(),
     db().collection("alertas").where("ts", ">=", Timestamp.fromMillis(ini)).where("ts", "<", Timestamp.fromMillis(fin)).limit(500).get(),
     db().collection("alertas_director").where("ts", ">=", Timestamp.fromMillis(ini)).where("ts", "<", Timestamp.fromMillis(fin)).limit(500).get()]);
   const choferes = jor.docs.map(d => { const j = d.data(); return { chofer: j.choferNombre, entrada: hora(j.checkInEn), llegoTarde: j.llegoTarde === true, minutosTarde: j.tardeMin || 0,
     lugarEntrada: j.lugarEntrada || "", salida: hora(j.checkOutEn) || "no ha cerrado", kmTablero: j.kmRecorridos ?? null, kmGps: j.kmGps ?? null, camioneta: j.unidadPlaca || "",
     dudasCheckIn: j.dudas || [], fueraDeCdmx: j.fueraDeCdmxEntrada === true }; });
-  const rutas = srv.docs.map(d => d.data()).filter(s => s.choferId && !s.historico).map(s => ({ folio: s.folio, chofer: s.choferNombre, cliente: s.empresa, estado: s.estado,
+  /* Rutas del día y las que se iniciaron ese día aunque su fecha sea otra (una ruta adelantada también cuenta). */
+  const salioHoy = s => { const t = s.estadoTs?.["En ruta"]?.toMillis?.(); return t >= ini && t < fin; };
+  const srv = [...new Map([...srvDia.docs, ...srvEnRuta.docs.filter(d => salioHoy(d.data()))].map(d => [d.id, d])).values()];
+  const rutas = srv.map(d => d.data()).filter(s => s.choferId && !s.historico).map(s => ({ folio: s.folio, chofer: s.choferNombre, cliente: s.empresa, estado: s.estado,
+    ...(s.fechaServicio !== fecha ? { programadaPara: s.fechaServicio, iniciadaFueraDeFecha: true } : {}),
     paradasEntregadas: s.paradasEntregadas ?? null, paradasConProblema: s.paradasConProblema ?? null, foranea: s.foraneo === true,
     ...(s.estado === "Cancelada" ? { motivoCancelacion: s.motivoCancelacion || "sin motivo registrado" } : {}) }));
   const gastos = gas.docs.map(d => d.data()).map(g => ({ chofer: g.choferNombre, tipo: g.tipo, monto: g.monto, litros: g.litros ?? null, precioLitro: g.precioLitro ?? null,
@@ -135,7 +140,7 @@ export const resumenDiarioIA = onSchedule({ ...BASE, schedule: "0 21 * * *", tim
   const r = await generarResumen(fechaCDMX());
   if(r.vacio || !r.texto) return;
   await db().collection("alertas_director").add({ type: "resumen_diario", titulo: "Resumen del día", informativa: true, atendida: true, ts: FieldValue.serverTimestamp(),
-    msg: r.texto.replace(/\s+/g, " ").slice(0, 220) });
+    msg: r.texto.replace(/\s+/g, " ").slice(0, 220), url: "/?v=operacion&t=reporte" });   // al tocarlo abre el Reporte del día
 });
 
 /** Botón del director: genera el resumen de un día cuando quiera. */
