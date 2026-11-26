@@ -305,6 +305,7 @@ function Entrar({ auth, telInicial = "", aviso = "" }){
             <button onClick={entrar} disabled={ocupado} className="dm-btn dm-naranja" style={{ marginTop: 18 }}>{ocupado ? "Entrando…" : "Entrar"}</button>
           </div>
           <p style={{ color: "rgba(255,255,255,.7)", fontSize: 14, textAlign: "center", marginTop: 8 }}>¿No tienes contraseña? Pídele a la oficina tu enlace por WhatsApp.</p>
+          {NATIVO && <a href="/" style={{ display: "block", color: "#fff", fontWeight: 800, fontSize: 15, textAlign: "center", marginTop: 14 }}>🏢 Soy de la oficina</a>}
         </div>
       </div>
     </div>
@@ -901,6 +902,8 @@ export default function ChoferWeb({ db, auth, app }){
   /* Enlace de activación: funciona aunque en este navegador haya otra sesión abierta (p. ej. la de oficina). */
   if(tokenActivar() && (!usuario || !esCuentaChofer)) return <Activar auth={auth} app={app} token={tokenActivar()}/>;
   if(!usuario) return <Entrar auth={auth}/>;
+  /* En la app nativa, una sesión de oficina (Ilse) se va al sistema de oficina. */
+  if(!esCuentaChofer && NATIVO){ window.location.replace("/"); return <Cargando texto="Abriendo el sistema…"/>; }
   if(!esCuentaChofer) return (
     <div className="dm"><Estilos/><div className="dm-cuerpo" style={{ paddingTop: 60 }}>
       <div className="dm-card"><h2 className="dm-titulo">Estás con la cuenta de oficina</h2>

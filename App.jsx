@@ -8,8 +8,9 @@ import {
 } from "firebase/firestore";
 import {
   getAuth, signInWithPopup, GoogleAuthProvider, signOut as fbSignOut,
-  onAuthStateChanged, signInAnonymously,
+  onAuthStateChanged, signInAnonymously, signInWithEmailAndPassword,
 } from "firebase/auth";
+import { NATIVO } from "./nativo.js";
 import {
   Truck, Package, FileText, LayoutDashboard, DollarSign, Plus,
   Search, X, Check, Minus, MapPin, Clock, CheckCircle, Send,
@@ -14465,7 +14466,39 @@ class ErrorBoundary extends Component{
 }
 
 /* ── Pantalla de login para oficina ── */
+/* Dentro de la app nativa Google no deja iniciar sesión (lo bloquea por seguridad en apps):
+   la oficina entra con su correo y la contraseña que creó en "📱 Activar la app en mi celular". */
+function LoginApp(){
+  const [correo,setCorreo]=useState(""),[clave,setClave]=useState(""),[ver,setVer]=useState(false),[err,setErr]=useState(""),[cargando,setCargando]=useState(false);
+  const entrar=async()=>{
+    if(!correo.trim()||!clave){setErr("Escribe tu correo y tu contraseña.");return;}
+    setCargando(true);setErr("");
+    try{await signInWithEmailAndPassword(auth,correo.trim(),clave);}
+    catch(e){setErr(/invalid-credential|wrong-password|user-not-found|invalid-login/.test(e.code||"")?"Correo o contraseña incorrectos. Si es tu primera vez, crea tu contraseña desde Chrome: Operación → 📱 Activar la app en mi celular.":/too-many/.test(e.code||"")?"Demasiados intentos. Espera unos minutos.":"No se pudo entrar. Revisa tu señal.");setCargando(false);}
+  };
+  const caja={width:"100%",border:"2px solid #d6deea",borderRadius:14,padding:"14px 14px",fontSize:17,fontFamily:"inherit",boxSizing:"border-box",marginBottom:12};
+  return(
+    <div style={{minHeight:"100dvh",background:"#042552",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#fff",borderRadius:24,padding:"30px 22px",maxWidth:400,width:"100%"}}>
+        <div style={{fontWeight:800,fontSize:12,letterSpacing:".12em",textTransform:"uppercase",color:"#F27B13"}}>D Movimiento · Oficina</div>
+        <div style={{fontWeight:900,fontSize:26,color:"#042552",margin:"4px 0 16px"}}>Entra al sistema</div>
+        <input type="email" inputMode="email" autoComplete="username" value={correo} onChange={e=>setCorreo(e.target.value)} placeholder="Tu correo" style={caja}/>
+        <div style={{position:"relative"}}>
+          <input type={ver?"text":"password"} autoComplete="current-password" value={clave} onChange={e=>setClave(e.target.value)} onKeyDown={e=>e.key==="Enter"&&entrar()} placeholder="Tu contraseña de la app" style={caja}/>
+          <button type="button" onClick={()=>setVer(v=>!v)} style={{position:"absolute",right:10,top:12,border:0,background:"none",color:"#56637a",fontWeight:700}}>{ver?"Ocultar":"Ver"}</button>
+        </div>
+        {err&&<div style={{color:"#b91c1c",fontWeight:700,fontSize:14,marginBottom:10}}>{err}</div>}
+        <button onClick={entrar} disabled={cargando} style={{width:"100%",border:0,borderRadius:16,padding:"16px 0",fontSize:18,fontWeight:900,color:"#fff",background:"#F27B13"}}>{cargando?"Entrando…":"Entrar"}</button>
+        <a href="/chofer" style={{display:"block",textAlign:"center",marginTop:18,color:"#042552",fontWeight:800,fontSize:15}}>🚚 Soy chofer</a>
+      </div>
+    </div>);
+}
+
 function LoginScreen(){
+  if(NATIVO) return <LoginApp/>;
+  return <LoginScreenWeb/>;
+}
+function LoginScreenWeb(){
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState("");
   const login=async()=>{
@@ -15018,6 +15051,8 @@ export default function App(){
   const [pinPending,setPinPending]=useState(null);
   useEffect(()=>{
     if(!authUser||authUser.isAnonymous||userProfile) return;
+    /* Una cuenta de chofer nunca crea perfil de oficina: se va a su app. */
+    if(/@choferes\.denmovimiento\.mx$/i.test(authUser.email||"")){ if(!window.location.pathname.startsWith("/chofer")) window.location.replace("/chofer"); return; }
     let cancel=false;
     (async()=>{
       try{
@@ -15139,6 +15174,7 @@ export default function App(){
   if(!authUser||authUser.isAnonymous){
     return <><style>{CSS}</style><LoginScreen/></>;
   }
+  if(/@choferes\.denmovimiento\.mx$/i.test(authUser.email||"")) return <><style>{CSS}</style><VerificandoPerfil/></>;   // se está yendo a /chofer
   // Cuenta nueva sin aprobar
   if(pendingProfile&&!userProfile){
     return <><style>{CSS}</style>
