@@ -32,12 +32,13 @@ export const vigilante = onSchedule({ schedule: "every 5 minutes", timeZone: "Am
   ]);
   /* Choferes: quién va en ruta, quién tiene ruta hoy, sus jornadas y su última ubicación. */
   const hoy = fechaCDMX(ahora);
-  const [enRutaQ, hoyQ, ubiQ, jorAbQ, jorHoyQ] = await Promise.all([
+  const [enRutaQ, hoyQ, ubiQ, jorAbQ, jorHoyQ, sinRutaQ] = await Promise.all([
     db.collection("servicios").where("estado", "==", "En ruta").limit(200).get(),
     db.collection("servicios").where("fechaServicio", "==", hoy).limit(300).get(),
     db.collection("ubicaciones").limit(500).get(),
     db.collection("jornadas").where("estado", "==", "Abierta").limit(300).get(),
     db.collection("jornadas").where("fecha", "==", hoy).limit(300).get(),
+    db.collection("dia_sin_ruta").where("fecha", "==", hoy).limit(300).get(),
   ]);
   const enRuta = await Promise.all(enRutaQ.docs.map(async d => {
     const x = d.data(), ps = (await d.ref.collection("paradas").get()).docs.map(p => p.data()).filter(p => p.estado === "Pendiente");
@@ -48,7 +49,8 @@ export const vigilante = onSchedule({ schedule: "every 5 minutes", timeZone: "Am
   const jornadas = [...new Map([...jorAbQ.docs, ...jorHoyQ.docs].map(d => [d.id, { id: d.id, ...d.data(), checkInMs: ms(d.data().checkInEn) }])).values()];
   const conRutaHoy = hoyQ.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => ["Asignada", "En ruta"].includes(x.estado) && !x.historico)
     .flatMap(x => x.segundoChoferId ? [x, { ...x, choferId: x.segundoChoferId, choferNombre: x.segundoChoferNombre || "" }] : [x]);   // hasta 2 choferes por ruta
-  const deChoferes = alertasChoferes({ ubicaciones, enRuta, conRutaHoy, jornadas }, ahora);
+  const sinRuta = sinRutaQ.docs.map(d => ({ ...d.data(), enMs: ms(d.data().en) }));
+  const deChoferes = alertasChoferes({ ubicaciones, enRuta, conRutaHoy, jornadas, sinRuta }, ahora);
   const conectores = {};
   for(const [k, v] of Object.entries(con.exists ? con.data() : {})) conectores[k] = { ...v, ultimoLatido: ms(v?.ultimoLatido) };
   const esperadas = alertasEsperadas({

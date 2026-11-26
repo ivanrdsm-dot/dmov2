@@ -65,6 +65,11 @@ service cloud.firestore {
     /* Autorizaciones del aviso de privacidad: cada quien consulta la suya (por el nombre del documento); el director ve todas.
        Solo el servidor escribe (aceptarAvisoPrivacidad); nada se borra. */
     /* Asistencia de la oficina: cada quien consulta la suya (por el nombre del documento); el director todas. Solo escribe el servidor. */
+    /* Plan del día: por qué un chofer no sale a ruta hoy. Lo escribe el servidor (oficinaDiaSinRuta); la oficina lo lee. */
+    match /dia_sin_ruta/{id} {
+      allow read: if esOficina();
+      allow write: if false;
+    }
     match /asistencia_oficina/{id} {
       allow get: if esOficina() && id.matches(request.auth.uid + '_.*');
       allow read: if esAdmin();
@@ -453,7 +458,7 @@ service cloud.firestore {
 
     /* ── Default seguro: lo no listado, solo admin ── */
     match /{top}/{document=**} {
-      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','avisos_oficina','activaciones','resumenes_ia','servicios_precios','alertas_director','consentimientos','asistencia_oficina','tarifario','cotizaciones_logistica',
+      allow read, write: if esAdmin() && !(top in ['cfdi_archivo','cfdi_hashes','dmov_usuarios','facturas','servicios','contadores','solicitudes','sistema','puntos_entrega','proveedores','choferes_auth','ubicaciones','avisos_oficina','activaciones','resumenes_ia','servicios_precios','alertas_director','consentimientos','asistencia_oficina','dia_sin_ruta','tarifario','cotizaciones_logistica',
         // Con papelera: el borrado lo controla su propia regla (copia obligatoria); la papelera no se edita.
         'papelera','rutas','choferes','pagosProveedores','presupuestos','cuentas','viaticos','prospeccion','proyectos','plantillasCotizador','unidades','entregas','pagosAdjuntos',
         // Estas no se borran nunca (ni admin): son historia de la operación.

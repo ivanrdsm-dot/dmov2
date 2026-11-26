@@ -35,7 +35,13 @@ export const TIPOS_ALERTA_CHOFER = {
   fuera_de_cdmx: "Chofer fuera de CDMX sin ruta que lo explique",
   km_no_coinciden: "Los kilómetros del tablero no coinciden con el GPS",
   unidad_no_coincide: "El chofer usa otra camioneta",
+  chofer_sin_ruta: "Chofer trabajando sin ruta",
 };
+/* Por qué un chofer no sale a ruta hoy (lo registra la oficina en el plan del día). "Espera pedido" vale 2 horas. */
+export const MOTIVOS_SIN_RUTA = { espera_pedido: "Espera pedido (se asigna más tarde)", taller: "Taller o mantenimiento", descanso: "Descanso o permiso", bodega: "Apoyo en bodega u oficina", otro: "Otro" };
+export const ESPERA_PEDIDO_MIN = 120;
+/** ¿El motivo registrado sigue cubriendo al chofer? */
+export const justificacionVigente = (j, ahoraMs) => !!j && (j.motivo !== "espera_pedido" || ahoraMs - Number(j.enMs || 0) < ESPERA_PEDIDO_MIN * 60000);
 /* Título legible de CUALQUIER alerta (nunca se muestra el código interno ni sale en blanco). */
 export const TITULO_ALERTA = {
   ...TIPOS_ALERTA_CHOFER,
@@ -97,7 +103,7 @@ const fechaCDMX = ms => new Date(ms - 6 * 3600000).toISOString().slice(0, 10);
  * conRutaHoy: servicios de hoy ya asignados [{ id, folio, choferId, choferNombre, fechaServicio, estado }]
  * jornadas: [{ id, choferId, choferNombre, fecha, estado, checkInMs }]
  */
-export function alertasChoferes({ ubicaciones = {}, enRuta = [], conRutaHoy = [], jornadas = [] }, ahoraMs, U = UMBRALES_CHOFER){
+export function alertasChoferes({ ubicaciones = {}, enRuta = [], conRutaHoy = [], jornadas = [], sinRuta = [] }, ahoraMs, U = UMBRALES_CHOFER){
   const out = [];
   const add = (id, type, s, message, extra = {}) => out.push({ id, type, folio: s?.folio || "", choferId: s?.choferId || extra.choferId || "", choferNombre: s?.choferNombre || extra.choferNombre || "",
     servicioId: s?.id || "", message, ref: s?.id ? { coleccion: "servicios", id: s.id } : { coleccion: "choferes", id: s?.choferId || extra.choferId || "" }, ...extra });
@@ -166,6 +172,17 @@ export function alertasChoferes({ ubicaciones = {}, enRuta = [], conRutaHoy = []
     const min = Math.floor((ahoraMs - ult) / 60000);
     if(min > U.sinUbicacionJornadaMin && (ahoraMs - j.checkInMs) / 3600000 < U.jornadaMaxHoras)
       add(`chf-sinubi-j-${j.id}`, "sin_ubicacion", { choferId: j.choferId, choferNombre: j.choferNombre }, `${j.choferNombre || "Un chofer"} está en jornada y su celular no manda ubicación desde hace ${dur(min)}. Debe tener la app abierta.`, { choferId: j.choferId });
+  }
+  /* Trabajando sin ruta: 20 min después de su check-in no tiene ruta de hoy ni motivo registrado (o su "espera pedido" ya venció).
+     Le llega a operaciones para que la registre. */
+  const conRutaHoyIds = new Set(conRutaHoy.filter(s => s.fechaServicio === hoy || s.estado === "En ruta").map(s => s.choferId));
+  for(const j of jornadas){
+    if(j.estado !== "Abierta" || j.fecha !== hoy || !(Number(j.checkInMs) > 0) || choferesEnRuta.has(j.choferId) || conRutaHoyIds.has(j.choferId)) continue;
+    if(ahoraMs - j.checkInMs < 20 * 60000) continue;
+    const just = sinRuta.find(x => x.choferId === j.choferId && x.fecha === hoy);
+    if(justificacionVigente(just, ahoraMs)) continue;
+    add(`chf-sinruta-${j.choferId}-${hoy}`, "chofer_sin_ruta", { choferId: j.choferId, choferNombre: j.choferNombre },
+      `${j.choferNombre || "Un chofer"} hizo check-in hace ${dur(Math.floor((ahoraMs - j.checkInMs) / 60000))} y no tiene ruta hoy${just ? " (su \"espera pedido\" ya venció)" : ""}. Asígnale su ruta o registra por qué no sale.`, { choferId: j.choferId });
   }
   /* Salida: local a las 17:30 sin check-out y sin ruta en curso (si sigue en ruta, su horario se extiende).
      Cualquier jornada de más de 16 h también avisa. */

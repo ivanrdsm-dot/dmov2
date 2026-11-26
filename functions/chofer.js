@@ -11,7 +11,7 @@ import { evaluarCierreParada, validarCheckIn, TIPOS_INCIDENCIA, resumenCambio, e
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { ordenarParadas, clasificarRuta, fechaMasDias } from "./lib/rutas.js";
 import { fusionarClaims } from "./permisos.js";
-import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER, TITULO_ALERTA } from "./lib/vigilancia.js";
+import { actualizarQuieto, actualizarFueraDeRuta, lineaDeParadas, alertasChoferes, UMBRALES_CHOFER, TIPOS_ALERTA_CHOFER, TITULO_ALERTA, MOTIVOS_SIN_RUTA } from "./lib/vigilancia.js";
 import { fueraDeCdmx, rutaCoherente, llegada, dudaKilometros, kmDePuntos, horaCDMX, kmDesdeZocalo, llegadaPorGps } from "./lib/jornadaReglas.js";
 import { defineSecret } from "firebase-functions/params";
 import { TIPOS_GASTO, revisarCarga, rendimientoHistorico } from "./lib/gasolina.js";
@@ -626,6 +626,22 @@ export const oficinaCheckOut = onCall(OPC_LUGAR, async req => {
   if(!r.yaEstaba) await alerta({ type: "checkout_oficina", informativa: true, atendida: true, oficinaUid: of.uid, choferNombre: of.nombre,
     msg: `${of.nombre} (oficina) · ${horaCDMX(Date.now())} · ${r.horas} h · ${textoLugar(lugar, pos)}`, lat: pos.lat, lng: pos.lng });
   return { ok: true, ...r };
+});
+
+/** Plan del día: la oficina registra por qué un chofer NO sale a ruta hoy (con su motivo). Queda el rastro de cada cambio.
+ *  "Espera pedido" cubre 2 horas; después vuelve a avisar si sigue sin ruta. */
+export const oficinaDiaSinRuta = onCall(OPC, async req => {
+  const of = await oficinaDe(req);
+  const choferId = txt(req.data?.choferId, 80), motivo = txt(req.data?.motivo, 30), nota = txt(req.data?.nota, 300);
+  if(!/^[A-Za-z0-9_-]{1,80}$/.test(choferId)) throw falla("invalid-argument", "Chofer no válido");
+  if(!MOTIVOS_SIN_RUTA[motivo]) throw falla("invalid-argument", "Elige un motivo");
+  if(motivo === "otro" && !nota) throw falla("invalid-argument", "Escribe el motivo");
+  const c = await db().doc("choferes/" + choferId).get();
+  if(!c.exists || c.data().baja || c.data().activo === false) throw falla("not-found", "Chofer no encontrado");
+  const fecha = fechaCDMX(), ref = db().doc(`dia_sin_ruta/${choferId}_${fecha}`);
+  const registro = { motivo, motivoTexto: MOTIVOS_SIN_RUTA[motivo], nota, porUid: of.uid, porNombre: of.nombre, enMs: Date.now() };
+  await ref.set({ choferId, choferNombre: c.data().nombre || "", fecha, ...registro, en: ahora(), historial: FieldValue.arrayUnion(registro) }, { merge: true });
+  return { ok: true };
 });
 
 /** "Llegué": guarda la hora (del servidor) en que el chofer dice que llegó. Respaldo de la llegada por GPS. */
