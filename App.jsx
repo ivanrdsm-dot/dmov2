@@ -1209,7 +1209,7 @@ ${q.stops.map((s,i)=>`<div style="display:flex;align-items:center;gap:8px;margin
 <div class="tot"><div class="tot-lbl">TOTAL CON IVA</div><div class="tot-amt">${fmt(q.total||0)}</div></div>
 ${q.notas?`<div class="note"><strong>Notas:</strong> ${q.notas}</div>`:""}
 <div class="note"><strong>Condiciones:</strong> Propuesta válida 15 días. Incluye combustible, casetas y seguro básico. Sujeto a disponibilidad de unidades.</div>
-<div class="footer"><div>DMvimiento Logística · México 2026</div><div>Generado ${new Date().toLocaleString("es-MX")}</div></div>
+<div class="footer"><div>D Movimiento · México 2026</div><div>Generado ${new Date().toLocaleString("es-MX")}</div></div>
 </body></html>`;
   const w=window.open("","_blank","width=900,height=700");
   if(w){w.document.write(html);w.document.close();setTimeout(()=>w.print(),600);}
@@ -1266,7 +1266,7 @@ tbody td{padding:10px 14px;border-bottom:1px solid #e8eef6;font-size:13px}
   <div class="trow"><span>IVA 16%</span><span style="font-family:monospace">$${iva.toLocaleString("es-MX")}</span></div>
   <div class="trow grand"><span>TOTAL</span><span style="font-family:monospace">$${tot.toLocaleString("es-MX")}</span></div>
 </div>
-<div class="footer"><div>DMvimiento Logistics OS</div><div>Generado el ${new Date().toLocaleDateString("es-MX",{year:"numeric",month:"long",day:"numeric"})}</div></div>
+<div class="footer"><div>D Movimiento</div><div>Generado el ${new Date().toLocaleDateString("es-MX",{year:"numeric",month:"long",day:"numeric"})}</div></div>
 </body></html>`;
   const win=window.open("","_blank","width=820,height=900");
   if(win){win.document.write(html);win.document.close();setTimeout(()=>win.print(),500);}
@@ -1320,7 +1320,7 @@ function pdfFooter(pdf){
   pdf.setFont("helvetica","normal");
   pdf.setFontSize(8);
   pdf.setTextColor(157,176,196);
-  pdf.text("DMvimiento Logistics OS",14,h-8);
+  pdf.text("D Movimiento",14,h-8);
   pdf.text("Generado "+new Date().toLocaleString("es-MX"),196,h-8,{align:"right"});
 }
 function pdfLabelValue(pdf,x,y,label,value){
@@ -1769,7 +1769,7 @@ function buildResumenPLSheet(facts, viat, brand, year){
   merges.push({s:{r,c:0},e:{r,c:7}});
   rowHeights[r]=22; r++;
   // Subtítulo
-  setCell(ws,"A"+(r+1),"  Ingresos facturados (sin IVA) vs Costos operativos reales  |  Fuente: Facturación + Viáticos DMvimiento",styleSubtitle);
+  setCell(ws,"A"+(r+1),"  Ingresos facturados (sin IVA) vs Costos operativos reales  |  Fuente: Facturación + Viáticos D Movimiento",styleSubtitle);
   merges.push({s:{r,c:0},e:{r,c:7}});
   rowHeights[r]=14; r++;
   // Headers
@@ -3291,7 +3291,7 @@ function Sidebar({view,setView,stats,open,setOpen,userProfile,rol,onLogout,onBus
     <aside className={"noprint sidebar-desktop"+(open?" open":"")} style={{width:w,flexShrink:0,background:"#0a1628",display:"flex",flexDirection:"column",minHeight:"100vh",padding:"0 "+(showFull?"10px":"6px")+" 16px",transition:"width .22s cubic-bezier(.22,1,.36,1),padding .22s",overflow:"hidden",paddingTop:"env(safe-area-inset-top,0)"}}>
       <div style={{padding:showFull?"20px 6px 14px":"20px 0 14px",borderBottom:"1px solid #ffffff14",marginBottom:6,display:"flex",alignItems:"center",gap:10,justifyContent:showFull?"flex-start":"center"}}>
         <div style={{width:36,height:36,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:15,color:"#fff",flexShrink:0}}>DM</div>
-        {showFull&&<div style={{flex:1,minWidth:0}}><div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:"#fff",letterSpacing:"-0.02em",whiteSpace:"nowrap"}}>DMvimiento</div><div style={{fontSize:9,color:"#ffffff60",fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",whiteSpace:"nowrap"}}>LOGISTICS OS v2.2</div></div>}
+        {showFull&&<div style={{flex:1,minWidth:0}}><div style={{fontFamily:DISP,fontWeight:800,fontSize:14,color:"#fff",letterSpacing:"-0.02em",whiteSpace:"nowrap"}}>D Movimiento</div><div style={{fontSize:9,color:"#ffffff60",fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase",whiteSpace:"nowrap"}}>LOGISTICS OS v2.2</div></div>}
         {showFull&&isMobile&&<button onClick={()=>setOpen(false)} className="btn" style={{width:32,height:32,borderRadius:8,background:"rgba(255,255,255,.08)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X size={16}/></button>}
       </div>
       {showFull&&<button onClick={()=>onBuscar?onBuscar():(!isMobile&&setOpen(false))} className="btn" style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,border:"1px solid #ffffff14",marginBottom:10,color:"#ffffff60",fontSize:11,whiteSpace:"nowrap"}}><Search size={12}/><span style={{flex:1,textAlign:"left"}}>Buscar… ⌘K</span></button>}
@@ -5844,7 +5844,7 @@ function PlanificadorRutas(){
       if(clienteTel&&clienteTel.replace(/\D/g,"").length===10){
         setTimeout(()=>{
           const url = `${window.location.origin}/track/${trackingId}`;
-          const msg = `Hola ${cliente||""}! Tu ruta "${nombre}" de DMvimiento ha sido programada. Puedes seguirla en tiempo real aquí: ${url}`;
+          const msg = `Hola ${cliente||""}! Tu ruta "${nombre}" de D Movimiento ha sido programada. Puedes seguirla en tiempo real aquí: ${url}`;
           const waUrl = `https://wa.me/52${clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
           if(confirm("¿Enviar link de tracking al cliente por WhatsApp?\n\nSe abrirá WhatsApp con el mensaje pre-llenado.")){
             window.open(waUrl,"_blank");
@@ -6398,7 +6398,7 @@ function PlanificadorRutas(){
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
             <input readOnly value={`${window.location.origin}/track/${viewR.trackingId}`} onClick={e=>e.target.select()} style={{flex:1,fontFamily:MONO,fontSize:11,padding:"7px 10px",border:"1px solid "+BD2,borderRadius:7,background:"#fff"}}/>
             <button onClick={()=>{navigator.clipboard.writeText(`${window.location.origin}/track/${viewR.trackingId}`);alert("Link copiado ✓");}} className="btn" style={{background:VIOLET,color:"#fff",borderRadius:7,padding:"7px 12px",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:5}}><Hash size={11}/>Copiar</button>
-            {viewR.clienteTel&&<a href={`https://wa.me/52${viewR.clienteTel}?text=${encodeURIComponent(`Hola ${viewR.cliente||""}! Aquí el tracking de tu ruta "${viewR.nombre}" de DMvimiento: ${window.location.origin}/track/${viewR.trackingId}`)}`} target="_blank" rel="noopener noreferrer" className="btn" style={{background:GREEN,color:"#fff",borderRadius:7,padding:"7px 12px",fontSize:11,fontWeight:700,textDecoration:"none",display:"flex",alignItems:"center",gap:5}}>WhatsApp</a>}
+            {viewR.clienteTel&&<a href={`https://wa.me/52${viewR.clienteTel}?text=${encodeURIComponent(`Hola ${viewR.cliente||""}! Aquí el tracking de tu ruta "${viewR.nombre}" de D Movimiento: ${window.location.origin}/track/${viewR.trackingId}`)}`} target="_blank" rel="noopener noreferrer" className="btn" style={{background:GREEN,color:"#fff",borderRadius:7,padding:"7px 12px",fontSize:11,fontWeight:700,textDecoration:"none",display:"flex",alignItems:"center",gap:5}}>WhatsApp</a>}
           </div>
         </div>}
         {/* Override precio manual */}
@@ -7425,7 +7425,7 @@ function Facturas({rol="admin"}){
         const recordarPago = (f)=>{
           const tel = f.telCliente||"";
           const email = f.emailCliente||"";
-          const msg = `Recordatorio de pago · DMvimiento\n\nFactura ${f.folio||""} · ${fmt(f.total||0)}\nVencida hace ${f.diasVencido} días\n\nAgradecemos tu atención para regularizar el pago.`;
+          const msg = `Recordatorio de pago · D Movimiento\n\nFactura ${f.folio||""} · ${fmt(f.total||0)}\nVencida hace ${f.diasVencido} días\n\nAgradecemos tu atención para regularizar el pago.`;
           if(tel) window.open(`https://wa.me/52${tel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`,"_blank");
           else if(email) window.location.href=`mailto:${email}?subject=${encodeURIComponent("Recordatorio de pago - "+(f.folio||""))}&body=${encodeURIComponent(msg)}`;
           else alert("Agrega teléfono o email del cliente en la factura para enviar recordatorio");
@@ -7560,8 +7560,8 @@ function Facturas({rol="admin"}){
                       downloadFacturaPDF(f); // primero descarga el PDF
                       const emailCliente = prompt("Email del cliente para enviar la factura:",f.emailCliente||"");
                       if(!emailCliente) return;
-                      const subject = `Factura ${f.folio||""} - DMvimiento`;
-                      const body = `Hola,\n\nAdjunto la factura ${f.folio||""} por el servicio: ${f.servicio||""}\n\nTotal: ${fmt(f.total||0)}\n\nSaludos,\nDMvimiento Logística`;
+                      const subject = `Factura ${f.folio||""} - D Movimiento`;
+                      const body = `Hola,\n\nAdjunto la factura ${f.folio||""} por el servicio: ${f.servicio||""}\n\nTotal: ${fmt(f.total||0)}\n\nSaludos,\nD Movimiento`;
                       const mailto = `mailto:${emailCliente}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                       window.location.href = mailto;
                     }} className="btn" title="Enviar por email (PDF se descarga para adjuntar)" style={{color:VIOLET,padding:"4px 6px",border:"1px solid "+VIOLET+"20",borderRadius:6,display:"flex",alignItems:"center",fontSize:11,fontWeight:600}}>
@@ -11741,7 +11741,7 @@ function ChoferLogin({onLogin,toast,setToast}){
       <form onSubmit={handle} className="pi" style={{width:"100%",maxWidth:380,background:"#fff",borderRadius:24,padding:32,boxShadow:"0 32px 80px rgba(0,0,0,.4)"}}>
         <div style={{textAlign:"center",marginBottom:28}}>
           <div style={{width:64,height:64,borderRadius:18,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"inline-flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:22,color:"#fff",margin:"0 auto 14px"}}>DM</div>
-          <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:26,color:TEXT,letterSpacing:"-0.02em"}}>DMvimiento</h1>
+          <h1 style={{fontFamily:DISP,fontWeight:900,fontSize:26,color:TEXT,letterSpacing:"-0.02em"}}>D Movimiento</h1>
           <div style={{fontSize:11,color:MUTED,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",marginTop:3}}>App Chofer</div>
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -11860,25 +11860,25 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
     let msg = "";
     switch(evento){
       case "setout":
-        msg = `🚚 DMvimiento — ${nombreChofer} salió hacia el punto de carga (${primerPunto}). Sigue en tiempo real: ${trackUrl}`;
+        msg = `🚚 D Movimiento — ${nombreChofer} salió hacia el punto de carga (${primerPunto}). Sigue en tiempo real: ${trackUrl}`;
         break;
       case "pickup-arrived":
-        msg = `📍 DMvimiento — ${nombreChofer} llegó a ${primerPunto} y está preparando la carga. Sigue: ${trackUrl}`;
+        msg = `📍 D Movimiento — ${nombreChofer} llegó a ${primerPunto} y está preparando la carga. Sigue: ${trackUrl}`;
         break;
       case "loaded":
-        msg = `📦✅ DMvimiento — Material cargado. En camino a ${extra.nextCity||"el siguiente destino"}. ${trackUrl}`;
+        msg = `📦✅ D Movimiento — Material cargado. En camino a ${extra.nextCity||"el siguiente destino"}. ${trackUrl}`;
         break;
       case "stop-arrived":
-        msg = `📬 DMvimiento — ${nombreChofer} llegó a ${extra.city||"la parada"} ${extra.stopIdx?"(parada "+extra.stopIdx+")":""}. Tracking: ${trackUrl}`;
+        msg = `📬 D Movimiento — ${nombreChofer} llegó a ${extra.city||"la parada"} ${extra.stopIdx?"(parada "+extra.stopIdx+")":""}. Tracking: ${trackUrl}`;
         break;
       case "stop-delivered":
-        msg = `✅ DMvimiento — Entrega confirmada en ${extra.city||"la parada"}${extra.notas?" · "+extra.notas:""}${extra.fotoURL?" · 📸 con evidencia":""}. ${trackUrl}`;
+        msg = `✅ D Movimiento — Entrega confirmada en ${extra.city||"la parada"}${extra.notas?" · "+extra.notas:""}${extra.fotoURL?" · 📸 con evidencia":""}. ${trackUrl}`;
         break;
       case "completed":
-        msg = `🏁 DMvimiento — Ruta "${ruta.nombre}" completada con éxito. Ver detalles y evidencias: ${trackUrl}`;
+        msg = `🏁 D Movimiento — Ruta "${ruta.nombre}" completada con éxito. Ver detalles y evidencias: ${trackUrl}`;
         break;
       case "issue":
-        msg = `⚠️ DMvimiento — Incidente en ${extra.city||"la parada"}${extra.tipo?" — "+extra.tipo:""}: ${extra.notas||""}\n${trackUrl}`;
+        msg = `⚠️ D Movimiento — Incidente en ${extra.city||"la parada"}${extra.tipo?" — "+extra.tipo:""}: ${extra.notas||""}\n${trackUrl}`;
         break;
     }
     const waUrl = `https://wa.me/52${ruta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
@@ -11904,7 +11904,7 @@ function ChoferDashboard({chofer,onLogout,showT,toast,setToast}){
     // Notificación persistente del sistema operativo
     try{
       if("Notification" in window && Notification.permission==="granted"){
-        new Notification("🚚 GPS activo — DMvimiento",{
+        new Notification("🚚 GPS activo — D Movimiento",{
           body:"Mantén esta pestaña abierta para transmitir tu ubicación. La pantalla se mantendrá encendida.",
           icon:"/icon.svg",
           tag:"gps-active",
@@ -12405,7 +12405,7 @@ function ChoferChat({chofer}){
         <div style={{width:38,height:38,borderRadius:11,background:"rgba(255,255,255,.22)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:13}}>DM</div>
         <div style={{flex:1}}>
           <div style={{fontFamily:DISP,fontWeight:800,fontSize:15}}>Administración</div>
-          <div style={{fontSize:11,opacity:.9}}>Mensajería interna · DMvimiento</div>
+          <div style={{fontSize:11,opacity:.9}}>Mensajería interna · D Movimiento</div>
         </div>
       </div>
       {/* Mensajes */}
@@ -12690,7 +12690,7 @@ function ChoferPerfil({chofer,misRutas,rutasCompletadas,onLogout}){
           <div style={{fontFamily:DISP,fontWeight:800,fontSize:18,lineHeight:1.2}}>{chofer.nombre}</div>
           <div style={{fontSize:11,opacity:.85,marginTop:3}}>{chofer.tel}</div>
           <div style={{fontSize:11,opacity:.85}}>{chofer.placa||"Sin placa"}{chofer.vehiculo?" · "+chofer.vehiculo:""}</div>
-          {antiguedadDias>0&&<div style={{fontSize:10,marginTop:4,opacity:.75}}>{antiguedadDias} días activo en DMvimiento</div>}
+          {antiguedadDias>0&&<div style={{fontSize:10,marginTop:4,opacity:.75}}>{antiguedadDias} días activo en D Movimiento</div>}
         </div>
       </div>
 
@@ -12765,7 +12765,7 @@ function ChoferPerfil({chofer,misRutas,rutasCompletadas,onLogout}){
       <button onClick={()=>{if(confirm("¿Cerrar sesión?"))onLogout();}} className="btn" style={{width:"100%",marginTop:14,padding:"13px 0",borderRadius:11,background:"#fff",border:"1.5px solid "+ROSE+"30",color:ROSE,fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
         <LogOut size={14}/>Cerrar sesión
       </button>
-      <div style={{fontSize:9,color:MUTED,textAlign:"center",marginTop:10,letterSpacing:"0.05em"}}>DMvimiento · App Chofer v2.2</div>
+      <div style={{fontSize:9,color:MUTED,textAlign:"center",marginTop:10,letterSpacing:"0.05em"}}>D Movimiento · App Chofer v2.2</div>
     </>
   );
 }
@@ -12908,9 +12908,9 @@ function ChoferRutaActiva({ruta,chofer,tracking,onStop,showT}){
     const trackUrl = `${window.location.origin}/track/${ruta.trackingId||ruta.id}`;
     const emoji = tipo==="arrival"?"📍":tipo==="delivered"?"✅":tipo==="issue"?"⚠️":"🚚";
     let msg = "";
-    if(tipo==="arrival") msg = `${emoji} DMvimiento: El chofer ${chofer.nombre} llegó a ${stop.city}. Puedes verlo en tiempo real: ${trackUrl}`;
-    else if(tipo==="delivered") msg = `${emoji} DMvimiento: Entrega completada en ${stop.city}${notas?" · "+notas:""}${fotoURL?"\n📸 Con evidencia fotográfica.":""}\nVer todo: ${trackUrl}`;
-    else if(tipo==="issue") msg = `${emoji} DMvimiento: Incidencia en ${stop.city}${incidentLabel?" — "+incidentLabel:""}: ${notas}\nTracking: ${trackUrl}`;
+    if(tipo==="arrival") msg = `${emoji} D Movimiento: El chofer ${chofer.nombre} llegó a ${stop.city}. Puedes verlo en tiempo real: ${trackUrl}`;
+    else if(tipo==="delivered") msg = `${emoji} D Movimiento: Entrega completada en ${stop.city}${notas?" · "+notas:""}${fotoURL?"\n📸 Con evidencia fotográfica.":""}\nVer todo: ${trackUrl}`;
+    else if(tipo==="issue") msg = `${emoji} D Movimiento: Incidencia en ${stop.city}${incidentLabel?" — "+incidentLabel:""}: ${notas}\nTracking: ${trackUrl}`;
     const waUrl = `https://wa.me/52${ruta.clienteTel.replace(/\D/g,"")}?text=${encodeURIComponent(msg)}`;
     window.open(waUrl,"_blank");
   };
@@ -13632,7 +13632,7 @@ function ClientTracking({trackingId}){
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
             <div style={{width:36,height:36,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:14}}>DM</div>
             <div>
-              <div style={{fontFamily:DISP,fontWeight:800,fontSize:15}}>DMvimiento Tracking</div>
+              <div style={{fontFamily:DISP,fontWeight:800,fontSize:15}}>D Movimiento Tracking</div>
               <div style={{fontSize:10,color:"#ffffff70",fontFamily:MONO,letterSpacing:"0.1em"}}>#{trackingId}</div>
             </div>
           </div>
@@ -13748,7 +13748,7 @@ function ClientTracking({trackingId}){
         })}
 
         <div style={{textAlign:"center",marginTop:20,padding:"16px",color:MUTED,fontSize:10,borderTop:"1px solid "+BORDER+"60"}}>
-          🚚 DMvimiento Logistics · Actualización en tiempo real
+          🚚 D Movimiento Logistics · Actualización en tiempo real
         </div>
       </div>
 
@@ -14482,7 +14482,7 @@ function LoginScreen(){
         <div style={{width:72,height:72,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 8px 24px #d9770640"}}>
           <Truck size={34} color="#fff"/>
         </div>
-        <div style={{fontFamily:DISP,fontWeight:900,fontSize:28,color:"#1a1a2e",letterSpacing:"-0.03em",marginBottom:4}}>DMvimiento</div>
+        <div style={{fontFamily:DISP,fontWeight:900,fontSize:28,color:"#1a1a2e",letterSpacing:"-0.03em",marginBottom:4}}>D Movimiento</div>
         <div style={{fontSize:13,color:MUTED,marginBottom:32}}>Sistema de Operaciones Logísticas</div>
 
         {err&&<div style={{background:"#fef2f2",border:"1.5px solid #fca5a5",borderRadius:11,padding:"10px 14px",fontSize:12,color:"#dc2626",marginBottom:16}}>{err}</div>}
@@ -14497,7 +14497,7 @@ function LoginScreen(){
         </button>
 
         <div style={{marginTop:20,fontSize:11,color:MUTED,lineHeight:1.6}}>
-          Solo el equipo autorizado de DMvimiento puede acceder.<br/>
+          Solo el equipo autorizado de D Movimiento puede acceder.<br/>
           Usa tu cuenta Google corporativa.
         </div>
       </div>
@@ -14673,7 +14673,7 @@ function PinScreen({userProfile,onVerified,onBack}){
         )}
 
         <div style={{textAlign:"center",marginTop:18,fontSize:11,color:BD2}}>
-          DMvimiento · Sistema privado · Solo personal autorizado
+          D Movimiento · Sistema privado · Solo personal autorizado
         </div>
       </div>
     </div>
@@ -14700,7 +14700,7 @@ function ProfilePickerScreen({profiles,onSelect}){
         <div style={{width:68,height:68,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:20,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 18px",boxShadow:"0 12px 36px #d9770650"}}>
           <Truck size={32} color="#fff"/>
         </div>
-        <div style={{fontFamily:DISP,fontWeight:900,fontSize:30,color:"#fff",letterSpacing:"-0.03em",marginBottom:6}}>DMvimiento</div>
+        <div style={{fontFamily:DISP,fontWeight:900,fontSize:30,color:"#fff",letterSpacing:"-0.03em",marginBottom:6}}>D Movimiento</div>
         <div style={{fontSize:11,color:"#ffffff60",letterSpacing:"0.04em",textTransform:"uppercase",fontWeight:600}}>¿Quién eres?</div>
       </div>
       {/* Tarjetas de perfil */}
@@ -14740,7 +14740,7 @@ function ProfilePickerScreen({profiles,onSelect}){
         })}
       </div>
       <div style={{marginTop:48,fontSize:11,color:"#ffffff25",letterSpacing:"0.04em"}}>
-        DMvimiento · Sistema privado · Solo personal autorizado
+        D Movimiento · Sistema privado · Solo personal autorizado
       </div>
     </div>
   );
@@ -14815,7 +14815,7 @@ function Usuarios(){
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
           <div>
             <h1 style={{fontFamily:DISP,fontWeight:800,fontSize:28,color:TEXT,letterSpacing:"-0.03em"}}>Usuarios & Roles</h1>
-            <p style={{color:MUTED,fontSize:13,marginTop:3}}>Gestión de acceso y contraseñas del sistema DMvimiento</p>
+            <p style={{color:MUTED,fontSize:13,marginTop:3}}>Gestión de acceso y contraseñas del sistema D Movimiento</p>
           </div>
           <div style={{background:"linear-gradient(135deg,"+A+"18,"+A+"08)",border:"1.5px solid "+A+"30",borderRadius:12,padding:"10px 16px",display:"flex",alignItems:"center",gap:8}}>
             <Shield size={16} color={A}/>
@@ -14942,7 +14942,7 @@ function VerificandoPerfil(){
   return <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#0f2040)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
     <div style={{textAlign:"center",maxWidth:360}}>
       <div style={{width:60,height:60,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Truck size={28} color="#fff"/></div>
-      <div style={{fontFamily:DISP,fontWeight:900,fontSize:20,color:"#fff"}}>DMvimiento</div>
+      <div style={{fontFamily:DISP,fontWeight:900,fontSize:20,color:"#fff"}}>D Movimiento</div>
       <div style={{fontSize:12,color:"#ffffff80",marginTop:6}}>Verificando tu perfil…</div>
       {lento && <div style={{marginTop:18}}>
         <div style={{fontSize:13,color:"#ffffffb0",marginBottom:10}}>Está tardando más de lo normal.</div>
@@ -15126,7 +15126,7 @@ export default function App(){
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#0a1628,#0f2040)",display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{textAlign:"center"}}>
         <div style={{width:60,height:60,background:"linear-gradient(135deg,#d97706,#f59e0b)",borderRadius:18,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",boxShadow:"0 8px 28px #d9770640"}}><Truck size={28} color="#fff"/></div>
-        <div style={{fontFamily:DISP,fontWeight:900,fontSize:20,color:"#fff"}}>DMvimiento</div>
+        <div style={{fontFamily:DISP,fontWeight:900,fontSize:20,color:"#fff"}}>D Movimiento</div>
         <div style={{fontSize:12,color:"#ffffff50",marginTop:6}}>Cargando…</div>
       </div>
     </div></>
@@ -15253,7 +15253,7 @@ export default function App(){
         {searchOpen&&<SearchPalette rol={rol} cots={cots} facts={facts} rutas={rutas} clientes={clientes} entregas={entregas} onSelect={v=>setView(v)} onClose={()=>setSearchOpen(false)}/>}
         {showInstallBanner&&installPrompt&&<div style={{position:"fixed",bottom:16,right:16,zIndex:200,background:"#fff",borderRadius:14,padding:"14px 18px",boxShadow:"0 16px 50px rgba(12,24,41,.2)",border:"1.5px solid "+A+"30",display:"flex",alignItems:"center",gap:12,maxWidth:380}}>
           <div style={{width:40,height:40,borderRadius:11,background:"linear-gradient(135deg,"+A+",#fb923c)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:DISP,fontWeight:900,fontSize:14,color:"#fff",flexShrink:0}}>DM</div>
-          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13}}>Instalar app DMvimiento</div><div style={{fontSize:11,color:MUTED}}>Acceso rápido desde tu home screen</div></div>
+          <div style={{flex:1}}><div style={{fontWeight:700,fontSize:13}}>Instalar app D Movimiento</div><div style={{fontSize:11,color:MUTED}}>Acceso rápido desde tu home screen</div></div>
           <button onClick={async()=>{installPrompt.prompt();const r=await installPrompt.userChoice;if(r.outcome==="accepted")localStorage.setItem("dmov_install_dismissed","1");setShowInstallBanner(false);setInstallPrompt(null);}} className="btn" style={{background:"linear-gradient(135deg,"+A+",#fb923c)",color:"#fff",borderRadius:9,padding:"8px 14px",fontSize:12,fontWeight:700}}>Instalar</button>
           <button onClick={()=>{localStorage.setItem("dmov_install_dismissed","1");setShowInstallBanner(false);}} className="btn" style={{color:MUTED,fontSize:10}}>✕</button>
         </div>}

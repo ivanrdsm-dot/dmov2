@@ -216,11 +216,23 @@ export const choferRegistrarDispositivo = onCall(OPC, async req => {
   const { chofer, ref } = await choferDe(req, { exigirDispositivo: false });
   const disp = txt(req.data?.dispositivoId, 120);
   if(disp.length < 8) throw falla("invalid-argument", "Identificador de equipo inválido");
+  const appVersion = txt(req.data?.appVersion, 20), nativo = req.data?.nativo === true && !!appVersion;
+  /* Paso de la página a la app nativa: el director abre una ventana (cambioAAppHasta) y el chofer puede ligar la app UNA vez.
+     Queda el equipo anterior y la hora del cambio; al director le llega el aviso. */
+  const ventanaApp = nativo && Number(chofer.cambioAAppHasta?.toMillis?.() || 0) > Date.now();
+  if(chofer.dispositivoId && chofer.dispositivoId !== disp && ventanaApp){
+    await ref.update({ dispositivoId: disp, dispositivoModelo: txt(req.data?.modelo, 80), dispositivoRegistradoEn: ahora(), dispositivoAnterior: chofer.dispositivoId,
+      cambioAAppUsadoEn: ahora(), cambioAAppHasta: FieldValue.delete(), appVersion, ultimoAccesoApp: ahora() });
+    await alerta({ type: "cambio_a_app", informativa: true, atendida: true, choferId: chofer.id, choferNombre: chofer.nombre || "",
+      msg: `${chofer.nombre || "Chofer"} ya usa la app nativa (versión ${appVersion}).` });
+    return { ok: true, choferId: chofer.id, nombre: chofer.nombre || "", cambioAApp: true };
+  }
   if(chofer.dispositivoId && chofer.dispositivoId !== disp){
-    await alerta({ type: "dispositivo_no_autorizado", choferId: chofer.id, choferNombre: chofer.nombre || "", msg: "Intento de entrar desde otro equipo" });
+    await alerta({ type: "dispositivo_no_autorizado", choferId: chofer.id, choferNombre: chofer.nombre || "", msg: `Intento de entrar desde otro equipo${nativo ? " (app nativa)" : ""}` });
     throw falla("permission-denied", "Tu cuenta ya está ligada a otro equipo. Avisa a operaciones.");
   }
   if(!chofer.dispositivoId) await ref.update({ dispositivoId: disp, dispositivoModelo: txt(req.data?.modelo, 80), dispositivoRegistradoEn: ahora() });
+  if(nativo) await ref.update({ appVersion, ultimoAccesoApp: ahora() });
   return { ok: true, choferId: chofer.id, nombre: chofer.nombre || "" };
 });
 
@@ -266,7 +278,7 @@ export const choferCheckIn = onCall(OPC_LUGAR, async req => {
       selfieRuta: txt(d.selfieRuta, 400), fotoPlacasRuta: txt(d.fotoPlacasRuta, 400), fotoOdometroRuta: txt(d.fotoOdometroRuta, 400),
       unidadPlaca: txt(d.unidadPlaca, 20).toUpperCase(), odometroKm: Number(d.odometroKm), combustiblePct: Number(d.combustiblePct),
       ubicacion: pos, precisionM: Number.isFinite(precisionM) ? Math.round(precisionM) : null, ubicacionTMs: Number.isFinite(posTMs) ? posTMs : null,
-      ubicacionSimulada: d.simulada === true, fotos, dudas, verificacionFacial: "no_aplicada",
+      ubicacionSimulada: d.simulada === true, fotos, dudas, verificacionFacial: "no_aplicada", appVersion: txt(d.appVersion, 20) || null,
       horaEntradaEsperada: foraneo ? UMBRALES_CHOFER.horaCheckInForaneo : UMBRALES_CHOFER.horaCheckIn, minutosDespuesEntrada: ll.minutosDespues, llegoTarde: ll.tarde, tardeMin: ll.tardeMin,
       lugarEntrada: lugar, kmDesdeZocaloEntrada: kmDesdeZocalo(pos), fueraDeCdmxEntrada: fueraDeCdmx(pos), placaRuta: placaRuta || null });
     return true;

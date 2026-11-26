@@ -76,7 +76,7 @@ export default function ReporteDia({ db, dia, setDia, hoy, choferes = [], jornad
           <thead><tr style={{ background: "#f8fafc", textAlign: "left", color: MUTED, fontSize: 11 }}>
             {["Persona", "Entrada", "Desde dónde", "Salida", "Horas / extra", "Camioneta", "Km tablero / GPS", "Alertas"].map(h => <th key={h} style={{ padding: "9px 10px" }}>{h}</th>)}</tr></thead>
           <tbody>{r.filas.map(f => <tr key={f.tipo + f.id} style={{ borderTop: "1px solid " + BORDER, verticalAlign: "top" }}>
-            <td style={{ padding: "9px 10px" }}><b>{f.nombre}</b><div style={{ fontSize: 11, color: MUTED }}>{f.tipo === "oficina" ? "Oficina" : "Chofer"}</div></td>
+            <td style={{ padding: "9px 10px" }}><b>{f.nombre}</b><div style={{ fontSize: 11, color: MUTED }}>{f.tipo === "oficina" ? "Oficina" : f.falto ? "Chofer" : f.app ? `Chofer · 📱 app ${f.app}` : <span style={{ color: AMBER }}>Chofer · 🌐 página</span>}</div></td>
             <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>{f.falto ? <b style={{ color: ROSE }}>❌ Sin check-in</b> : <>{hhmm(f.entradaMs)}{f.tardeMin ? <div style={{ color: ROSE, fontSize: 12, fontWeight: 700 }}>⏰ {dur(f.tardeMin)} tarde</div> : <div style={{ color: GREEN, fontSize: 12, fontWeight: 700 }}>✓ a tiempo</div>}</>}</td>
             <td style={{ padding: "9px 10px", maxWidth: 220 }}>{f.lugarEntrada || "—"}</td>
             <td style={{ padding: "9px 10px", whiteSpace: "nowrap" }}>{f.falto ? "—" : f.salidaMs ? <>{hhmm(f.salidaMs)}<div style={{ fontSize: 11, color: MUTED, maxWidth: 180, whiteSpace: "normal" }}>{f.lugarSalida}</div></> : <span style={{ color: AMBER, fontWeight: 700 }}>⏳ sin salida</span>}</td>

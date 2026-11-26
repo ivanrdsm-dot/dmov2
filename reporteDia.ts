@@ -10,7 +10,7 @@ export interface FilaPersona {
   id: string; nombre: string; tipo: "chofer" | "oficina";
   entradaMs: number | null; tardeMin: number; lugarEntrada: string; salidaMs: number | null; lugarSalida: string; horas: number | null;
   placa: string; odometroKm: number | null; kmTablero: number | null; kmGps: number | null; alertas: Record<string, number>; falto: boolean;
-  extraMin: number; salioAntesMin: number; sinSalidaRegistrada: boolean;
+  extraMin: number; salioAntesMin: number; sinSalidaRegistrada: boolean; app: string;
 }
 const tiempo = (x: any) => ({ extraMin: Number(x?.extraMin) || 0, salioAntesMin: Number(x?.salioAntesMin) || 0, sinSalidaRegistrada: x?.sinSalidaRegistrada === true });
 
@@ -33,13 +33,13 @@ export function reporteDia({ dia, ahoraMs, choferes = [], jornadas = [], oficina
       horas: ms(j?.checkInEn) && ms(j?.checkOutEn) ? Math.round((ms(j.checkOutEn)! - ms(j.checkInEn)!) / 360000) / 10 : null,
       placa: String(j?.unidadPlaca || ""), odometroKm: Number.isFinite(Number(j?.odometroKm)) && j ? Number(j.odometroKm) : null,
       kmTablero: Number.isFinite(Number(j?.kmRecorridos)) && j?.kmRecorridos !== undefined ? Number(j.kmRecorridos) : null, kmGps: Number.isFinite(Number(j?.kmGps)) && j?.kmGps !== undefined ? Number(j.kmGps) : null,
-      alertas: alertasDe(c.id), falto: !j, ...tiempo(j) });
+      alertas: alertasDe(c.id), falto: !j, ...tiempo(j), app: String(j?.appVersion || "") });
   }
   for(const u of usuariosOficina.filter(u => u.rol !== "admin" && u.activo !== false && !u.prueba)){
     const a = oficina.find(x => x.uid === u.id);
     filas.push({ id: u.id, nombre: String(u.nombre || u.id), tipo: "oficina", entradaMs: ms(a?.checkInEn), tardeMin: a?.llegoTarde ? Number(a.tardeMin) || 0 : 0,
       lugarEntrada: txtLugar(a?.lugarEntrada), salidaMs: ms(a?.checkOutEn), lugarSalida: txtLugar(a?.lugarSalida), horas: a?.horasTrabajadas ?? null,
-      placa: "", odometroKm: null, kmTablero: null, kmGps: null, alertas: alertasDe(u.id), falto: !a, ...tiempo(a) });
+      placa: "", odometroKm: null, kmTablero: null, kmGps: null, alertas: alertasDe(u.id), falto: !a, ...tiempo(a), app: "" });
   }
 
   const H: Hallazgo[] = [];
@@ -59,6 +59,9 @@ export function reporteDia({ dia, ahoraMs, choferes = [], jornadas = [], oficina
   const antes = vinieron.filter(f => f.salioAntesMin > 0);
   if(antes.length) add("revisar", `${antes.length === 1 ? "1 salió" : antes.length + " salieron"} antes de su hora`, antes.map(f => `${f.nombre.split(" ")[0]} ${dur(f.salioAntesMin)} antes`).join(", "));
 
+  /* Choferes que todavía entran por la página: sin la app nativa, su ubicación se corta al bloquear el celular. */
+  const enPagina = vinieron.filter(f => f.tipo === "chofer" && !f.app);
+  if(enPagina.length) add("revisar", `${enPagina.length} chofer${enPagina.length > 1 ? "es" : ""} sin la app`, `${enPagina.map(f => f.nombre).join(", ")} hicieron check-in desde la página: su ubicación se corta al bloquear el celular. Que instalen la app.`);
   /* GPS: la app dejó de mandar ubicación, o el tablero marca kilómetros que el GPS no vio. */
   const sinGps = vinieron.filter(f => (f.alertas.sin_ubicacion ?? 0) > 0);
   if(sinGps.length) add("grave", "Celulares sin mandar ubicación", `${sinGps.map(f => f.nombre).join(", ")}: la app se cerró o quedó en segundo plano; no se sabe por dónde anduvieron.`);
