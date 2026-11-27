@@ -1,6 +1,7 @@
 /* Asistencia de hoy de una persona de la oficina (sin cargar la cámara: el resto vive en CheckOficina.jsx). */
 import { useEffect, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
+import { NATIVO, vigilarUbicacion, llamarNativo } from "./nativo.js";
 
 const fechaCDMX = (ms = Date.now()) => new Date(ms - 6 * 3600000).toISOString().slice(0, 10);
 /** undefined = revisando · null = sin entrada hoy · objeto = su registro del día. */
@@ -17,8 +18,14 @@ export function useAsistenciaOficina(db, uid, activo){
  *  Solo mientras el sistema está abierto en su celular (el navegador no permite más). Fuera de la jornada no se manda nada. */
 export const CADA_MS_UBICACION_OFICINA = 5 * 60000;
 export function useUbicacionJornada(app, activo){
+  /* En la app nativa: GPS continuo durante la jornada (también con el celular bloqueado), una lectura cada 2 min o al moverse 150 m. */
   useEffect(() => {
-    if(!activo || !app || typeof navigator === "undefined" || !navigator.geolocation) return;
+    if(!activo || !app || !NATIVO) return;
+    return vigilarUbicacion({ cadaMs: 2 * 60000, metros: 150, titulo: "D Movimiento · jornada en curso", mensaje: "Tu ubicación se registra solo durante tu jornada.",
+      alLeer: p => llamarNativo(app, "oficinaUbicacion", p).catch(() => {}) }) || undefined;
+  }, [app, activo]);
+  useEffect(() => {
+    if(!activo || !app || NATIVO || typeof navigator === "undefined" || !navigator.geolocation) return;
     let vivo = true, ultima = 0;
     const mandar = async () => {
       if(!vivo || document.visibilityState === "hidden" || Date.now() - ultima < 60000) return;

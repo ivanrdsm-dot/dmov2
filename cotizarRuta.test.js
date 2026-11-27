@@ -113,3 +113,16 @@ describe("aviso de privacidad de la oficina", () => {
     expect(t).toMatch(/Fuera de tu jornada no se registra/);
   });
 });
+
+import { faltaEnClave } from "./ClaveApp.jsx";
+describe("contraseña de la app para la oficina", () => {
+  it("pide 8 caracteres con letras y números, y que coincidan", () => {
+    expect(faltaEnClave("abc12", "abc12")).toMatch(/8 caracteres/);
+    expect(faltaEnClave("abcdefgh", "abcdefgh")).toMatch(/letras y números/);
+    expect(faltaEnClave("abcdefg1", "abcdefg2")).toMatch(/no son iguales/);
+    expect(faltaEnClave("Ilse2026dm", "Ilse2026dm")).toBe("");
+  });
+  it("el aviso de la oficina dice que en la app la ubicación es continua", () => {
+    expect(textoAviso("oficina").map(s => s.texto).join(" ")).toMatch(/de forma continua si usas la app/);
+  });
+});

@@ -19,6 +19,8 @@ const Desempeno = lazy(() => import("./Desempeno.jsx"));
 const Auditoria = lazy(() => import("./Auditoria.jsx"));
 const TableroVivo = lazy(() => import("./TableroVivo.jsx"));
 const ReporteDia = lazy(() => import("./ReporteDia.jsx"));
+const ClaveApp = lazy(() => import("./ClaveApp.jsx"));
+import { NATIVO } from "./nativo.js";
 /* Alertas que traen montos ($): solo las ve el director. */
 const ALERTAS_CON_MONTOS = ["gasto_dudoso", "cotizacion_por_aprobar", "resumen_diario"];
 const PESTANAS = ["tablero", "reporte", "ahora", "asignar", "rutas", "mapa", "asistencia", "alertas", "choferes", "gastos", "historial", "desempeno", "auditoria"];
@@ -106,7 +108,8 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
     return PESTANAS.includes(t) ? t : usuario?.rol === "operaciones" ? "asignar" : "tablero";
   });
   const setPestana = t => { setPestanaEstado(t); try { const u = new URL(window.location.href); u.searchParams.set("v", "operacion"); u.searchParams.set("t", t); window.history.replaceState(null, "", u); } catch {} };
-  const [verFichas, setVerFichas] = useState("");   // director: editar fichas de choferes o camionetas
+  const [verFichas, setVerFichas] = useState("");
+  const [claveApp, setClaveApp] = useState(false);   // 📱 contraseña para entrar a la app nativa   // director: editar fichas de choferes o camionetas
   const [dia, setDia] = useState(hoyCDMX());
   const [choferes, setChoferes] = useState([]), [jornadas, setJornadas] = useState([]), [ubic, setUbic] = useState({});
   const [delDia, setDelDia] = useState([]), [enCurso, setEnCurso] = useState([]), [proximas, setProximas] = useState([]);
@@ -188,7 +191,8 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
             <span style={{ fontSize: 13, color: MUTED }}>{esAdmin ? "Todo lo de choferes y rutas en un solo lugar." : "Asigna rutas y revisa todo; los cambios a registros los hace el director."}</span>
             <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               {onTerminarDia && <button onClick={onTerminarDia} style={boton(TEXT, false)}>🏁 Terminar mi día</button>}
-              <AvisosCelular app={app}/></span>
+              {NATIVO ? <span style={{ fontSize: 12, color: MUTED }}>Los avisos al celular llegan por Chrome</span> : <AvisosCelular app={app}/>}
+              {!NATIVO && <button onClick={() => setClaveApp(true)} style={{ ...boton(BLUE, false), padding: "6px 12px", minHeight: 34, fontSize: 13 }}>📱 Activar la app en mi celular</button>}</span>
           </div>
           <div style={{ display: "flex", gap: 4, overflowX: "auto", marginTop: 10, scrollbarWidth: "none" }}>
             {P.map(([k, l]) => <button key={k} onClick={() => { setPestana(k); setVerFichas(""); }} style={{ background: "none", border: "none", borderBottom: "3px solid " + (pestana === k ? A : "transparent"),
@@ -363,6 +367,6 @@ export default function OperacionHoy({ db, app, usuario, mapboxToken, vistas = {
         </div>}
       </div>
     </div>}
+      {claveApp && <Suspense fallback={null}><ClaveApp app={app} onCerrar={() => setClaveApp(false)}/></Suspense>}
     </div>);
 }
-
